@@ -11,22 +11,22 @@ OptState = Any
 Batch = Mapping[int, np.ndarray]
 
 
-def death_check(model, params: hk.Params, batch: Batch):
+def death_check_given_model(model):
     @jax.jit
     def _death_check(_params: hk.Params, _batch: Batch) -> jnp.ndarray:
         _, activations = model.apply(_params, _batch)
         return jax.tree_map(Partial(jnp.sum, axis=0), activations)
 
-    return _death_check(params, batch)
+    return _death_check
 
 
-def accuracy(model, params: hk.Params, batch: Batch, shift=0):
+def accuracy_given_model(model):
     @jax.jit
     def _accuracy(_params: hk.Params, _batch: Batch, _shift=0) -> jnp.ndarray:
         predictions = model.apply(_params, _batch)
         return jnp.mean(jnp.argmax(predictions, axis=-1) == _batch[1]-_shift)
 
-    return _accuracy(params, batch, shift)
+    return _accuracy
 
 
 def loss_given_model(model):
@@ -44,8 +44,7 @@ def loss_given_model(model):
     return loss
 
 
-def update(model, params: hk.Params, optimizer: Any, opt_state: OptState, batch: Batch,
-           shift=0) -> Tuple[hk.Params, OptState]:
+def update_given_model_and_optimizer(model, optimizer):
     """Learning rule (stochastic gradient descent)."""
     loss = loss_given_model(model)
 
@@ -57,4 +56,4 @@ def update(model, params: hk.Params, optimizer: Any, opt_state: OptState, batch:
         new_params = optax.apply_updates(_params, updates)
         return new_params, _opt_state
 
-    return _update(params, opt_state, batch, shift)
+    return _update

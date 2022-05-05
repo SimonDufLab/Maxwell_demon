@@ -21,9 +21,10 @@ def build_models(layer_list, model_input):
 
         def __call__(self, x):
             activations = []
-            for layer in self.layers:
+            for layer in self.layers[-1]:  # Don't append final output in activations list
                 x = layer(x)
                 activations.append(x)
+            x = self.layers[-1](x)
             return x, activations
 
     secondary_model = ModelAndActivations(model_input)
