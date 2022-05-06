@@ -1,7 +1,6 @@
 """ Models definition for MLP lie architecture. Defined fitting requirements of repo"""
 import haiku as hk
 import jax
-import jax.numpy as jnp
 
 
 def lenet_var_size(size, number_classes):

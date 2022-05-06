@@ -1,8 +1,6 @@
 """Useful classes/functions to manipulates haiku modules object"""
 
 import haiku as hk
-import jax
-import jax.numpy as jnp
 
 
 def build_models(layer_list, model_input):
@@ -27,6 +25,6 @@ def build_models(layer_list, model_input):
             x = self.layers[-1](x)
             return x, activations
 
-    secondary_model = ModelAndActivations(model_input)
+    secondary_model = ModelAndActivations()(model_input)
 
     return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
