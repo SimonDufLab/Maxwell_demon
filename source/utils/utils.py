@@ -1,4 +1,4 @@
-from typing import Any, Iterator, Mapping, Tuple, Union
+from typing import Any, Generator, Mapping, Tuple, Union
 
 import haiku as hk
 import jax
@@ -75,7 +75,7 @@ def transform_batch(batch, indices):
 
 
 def load_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
-                 subset: Union[None, int] = None) -> Iterator[Batch, None, None]:
+                 subset: Union[None, int] = None) -> Generator[Batch, None, None]:
   """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
@@ -98,13 +98,45 @@ def load_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int
     return iter(tfds.as_numpy(ds))
 
 
-def load_mnist(split: str, is_training, batch_size, subset):
+def load_mnist(split: str, is_training, batch_size, subset=None):
     return load_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size, subset=subset)
 
 
-def load_cifar10(split: str, is_training, batch_size, subset):
+def load_cifar10(split: str, is_training, batch_size, subset=None):
     return load_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size, subset=subset)
 
 
-def load_fashion_mnist(split: str, is_training, batch_size, subset):
+def load_fashion_mnist(split: str, is_training, batch_size, subset=None):
     return load_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size, subset=subset)
+
+
+def build_models(layer_list):
+    """ Take as input a list of haiku modules and return 2 different transform object:
+    1) First is the typical model returning the outputs
+    2) The other is the same model returning all activations values + output"""
+
+    # Build the model that only return the outputs
+    def typical_model(x):
+        x = x[0].astype(jnp.float32) / 255
+        mlp = hk.Sequential([mdl() for mdl in sum(layer_list, [])])
+        return mlp(x)
+
+    # And the model that also return the activations
+    class ModelAndActivations(hk.Module):
+        def __init__(self):
+            super().__init__()
+            self.layers = layer_list
+
+        def __call__(self, x):
+            activations = []
+            x = x[0].astype(jnp.float32) / 255
+            for layer in self.layers[:-1]:  # Don't append final output in activations list
+                x = hk.Sequential([mdl() for mdl in layer])(x)
+                activations.append(x)
+            x = hk.Sequential([mdl() for mdl in self.layers[-1]])(x)
+            return x, activations
+
+    def secondary_model(x):
+        return ModelAndActivations()(x)
+
+    return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
