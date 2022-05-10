@@ -10,23 +10,25 @@ import jax
 import optax
 
 from models.mlp import lenet_var_size
-from utils.utils import load_mnist, build_models
+from utils.utils import load_mnist, build_models, load_mnist_tf
 
 if __name__ == "__main__":
     # Load the different dataset
 
-    train = load_mnist("train", is_training=True, batch_size=50)
-    train_eval = load_mnist("train", is_training=False, batch_size=500)
-    test_eval = load_mnist("test", is_training=False, batch_size=500)
-    final_test_eval = load_mnist("test", is_training=False, batch_size=10000)
+    train = load_mnist(is_training=True, batch_size=50)
+    # tf_train = load_mnist_tf("train", is_training=True, batch_size=50)
 
-    test_death = load_mnist("train", is_training=False, batch_size=1000)
-    final_test_death = load_mnist("train", is_training=False, batch_size=60000)
+    train_eval = load_mnist(is_training=True, batch_size=500)
+    test_eval = load_mnist(is_training=False, batch_size=500)
+    final_test_eval = load_mnist(is_training=False, batch_size=10000)
+
+    test_death = load_mnist(is_training=True, batch_size=1000)
+    final_test_death = load_mnist(is_training=True, batch_size=60000)
 
     for size in [50]:  # , 100, 250, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
         # Make the network and optimiser
         architecture = lenet_var_size(size, 10)
-        net, net_activations = build_models(architecture)
+        net = build_models(architecture)
 
         opt = optax.adam(1e-3)
         dead_neurons = []
@@ -36,7 +38,10 @@ if __name__ == "__main__":
         opt_state = opt.init(params)
 
         print("test")
-        print(net.apply(params, next(train_eval)))
-        out, activ = net_activations.apply(params, next(train_eval))
-        # for ac in activ:
-        #     print(ac.shape)
+        out = net.apply(params, next(train_eval))
+        print(out.shape)
+        print(params.keys())
+        # print(params_2.keys())
+        out, activ = net.apply(params, next(train_eval), True)
+        for ac in activ:
+            print(ac.shape)
