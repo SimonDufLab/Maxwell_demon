@@ -20,18 +20,24 @@ Batch = Mapping[int, np.ndarray]
 # Training utilities
 ##############################
 def death_check_given_model(model):
+    """Return a boolean array per layer; with True values for dead neurons"""
     @jax.jit
     def _death_check(_params: hk.Params, _batch: Batch) -> jnp.ndarray:
-        _, activations = model.apply(_params, _batch)
-        return jax.tree_map(Partial(jnp.sum, axis=0), activations)
+        _, activations = model.apply(_params, _batch, True)
+        sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
+        return jax.tree_map(lambda arr: arr == 0, sum_activations)
 
     return _death_check
+
+
+def count_dead_neurons(death_check):
+    return sum([jnp.sum(layer) for layer in death_check])
 
 
 def accuracy_given_model(model):
     @jax.jit
     def _accuracy(_params: hk.Params, _batch: Batch) -> jnp.ndarray:
-        predictions = model.apply(_params, _batch)
+        predictions = model.apply(_params, _batch, False)
         return jnp.mean(jnp.argmax(predictions, axis=-1) == _batch[1])
 
     return _accuracy
@@ -41,7 +47,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4):
     """ Build the cross-entropy loss given the model"""
     @jax.jit
     def loss(params: hk.Params, batch: Batch) -> jnp.ndarray:
-        logits = model.apply(params, batch)
+        logits = model.apply(params, batch, False)
         labels = jax.nn.one_hot(batch[1], 10)
 
         softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
@@ -61,9 +67,8 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4):
     return loss
 
 
-def update_given_model_and_optimizer(model, optimizer):
+def update_given_loss_and_optimizer(loss, optimizer):
     """Learning rule (stochastic gradient descent)."""
-    loss = ce_loss_given_model(model)
 
     @jax.jit
     def _update(_params: hk.Params, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, OptState]:
@@ -138,14 +143,20 @@ def transform_batch_pytorch(targets, indices):
 
 class compatibility_iterator:
     """ Ensure that pytorch iterator return next batch exactly as tf iterator does"""
-    def __init__(self, dataloader_iter):
-        self.dataloader_iter = dataloader_iter
+    def __init__(self, dataloader):
+        self.dataloader = dataloader
+        self.dataloader_iter = iter(self.dataloader)
 
     def __next__(self):
-        next_data, next_target = next(self.dataloader_iter)
+        try:
+            next_data, next_target = next(self.dataloader_iter)
+        except StopIteration:
+            self.dataloader_iter = iter(self.dataloader)
+            next_data, next_target = next(self.dataloader_iter)
+
         next_data = jnp.array(next_data.permute(0, 2, 3, 1))
         next_target = jnp.array(next_target)
-        return  next_data, next_target
+        return next_data, next_target
 
 
 def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optional[int] = None, num_workers: int = 0):
@@ -157,7 +168,7 @@ def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optio
         dataset.targets = transform_batch_pytorch(dataset.targets, indices)
 
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=is_training, num_workers=num_workers)
-    return compatibility_iterator(iter(data_loader))
+    return compatibility_iterator(data_loader)
 
 
 def load_mnist(is_training, batch_size, subset=None, num_workers=0):
@@ -214,8 +225,8 @@ def build_models(layer_list, name=None):
             else:
                 return x
 
-    def secondary_model(x, acti=False):
-        return ModelAndActivations()(x, acti)
+    def secondary_model(x, return_activations=False):
+        return ModelAndActivations()(x, return_activations)
 
     # return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
     return hk.without_apply_rng(hk.transform(secondary_model))
