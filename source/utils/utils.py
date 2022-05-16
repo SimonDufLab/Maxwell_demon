@@ -7,8 +7,9 @@ import numpy as np
 import optax
 import tensorflow as tf
 import tensorflow_datasets as tfds
+import torch
 from torch.utils.data import DataLoader
-from torch.utils.data import Subset
+from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
 from jax.tree_util import Partial
 
@@ -17,7 +18,7 @@ Batch = Mapping[int, np.ndarray]
 
 
 ##############################
-# Training utilities
+# Reviving utilities
 ##############################
 def death_check_given_model(model):
     """Return a boolean array per layer; with True values for dead neurons"""
@@ -34,6 +35,30 @@ def count_dead_neurons(death_check):
     return sum([jnp.sum(layer) for layer in death_check])
 
 
+def map_decision(current_leaf, potential_leaf):
+    return jnp.where(current_leaf != 0, current_leaf, potential_leaf)
+
+
+def reinitialize_dead_neurons(neuron_states, old_params, new_params):
+    """ Given the activations value for the whole training set, build a mask that is used for reinitialization
+      neurons_state: neuron states (either 0 or 1) post-activation. Will be 1 if y <=  0
+      old_params: current parameters value
+      new_params: new parameters' dict to pick from weights being reinitialized"""
+    neuron_states = [jnp.logical_not(state) for state in neuron_states]
+    layers = list(old_params.keys())
+    for i in range(len(neuron_states)):
+        for weight_type in list(old_params[layers[i]].keys()):  # Usually, 'w' and 'b'
+            old_params[layers[i]][weight_type] = old_params[layers[i]][weight_type] * neuron_states[i]
+        kernel_param = 'w'
+        old_params[layers[i+1]][kernel_param] = old_params[layers[i+1]][kernel_param] * neuron_states[i].reshape(-1, 1)
+    reinitialized_params = jax.tree_util.tree_map(map_decision, old_params, new_params)
+
+    return reinitialized_params
+
+
+##############################
+# Training utilities
+##############################
 def accuracy_given_model(model):
     @jax.jit
     def _accuracy(_params: hk.Params, _batch: Batch) -> jnp.ndarray:
@@ -43,12 +68,12 @@ def accuracy_given_model(model):
     return _accuracy
 
 
-def ce_loss_given_model(model, regularizer=None, reg_param=1e-4):
+def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=10):
     """ Build the cross-entropy loss given the model"""
     @jax.jit
-    def loss(params: hk.Params, batch: Batch) -> jnp.ndarray:
+    def _loss(params: hk.Params, batch: Batch) -> jnp.ndarray:
         logits = model.apply(params, batch, False)
-        labels = jax.nn.one_hot(batch[1], 10)
+        labels = jax.nn.one_hot(batch[1], classes)
 
         softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
         softmax_xent /= labels.shape[0]
@@ -64,7 +89,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4):
             return softmax_xent + reg_param * reg_loss
         else:
             return softmax_xent
-    return loss
+    return _loss
 
 
 def update_given_loss_and_optimizer(loss, optimizer):
@@ -135,9 +160,10 @@ def load_fashion_mnist_tf(split: str, is_training, batch_size, subset=None):
 
 
 # Pytorch dataloader
-@jax.jit
+# @jax.jit
 def transform_batch_pytorch(targets, indices):
-    transformed_targets = jax.vmap(map_targets, in_axes=(0, None))(targets, indices)
+    # transformed_targets = jax.vmap(map_targets, in_axes=(0, None))(targets, indices)
+    transformed_targets = targets.apply_(lambda t: torch.nonzero(t == torch.tensor(indices))[0])
     return transformed_targets
 
 
@@ -160,12 +186,12 @@ class compatibility_iterator:
 
 
 def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optional[int] = None, num_workers: int = 0):
-    if subset:
-        assert subset < 10, "subset must be smaller than 10"
-        indices = np.random.choice(10, subset, replace=False)
-        subset_idx = np.isin(dataset.targets, indices)
-        dataset = Subset(dataset, subset_idx)
-        dataset.targets = transform_batch_pytorch(dataset.targets, indices)
+    if subset is not None:
+        # assert subset < 10, "subset must be smaller than 10"
+        # indices = np.random.choice(10, subset, replace=False)
+        subset_idx = np.isin(dataset.targets, subset)
+        dataset.data, dataset.targets = dataset.data[subset_idx], dataset.targets[subset_idx]
+        dataset.targets = transform_batch_pytorch(dataset.targets, subset)
 
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=is_training, num_workers=num_workers)
     return compatibility_iterator(data_loader)
