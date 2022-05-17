@@ -115,7 +115,7 @@ if __name__ == "__main__":
     plt.legend(prop={'size': 16})
     # plt.show()
     aim_fig1 = Figure(fig1)
-    exp_run.track(aim_fig1, name="effective capacity")
+    exp_run.track(aim_fig1, name="effective capacity", step=0)
 
     fig2 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, jnp.array(live_neurons) / jnp.array(size_arr), label="alive ratio")
@@ -125,7 +125,7 @@ if __name__ == "__main__":
     plt.legend(prop={'size': 16})
     # plt.show()
     aim_fig2 = Figure(fig2)
-    exp_run.track(aim_fig2, name="live neurons ratio")
+    exp_run.track(aim_fig2, name="live neurons ratio", step=0)
 
     fig3 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, f_acc, label="accuracy", linewidth=4)
@@ -135,4 +135,4 @@ if __name__ == "__main__":
     plt.legend(prop={'size': 16})
     # plt.show()
     aim_fig3 = Figure(fig3)
-    exp_run.track(aim_fig3, name="final performance")
+    exp_run.track(aim_fig3, name="final performance", step=0)
