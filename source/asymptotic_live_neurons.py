@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 import matplotlib.pyplot as plt
 from aim import Run, Figure
+import os
+import time
 
 from models.mlp import lenet_var_size
 import utils.utils as utl
@@ -33,13 +35,13 @@ if __name__ == "__main__":
     assert exp_config["regularizer"] in regularizer_choice, "Currently supported datasets: " + str(regularizer_choice)
 
     # Logger config
-    exp_run = Run(repo="./logs", experiment="asymptotic_live_neurons__lenet")
+    exp_name = "asymptotic_live_neurons__lenet"
+    exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = exp_config
 
     # Load the different dataset
     load_data = dataset_choice[exp_config["dataset"]]
     train = load_data(is_training=True, batch_size=50)
-    # tf_train = load_mnist_tf("train", is_training=True, batch_size=50)
 
     train_eval = load_data(is_training=True, batch_size=500)
     test_eval = load_data(is_training=False, batch_size=500)
@@ -86,8 +88,10 @@ if __name__ == "__main__":
                 dead_neurons_count = utl.count_dead_neurons(dead_neurons)
                 dead_neurons_log.append(dead_neurons_count)
                 accuracies_log.append(test_accuracy)
-                exp_run.track(jax.device_get(dead_neurons_count), name=f"Dead neurons, lenet size={size}", step=step)
-                exp_run.track(test_accuracy, name=f"Accuracy, lenet size={size}", step=step)
+                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
+                              context={"lenet size": f"{size}"})
+                exp_run.track(test_accuracy, name="Test accuracy", step=step,
+                              context={"lenet size": f"{size}"})
 
             # Train step over single batch
             params, opt_state = update_fn(params, opt_state, next(train))
@@ -107,15 +111,18 @@ if __name__ == "__main__":
         f_acc.append(final_accuracy)
 
     # Plots
+    dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+    os.makedirs(dir_path)
+
     fig1 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, live_neurons, label="Live neurons", linewidth=4)
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Live neurons at end of training", fontsize=16)
     plt.title("Effective capacity, 2-hidden layers MLP on "+exp_config["dataset"], fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
-    # plt.show()
+    fig1.savefig(dir_path+"effective_capacity.png")
     aim_fig1 = Figure(fig1)
-    exp_run.track(aim_fig1, name="effective capacity", step=0)
+    exp_run.track(aim_fig1, name="Effective capacity", step=0)
 
     fig2 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, jnp.array(live_neurons) / jnp.array(size_arr), label="alive ratio")
@@ -123,16 +130,16 @@ if __name__ == "__main__":
     plt.ylabel("Ratio of live neurons at end of training", fontsize=16)
     plt.title("MLP effective capacity on "+exp_config["dataset"], fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
-    # plt.show()
+    fig2.savefig(dir_path+"live_neurons_ratio.png")
     aim_fig2 = Figure(fig2)
-    exp_run.track(aim_fig2, name="live neurons ratio", step=0)
+    exp_run.track(aim_fig2, name="Live neurons ratio", step=0)
 
     fig3 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, f_acc, label="accuracy", linewidth=4)
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Final accuracy", fontsize=16)
-    plt.title("Performance, 2-hidden layers MLP on "+exp_config["dataset"], fontweight='bold', fontsize=20)
+    plt.title("Performance at convergence, 2-hidden layers MLP on "+exp_config["dataset"], fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
-    # plt.show()
+    fig3.savefig(dir_path+"performance_at_convergence.png")
     aim_fig3 = Figure(fig3)
-    exp_run.track(aim_fig3, name="final performance", step=0)
+    exp_run.track(aim_fig3, name="Performance at convergence", step=0)

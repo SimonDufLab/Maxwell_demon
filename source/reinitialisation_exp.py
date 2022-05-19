@@ -20,10 +20,10 @@ if __name__ == "__main__":
     # Configuration
     exp_config = {
         "size": 100,  # Number of hidden units in first layer; size*3 in second hidden layer
-        "total_steps": 2001,
-        "report_freq": 50,
+        "total_steps": 20001,
+        "report_freq": 500,
         "record_freq": 10,
-        "switching_period": 500,  # Switch dataset periodically
+        "switching_period": 1000,  # Switch dataset periodically
         "reset_period": 250,  # After reset_period steps, reinitialize the parameters
         "reset_horizon": 1.0,  # Set to lower than one if you want to stop resetting before final steps
         "kept_classes": 3,  # Number of classes in the randomly selected subset
@@ -175,6 +175,7 @@ if __name__ == "__main__":
     # Plots
     dir_path = "./logs/plots/"+exp_name+time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
     os.makedirs(dir_path)
+
     x = list(range(0, exp_config["total_steps"], exp_config["record_freq"]))
     fig1 = plt.figure(figsize=(15, 10))
     plt.plot(x, no_reinit_perf, color='red', label="accuracy, no reinitialisation")
