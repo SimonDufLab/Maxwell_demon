@@ -68,8 +68,11 @@ def accuracy_given_model(model):
     return _accuracy
 
 
-def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=10):
+def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None):
     """ Build the cross-entropy loss given the model"""
+    if not classes:
+        classes = 10
+
     @jax.jit
     def _loss(params: hk.Params, batch: Batch) -> jnp.ndarray:
         logits = model.apply(params, batch, False)
