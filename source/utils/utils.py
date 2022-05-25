@@ -188,38 +188,43 @@ class compatibility_iterator:
         return next_data, next_target
 
 
-def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optional[int] = None, num_workers: int = 0):
+def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optional[int] = None,
+                 transform: bool = True, num_workers: int = 0):
     if subset is not None:
         # assert subset < 10, "subset must be smaller than 10"
         # indices = np.random.choice(10, subset, replace=False)
         subset_idx = np.isin(dataset.targets, subset)
         dataset.data, dataset.targets = dataset.data[subset_idx], dataset.targets[subset_idx]
-        dataset.targets = transform_batch_pytorch(dataset.targets, subset)
+        if transform:
+            dataset.targets = transform_batch_pytorch(dataset.targets, subset)
 
     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=is_training, num_workers=num_workers)
     return compatibility_iterator(data_loader)
 
 
-def load_mnist(is_training, batch_size, subset=None, num_workers=0):
+def load_mnist(is_training, batch_size, subset=None, transform=True, num_workers=0):
     dataset = datasets.MNIST('./data', train=is_training, download=True,
                              transform=transforms.Compose([
                                  transforms.ToTensor(),
                                  ]))  # transforms.Normalize((0.1307,), (0.3081,)) -> want positive inputs
-    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset, num_workers=num_workers)
+    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
+                        transform=transform, num_workers=num_workers)
 
 
-def load_cifar10(is_training, batch_size, subset=None, num_workers=0):
+def load_cifar10(is_training, batch_size, subset=None, transform=True, num_workers=0):
     dataset = datasets.CIFAR10('./data', train=is_training, download=True,
                                transform=transforms.Compose([
                                     transforms.ToTensor()]))
-    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset, num_workers=num_workers)
+    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
+                        transform=transform, num_workers=num_workers)
 
 
-def load_fashion_mnist(is_training, batch_size, subset=None, num_workers=0):
+def load_fashion_mnist(is_training, batch_size, subset=None, transform=True, num_workers=0):
     dataset = datasets.FashionMNIST('./data', train=is_training, download=True,
                                     transform=transforms.Compose([
                                         transforms.ToTensor()]))
-    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset, num_workers=num_workers)
+    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
+                        transform=transform, num_workers=num_workers)
 
 
 ##############################

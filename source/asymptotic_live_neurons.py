@@ -7,6 +7,7 @@ number of live neurons at the end eventually also reaches a plateau."""
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import matplotlib.pyplot as plt
 from aim import Run, Figure
 import os
@@ -88,7 +89,7 @@ if __name__ == "__main__":
                 dead_neurons_count = utl.count_dead_neurons(dead_neurons)
                 dead_neurons_log.append(dead_neurons_count)
                 accuracies_log.append(test_accuracy)
-                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
+                exp_run.track(np.array(dead_neurons_count), name="Dead neurons", step=step,
                               context={"lenet size": f"{size}"})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
                               context={"lenet size": f"{size}"})
@@ -97,12 +98,12 @@ if __name__ == "__main__":
             params, opt_state = update_fn(params, opt_state, next(train))
 
         total_neurons = size + 3*size  # TODO: Adapt to other NN than 2-hidden MLP
-        final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
+        final_accuracy = np.array(accuracy_fn(params, next(final_test_eval)))
         size_arr.append(total_neurons)
         final_dead_neurons = utl.death_check_given_model(net)(params, next(final_test_death))
         final_dead_neurons_count = utl.count_dead_neurons(final_dead_neurons)
 
-        exp_run.track(jax.device_get(total_neurons - final_dead_neurons_count),
+        exp_run.track(np.array(total_neurons - final_dead_neurons_count),
                       name="Live neurons after convergence w/r total neurons", step=total_neurons)
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r total neurons", step=total_neurons)

@@ -131,36 +131,36 @@ if __name__ == "__main__":
             test_accuracy = accuracy_fn(params, test_batch)
             test_accuracy_partial_reinit = accuracy_fn(params_partial_reinit, test_batch)
             no_reinit_perf.append(test_accuracy)
-            exp_run.track(jax.device_get(no_reinit_perf[-1]),
+            exp_run.track(np.array(no_reinit_perf[-1]),
                           name="Test accuracy", step=step, context={"reinitialisation": 'None'})
             partial_reinit_perf.append(test_accuracy_partial_reinit)
-            exp_run.track(jax.device_get(partial_reinit_perf[-1]),
+            exp_run.track(np.array(partial_reinit_perf[-1]),
                           name="Test accuracy", step=step,  context={"reinitialisation": 'Partial'})
 
             # Record dead neurons
             death_test_batch = next(test_death)
             no_reinit_dead_neurons.append(utl.count_dead_neurons(
                 utl.death_check_given_model(net)(params, death_test_batch)))
-            exp_run.track(jax.device_get(no_reinit_dead_neurons[-1]),
+            exp_run.track(np.array(no_reinit_dead_neurons[-1]),
                           name="Dead neurons", step=step, context={"reinitialisation": 'None'})
-            exp_run.track(jax.device_get(no_reinit_dead_neurons[-1]/total_neurons),
+            exp_run.track(np.array(no_reinit_dead_neurons[-1]/total_neurons),
                           name="Dead neurons ratio", step=step, context={"reinitialisation": 'None'})
             partial_reinit_dead_neurons.append(utl.count_dead_neurons(
                 utl.death_check_given_model(net)(params_partial_reinit, death_test_batch)))
-            exp_run.track(jax.device_get(partial_reinit_dead_neurons[-1]),
+            exp_run.track(np.array(partial_reinit_dead_neurons[-1]),
                           name="Dead neurons", step=step, context={"reinitialisation": 'Partial'})
-            exp_run.track(jax.device_get(partial_reinit_dead_neurons[-1]/total_neurons),
+            exp_run.track(np.array(partial_reinit_dead_neurons[-1]/total_neurons),
                           name="Dead neurons ratio", step=step, context={"reinitialisation": 'Partial'})
             if exp_config["compare_full_reset"]:
-                test_accuracy_hard_reinit = jax.device_get(accuracy_fn(params_hard_reinit, test_batch))
+                test_accuracy_hard_reinit = np.array(accuracy_fn(params_hard_reinit, test_batch))
                 hard_reinit_perf.append(test_accuracy_hard_reinit)
-                exp_run.track(jax.device_get(hard_reinit_perf[-1]),
+                exp_run.track(np.array(hard_reinit_perf[-1]),
                               name="Test accuracy", step=step, context={"reinitialisation": 'Complete'})
                 hard_reinit_dead_neurons.append(utl.count_dead_neurons(
                     utl.death_check_given_model(net)(params_hard_reinit, death_test_batch)))
-                exp_run.track(jax.device_get(hard_reinit_dead_neurons[-1]),
+                exp_run.track(np.array(hard_reinit_dead_neurons[-1]),
                               name="Dead neurons", step=step, context={"reinitialisation": 'Complete'})
-                exp_run.track(jax.device_get(hard_reinit_dead_neurons[-1]/total_neurons),
+                exp_run.track(np.array(hard_reinit_dead_neurons[-1]/total_neurons),
                               name="Dead neurons ratio", step=step, context={"reinitialisation": 'Complete'})
 
         # Training step
@@ -190,7 +190,7 @@ if __name__ == "__main__":
                  label="dead neurons, complete reset")
 
     plt.xlabel("Iterations", fontsize=16)
-    plt.ylabel("Inactive neurons/accuracy", fontsize=16)
+    plt.ylabel("Inactive neurons (ratio)/accuracy", fontsize=16)
     plt.title(f"Performance vs dead neurons, switching between {exp_config['kept_classes']}"
               f" classes on {exp_config['dataset']}", fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 12})
