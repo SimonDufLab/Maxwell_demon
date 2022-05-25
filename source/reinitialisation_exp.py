@@ -190,7 +190,7 @@ if __name__ == "__main__":
                  label="dead neurons, complete reset")
 
     plt.xlabel("Iterations", fontsize=16)
-    plt.ylabel("Inactive neurons/accuracy", fontsize=16)
+    plt.ylabel("Inactive neurons (ratio)/accuracy", fontsize=16)
     plt.title(f"Performance vs dead neurons, switching between {exp_config['kept_classes']}"
               f" classes on {exp_config['dataset']}", fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 12})
