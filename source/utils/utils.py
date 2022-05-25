@@ -189,7 +189,7 @@ class compatibility_iterator:
 
 
 def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optional[int] = None,
-                 transform: bool = True, num_workers: int = 0):
+                 transform: bool = True, num_workers: int = 2):
     if subset is not None:
         # assert subset < 10, "subset must be smaller than 10"
         # indices = np.random.choice(10, subset, replace=False)
@@ -202,7 +202,7 @@ def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optio
     return compatibility_iterator(data_loader)
 
 
-def load_mnist(is_training, batch_size, subset=None, transform=True, num_workers=0):
+def load_mnist(is_training, batch_size, subset=None, transform=True, num_workers=2):
     dataset = datasets.MNIST('./data', train=is_training, download=True,
                              transform=transforms.Compose([
                                  transforms.ToTensor(),
@@ -211,7 +211,7 @@ def load_mnist(is_training, batch_size, subset=None, transform=True, num_workers
                         transform=transform, num_workers=num_workers)
 
 
-def load_cifar10(is_training, batch_size, subset=None, transform=True, num_workers=0):
+def load_cifar10(is_training, batch_size, subset=None, transform=True, num_workers=2):
     dataset = datasets.CIFAR10('./data', train=is_training, download=True,
                                transform=transforms.Compose([
                                     transforms.ToTensor()]))
@@ -219,7 +219,7 @@ def load_cifar10(is_training, batch_size, subset=None, transform=True, num_worke
                         transform=transform, num_workers=num_workers)
 
 
-def load_fashion_mnist(is_training, batch_size, subset=None, transform=True, num_workers=0):
+def load_fashion_mnist(is_training, batch_size, subset=None, transform=True, num_workers=2):
     dataset = datasets.FashionMNIST('./data', train=is_training, download=True,
                                     transform=transforms.Compose([
                                         transforms.ToTensor()]))

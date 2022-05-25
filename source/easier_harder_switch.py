@@ -23,7 +23,6 @@ if __name__ == "__main__":
         "total_steps": 1001,
         "report_freq": 50,
         "record_freq": 10,
-        "compare_full_reset": True,  # Include the comparison with a complete reset of the parameters
         "lr": 1e-3,
         "optimizer": "adam",
         "datasets": ("fashion mnist", "fashion mnist"),  # Datasets to use, listed from easier to harder
