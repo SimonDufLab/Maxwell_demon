@@ -135,29 +135,29 @@ if __name__ == "__main__":
                 test_loss = loss(params, test_batch)
                 test_loss_partial_reinit = loss(params_partial_reinit, test_batch)
                 no_reinit_perf.append(test_accuracy)
-                exp_run.track(jax.device_get(no_reinit_perf[-1]),
+                exp_run.track(np.array(no_reinit_perf[-1]),
                               name=f"Test accuracy; {setting[order]}", step=step, context={"reinitialisation": 'None'})
                 partial_reinit_perf.append(test_accuracy_partial_reinit)
-                exp_run.track(jax.device_get(partial_reinit_perf[-1]),
+                exp_run.track(np.array(partial_reinit_perf[-1]),
                               name=f"Test accuracy; {setting[order]}", step=step, context={"reinitialisation": 'Partial'})
-                exp_run.track(jax.device_get(test_loss),
+                exp_run.track(np.array(test_loss),
                               name=f"Loss; {setting[order]}", step=step, context={"reinitialisation": 'None'})
-                exp_run.track(jax.device_get(test_loss_partial_reinit),
+                exp_run.track(np.array(test_loss_partial_reinit),
                               name=f"Loss; {setting[order]}", step=step, context={"reinitialisation": 'Partial'})
 
                 # Record dead neurons
                 death_test_batch = next(test_death[idx])
                 no_reinit_dead_neurons.append(utl.count_dead_neurons(
                     utl.death_check_given_model(net)(params, death_test_batch)))
-                exp_run.track(jax.device_get(no_reinit_dead_neurons[-1]),
+                exp_run.track(np.array(no_reinit_dead_neurons[-1]),
                               name=f"Dead neurons; {setting[order]}", step=step, context={"reinitialisation": 'None'})
-                exp_run.track(jax.device_get(no_reinit_dead_neurons[-1] / total_neurons),
+                exp_run.track(np.array(no_reinit_dead_neurons[-1] / total_neurons),
                               name=f"Dead neurons ratio; {setting[order]}", step=step, context={"reinitialisation": 'None'})
                 partial_reinit_dead_neurons.append(utl.count_dead_neurons(
                     utl.death_check_given_model(net)(params_partial_reinit, death_test_batch)))
-                exp_run.track(jax.device_get(partial_reinit_dead_neurons[-1]),
+                exp_run.track(np.array(partial_reinit_dead_neurons[-1]),
                               name=f"Dead neurons; {setting[order]}", step=step, context={"reinitialisation": 'Partial'})
-                exp_run.track(jax.device_get(partial_reinit_dead_neurons[-1] / total_neurons),
+                exp_run.track(np.array(partial_reinit_dead_neurons[-1] / total_neurons),
                               name=f"Dead neurons ratio; {setting[order]}", step=step, context={"reinitialisation": 'Partial'})
 
             # Training step
