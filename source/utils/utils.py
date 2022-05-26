@@ -115,14 +115,16 @@ def map_targets(target, indices):
   return jnp.asarray(target == indices).nonzero(size=1)
 
 
-@jax.jit
-def transform_batch_tf(batch, indices):
-    transformed_targets = jax.vmap(map_targets, in_axes=(0, None))(batch[1], indices)
-    return batch[0], transformed_targets[0].flatten()
+def transform_batch_tf(indices):
+    @jax.jit
+    def _transform_batch(image, label):
+        transformed_targets = jax.vmap(map_targets, in_axes=(0, None))(label, indices)
+        return image, transformed_targets[0].flatten()
+    return _transform_batch
 
 
-def interval_zero_one(batch):
-    return batch[0]/255, batch[1]
+def interval_zero_one(image, label):
+    return image/255, label
 
 
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
@@ -139,15 +141,17 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
           return tf.reduce_any(indices == int(label))
         ds = ds.filter(filter_fn)  # Only take the randomly selected subset
 
+    ds = ds.map(interval_zero_one)
     if is_training:
         ds = ds.shuffle(10 * batch_size, seed=0)
         # ds = ds.take(batch_size).cache().repeat()
     ds = ds.batch(batch_size)
 
     if subset:
-        return iter(transform_batch_tf(interval_zero_one(tfds.as_numpy(ds)), indices))
+        ds = ds.map(transform_batch_tf(indices))
+        return iter(tfds.as_numpy(ds))
     else:
-        return iter(interval_zero_one(tfds.as_numpy(ds)))
+        return iter(tfds.as_numpy(ds))
 
 
 def load_mnist_tf(split: str, is_training, batch_size, subset=None):
