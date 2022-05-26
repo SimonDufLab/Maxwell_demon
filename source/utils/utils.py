@@ -31,14 +31,17 @@ def death_check_given_model(model):
     return _death_check
 
 
+@jax.jit
 def count_dead_neurons(death_check):
     return sum([jnp.sum(layer) for layer in death_check])
 
 
+@jax.jit
 def map_decision(current_leaf, potential_leaf):
     return jnp.where(current_leaf != 0, current_leaf, potential_leaf)
 
 
+@jax.jit
 def reinitialize_dead_neurons(neuron_states, old_params, new_params):
     """ Given the activations value for the whole training set, build a mask that is used for reinitialization
       neurons_state: neuron states (either 0 or 1) post-activation. Will be 1 if y <=  0
