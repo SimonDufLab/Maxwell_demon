@@ -42,14 +42,14 @@ if __name__ == "__main__":
 
     # Load the different dataset
     load_data = dataset_choice[exp_config["dataset"]]
-    train = load_data(is_training=True, batch_size=50)
+    train = load_data(split="train", is_training=True, batch_size=50)
 
-    train_eval = load_data(is_training=True, batch_size=500)
-    test_eval = load_data(is_training=False, batch_size=500)
-    final_test_eval = load_data(is_training=False, batch_size=10000)
+    train_eval = load_data(split="train", is_training=False, batch_size=500)
+    test_eval = load_data(split="test", is_training=False, batch_size=500)
+    final_test_eval = load_data(split="test", is_training=False, batch_size=10000)
 
-    test_death = load_data(is_training=True, batch_size=1000)
-    final_test_death = load_data(is_training=True, batch_size=60000)
+    test_death = load_data(split="train", is_training=False, batch_size=1000)
+    final_test_death = load_data(split="train", is_training=False, batch_size=60000)
 
     # Recording over all widths
     live_neurons = []

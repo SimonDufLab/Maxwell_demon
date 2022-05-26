@@ -3,6 +3,7 @@ a setup that seems to benefit from neurons reinitialisation."""
 
 import jax
 import jax.numpy as jnp
+from jax.tree_util import Partial
 import numpy as np
 import matplotlib.pyplot as plt
 from aim import Run, Figure
@@ -47,14 +48,38 @@ if __name__ == "__main__":
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = exp_config
 
+    # Help function to stack parameters
+    if exp_config["compare_full_reset"]:
+        def dict_stack(xx, y, z):
+            return jnp.stack([xx, y, z])
+    else:
+        def dict_stack(xx, y):
+            return jnp.stack([xx, y])
+
+    def vmap_axes_mapping(container):
+        def _map_over(v):
+            return 0  # Need to vmap over all arrays in the container
+        return jax.tree_map(_map_over, container)
+
+    @jax.jit
+    def dict_split(container):
+        treedef = jax.tree_structure(container)
+        leaves = jax.tree_leaves(container)
+        _to = leaves[0].shape[0]
+
+        leaves = jax.tree_map(Partial(jnp.split, indices_or_sections=_to), leaves)
+        leaves = jax.tree_map(jnp.squeeze, leaves)
+        splitted_dict = tuple([treedef.unflatten(list(z)) for z in zip(*leaves)])
+        return splitted_dict
+
     # Load the dataset
     load_data = dataset_choice[exp_config["dataset"]]
     assert exp_config["kept_classes"] < 10, "subset must be smaller than 10"
     indices = np.random.choice(10, exp_config["kept_classes"], replace=False)
-    train = load_data(is_training=True, batch_size=50, subset=indices)
-    train_eval = load_data(is_training=True, batch_size=250, subset=indices)
-    test_eval = load_data(is_training=False, batch_size=250, subset=indices)
-    test_death = load_data(is_training=True, batch_size=1000, subset=indices)
+    train = load_data(split="train", is_training=True, batch_size=50, subset=indices)
+    train_eval = load_data(split="train", is_training=False, batch_size=500, subset=indices)
+    test_eval = load_data(split="test", is_training=False, batch_size=500, subset=indices)
+    test_death = load_data(split="train", is_training=False, batch_size=1000, subset=indices)
 
     # Create network/optimizer and initialize params
     architecture = lenet_var_size(exp_config["size"], exp_config["kept_classes"])
@@ -101,10 +126,10 @@ if __name__ == "__main__":
                 (step < exp_config["total_steps"]-exp_config["switching_period"]-1):  # switch task
             # new datasets
             indices = np.random.choice(10, exp_config["kept_classes"], replace=False)
-            train = load_data(is_training=True, batch_size=50, subset=indices)
-            train_eval = load_data(is_training=True, batch_size=250, subset=indices)
-            test_eval = load_data(is_training=False, batch_size=250, subset=indices)
-            test_death = load_data(is_training=True, batch_size=1000, subset=indices)
+            train = load_data(split='train', is_training=True, batch_size=50, subset=indices)
+            train_eval = load_data(split='train', is_training=False, batch_size=250, subset=indices)
+            test_eval = load_data(split='test', is_training=False, batch_size=250, subset=indices)
+            test_death = load_data(split='train', is_training=False, batch_size=1000, subset=indices)
 
             # reinitialize optimizers state
             opt_state = opt.init(params)
@@ -165,12 +190,32 @@ if __name__ == "__main__":
 
         # Training step
         train_batch = next(train)
-        params, opt_state = update_fn(params, opt_state, train_batch)
-        params_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
-                                                                    opt_partial_reinit_state, train_batch)
         if exp_config["compare_full_reset"]:
-            params_hard_reinit, opt_hard_reinit_state = update_fn(params_hard_reinit,
-                                                                  opt_hard_reinit_state, train_batch)
+            all_params = jax.tree_map(dict_stack, params, params_partial_reinit, params_hard_reinit)
+            all_opt_states = jax.tree_map(dict_stack, opt_state, opt_partial_reinit_state, opt_hard_reinit_state)
+        else:
+            all_params = jax.tree_map(dict_stack, params, params_partial_reinit)
+            all_opt_states = jax.tree_map(dict_stack, opt_state, opt_partial_reinit_state)
+
+        all_params, all_opt_states = jax.vmap(update_fn, in_axes=(vmap_axes_mapping(params),
+                                                                  vmap_axes_mapping(opt_state), None))(all_params,
+                                                                                                       all_opt_states,
+                                                                                                       train_batch)
+        if exp_config["compare_full_reset"]:
+            params, params_partial_reinit, params_hard_reinit = dict_split(all_params)
+            opt_state, opt_partial_reinit_state, opt_hard_reinit_state = dict_split(all_opt_states)
+        else:
+            params, params_partial_reinit = dict_split(all_params)
+            opt_state, opt_partial_reinit_state = dict_split(all_opt_states)
+
+        # Train sequentially the network instead than in parallel
+
+        # params, opt_state = update_fn(params, opt_state, train_batch)
+        # params_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
+        #                                                             opt_partial_reinit_state, train_batch)
+        # if exp_config["compare_full_reset"]:
+        #     params_hard_reinit, opt_hard_reinit_state = update_fn(params_hard_reinit,
+        #                                                           opt_hard_reinit_state, train_batch)
 
     # Plots
     dir_path = "./logs/plots/"+exp_name+time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")

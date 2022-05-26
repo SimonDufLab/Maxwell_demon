@@ -31,14 +31,17 @@ def death_check_given_model(model):
     return _death_check
 
 
+@jax.jit
 def count_dead_neurons(death_check):
     return sum([jnp.sum(layer) for layer in death_check])
 
 
+@jax.jit
 def map_decision(current_leaf, potential_leaf):
     return jnp.where(current_leaf != 0, current_leaf, potential_leaf)
 
 
+@jax.jit
 def reinitialize_dead_neurons(neuron_states, old_params, new_params):
     """ Given the activations value for the whole training set, build a mask that is used for reinitialization
       neurons_state: neuron states (either 0 or 1) post-activation. Will be 1 if y <=  0
@@ -121,45 +124,61 @@ def transform_batch_tf(batch, indices):
     return batch[0], transformed_targets[0].flatten()
 
 
-def interval_zero_one(batch):
-    return batch[0]/255, batch[1]
+class tf_compatibility_iterator:
+    def __init__(self, tfds_iterator, indices):
+        self.tfds_iterator = tfds_iterator
+        self.indices = indices
+
+    def __next__(self):
+        return transform_batch_tf(next(self.tfds_iterator), self.indices)
+
+
+def interval_zero_one(image, label):
+    return image/255, label
 
 
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
-                 subset: Optional[int] = None):  # -> Generator[Batch, None, None]:
+                 subset: Optional[int] = None, transform: bool = True,):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
-    ds = tfds.load(dataset, split=split, as_supervised=True).cache().repeat()
-    if subset:
-        assert subset < 10, "subset must be smaller than 10"
-        indices = np.random.choice(10, subset, replace=False)
+    ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data")
+    if subset is not None:
+        # assert subset < 10, "subset must be smaller than 10"
+        # indices = np.random.choice(10, subset, replace=False)
 
         def filter_fn(image, label):
-          return tf.reduce_any(indices == int(label))
+          return tf.reduce_any(subset == int(label))
         ds = ds.filter(filter_fn)  # Only take the randomly selected subset
 
+    ds = ds.map(interval_zero_one)
+    ds = ds.cache().repeat()
     if is_training:
+        # if subset is not None:
+        #     ds = ds.cache().repeat()
         ds = ds.shuffle(10 * batch_size, seed=0)
         # ds = ds.take(batch_size).cache().repeat()
     ds = ds.batch(batch_size)
 
-    if subset:
-        return iter(transform_batch_tf(interval_zero_one(tfds.as_numpy(ds)), indices))
+    if (subset is not None) and transform:
+        return tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)
     else:
-        return iter(interval_zero_one(tfds.as_numpy(ds)))
+        return iter(tfds.as_numpy(ds))
 
 
-def load_mnist_tf(split: str, is_training, batch_size, subset=None):
-    return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size, subset=subset)
+def load_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True):
+    return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size,
+                           subset=subset, transform=transform)
 
 
-def load_cifar10_tf(split: str, is_training, batch_size, subset=None):
-    return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size, subset=subset)
+def load_cifar10_tf(split: str, is_training, batch_size, subset=None, transform=True):
+    return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size,
+                           subset=subset, transform=transform)
 
 
-def load_fashion_mnist_tf(split: str, is_training, batch_size, subset=None):
-    return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size, subset=subset)
+def load_fashion_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True):
+    return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size,
+                           subset=subset, transform=transform)
 
 
 # Pytorch dataloader
@@ -202,7 +221,7 @@ def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optio
     return compatibility_iterator(data_loader)
 
 
-def load_mnist(is_training, batch_size, subset=None, transform=True, num_workers=2):
+def load_mnist_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
     dataset = datasets.MNIST('./data', train=is_training, download=True,
                              transform=transforms.Compose([
                                  transforms.ToTensor(),
@@ -211,7 +230,7 @@ def load_mnist(is_training, batch_size, subset=None, transform=True, num_workers
                         transform=transform, num_workers=num_workers)
 
 
-def load_cifar10(is_training, batch_size, subset=None, transform=True, num_workers=2):
+def load_cifar10_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
     dataset = datasets.CIFAR10('./data', train=is_training, download=True,
                                transform=transforms.Compose([
                                     transforms.ToTensor()]))
@@ -219,7 +238,7 @@ def load_cifar10(is_training, batch_size, subset=None, transform=True, num_worke
                         transform=transform, num_workers=num_workers)
 
 
-def load_fashion_mnist(is_training, batch_size, subset=None, transform=True, num_workers=2):
+def load_fashion_mnist_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
     dataset = datasets.FashionMNIST('./data', train=is_training, download=True,
                                     transform=transforms.Compose([
                                         transforms.ToTensor()]))
