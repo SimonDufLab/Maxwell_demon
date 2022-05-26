@@ -25,8 +25,8 @@ if __name__ == "__main__":
         "record_freq": 10,
         "lr": 1e-3,
         "optimizer": "adam",
-        "datasets": ("fashion mnist", "fashion mnist"),  # Datasets to use, listed from easier to harder
-        "kept_classes": (5, None),  # Number of classes to use, listed from easier to harder
+        "datasets": ("mnist", "fashion mnist"),  # Datasets to use, listed from easier to harder
+        "kept_classes": (None, None),  # Number of classes to use, listed from easier to harder
         "regularizer": "cdg_l2",
         "reg_param": 1e-4,
     }
@@ -53,20 +53,20 @@ if __name__ == "__main__":
         indices = np.random.choice(10, exp_config["kept_classes"][0], replace=False)
     else:
         indices = None
-    train_easier = load_data_easier(is_training=True, batch_size=50, subset=indices, transform=False)
-    train_eval_easier = load_data_easier(is_training=True, batch_size=250, subset=indices, transform=False)
-    test_eval_easier = load_data_easier(is_training=False, batch_size=250, subset=indices, transform=False)
-    test_death_easier = load_data_easier(is_training=True, batch_size=1000, subset=indices, transform=False)
+    train_easier = load_data_easier(split='train', is_training=True, batch_size=50, subset=indices, transform=False)
+    train_eval_easier = load_data_easier(split='train', is_training=False, batch_size=250, subset=indices, transform=False)
+    test_eval_easier = load_data_easier(split='test', is_training=False, batch_size=250, subset=indices, transform=False)
+    test_death_easier = load_data_easier(split='train', is_training=False, batch_size=1000, subset=indices, transform=False)
 
     load_data_harder = dataset_choice[exp_config["datasets"][1]]
     if exp_config["kept_classes"][1]:
         indices = np.random.choice(10, exp_config["kept_classes"][1], replace=False)
     else:
         indices = None
-    train_harder = load_data_harder(is_training=True, batch_size=50, subset=indices, transform=False)
-    train_eval_harder = load_data_harder(is_training=True, batch_size=250, subset=indices, transform=False)
-    test_eval_harder = load_data_harder(is_training=False, batch_size=250, subset=indices, transform=False)
-    test_death_harder = load_data_harder(is_training=True, batch_size=1000, subset=indices, transform=False)
+    train_harder = load_data_harder(split='train', is_training=True, batch_size=50, subset=indices, transform=False)
+    train_eval_harder = load_data_harder(split='train', is_training=False, batch_size=250, subset=indices, transform=False)
+    test_eval_harder = load_data_harder(split='test', is_training=False, batch_size=250, subset=indices, transform=False)
+    test_death_harder = load_data_harder(split='train', is_training=False, batch_size=1000, subset=indices, transform=False)
 
     train = [train_easier, train_harder]
     train_eval = [train_eval_easier, train_eval_harder]

@@ -26,7 +26,7 @@ if __name__ == "__main__":
         "report_freq": 500,  # 500
         "lr": 1e-3,
         "optimizer": "adam",
-        "dataset": "mnist_tf",
+        "dataset": "mnist",
         "regularizer": "cdg_l2",
         "reg_param": 1e-4,
     }
@@ -44,7 +44,7 @@ if __name__ == "__main__":
     load_data = dataset_choice[exp_config["dataset"]]
     train = load_data(split="train", is_training=True, batch_size=50)
 
-    train_eval = load_data(split="test", is_training=False, batch_size=500)
+    train_eval = load_data(split="train", is_training=False, batch_size=500)
     test_eval = load_data(split="test", is_training=False, batch_size=500)
     final_test_eval = load_data(split="test", is_training=False, batch_size=10000)
 

@@ -51,10 +51,10 @@ if __name__ == "__main__":
     load_data = dataset_choice[exp_config["dataset"]]
     assert exp_config["kept_classes"] < 10, "subset must be smaller than 10"
     indices = np.random.choice(10, exp_config["kept_classes"], replace=False)
-    train = load_data(is_training=True, batch_size=50, subset=indices)
-    train_eval = load_data(is_training=True, batch_size=250, subset=indices)
-    test_eval = load_data(is_training=False, batch_size=250, subset=indices)
-    test_death = load_data(is_training=True, batch_size=1000, subset=indices)
+    train = load_data(split="train", is_training=True, batch_size=50, subset=indices)
+    train_eval = load_data(split="train", is_training=False, batch_size=500, subset=indices)
+    test_eval = load_data(split="test", is_training=False, batch_size=500, subset=indices)
+    test_death = load_data(split="train", is_training=False, batch_size=1000, subset=indices)
 
     # Create network/optimizer and initialize params
     architecture = lenet_var_size(exp_config["size"], exp_config["kept_classes"])
@@ -101,10 +101,10 @@ if __name__ == "__main__":
                 (step < exp_config["total_steps"]-exp_config["switching_period"]-1):  # switch task
             # new datasets
             indices = np.random.choice(10, exp_config["kept_classes"], replace=False)
-            train = load_data(is_training=True, batch_size=50, subset=indices)
-            train_eval = load_data(is_training=True, batch_size=250, subset=indices)
-            test_eval = load_data(is_training=False, batch_size=250, subset=indices)
-            test_death = load_data(is_training=True, batch_size=1000, subset=indices)
+            train = load_data(split='train', is_training=True, batch_size=50, subset=indices)
+            train_eval = load_data(split='train', is_training=False, batch_size=250, subset=indices)
+            test_eval = load_data(split='test', is_training=False, batch_size=250, subset=indices)
+            test_death = load_data(split='train', is_training=False, batch_size=1000, subset=indices)
 
             # reinitialize optimizers state
             opt_state = opt.init(params)
