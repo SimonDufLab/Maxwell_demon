@@ -29,6 +29,7 @@ if __name__ == "__main__":
         "dataset": "mnist",
         "regularizer": "cdg_l2",
         "reg_param": 1e-4,
+        "epsilon_close": 0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
     }
 
     assert exp_config["optimizer"] in optimizer_choice.keys(), "Currently supported optimizers: " + str(optimizer_choice.keys())
