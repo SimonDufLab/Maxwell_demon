@@ -13,7 +13,7 @@ from aim import Run, Figure
 import os
 import time
 from dataclasses import dataclass
-from typing import Union
+from typing import Optional
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -35,7 +35,7 @@ class ExpConfig:
     lr: float = 1e-3
     optimizer: str = "adam"
     dataset: str = "mnist"
-    regularizer: Union[str, None] = "cdg_l2"
+    regularizer: Optional[str] = "cdg_l2"
     reg_param: float = 1e-4
     epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
 
@@ -50,7 +50,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(optimizer_choice.keys())
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
-    assert exp_config.regularizer in regularizer_choice, "Currently supported datasets: " + str(regularizer_choice)
+    assert exp_config.regularizer in regularizer_choice, "Currently supported regularizers: " + str(regularizer_choice)
+
+    if exp_config.regularizer == 'None':
+        exp_config.regularizer = None
 
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)

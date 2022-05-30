@@ -4,7 +4,7 @@
 #SBATCH --partition=unkillable                           # Ask for unkillable job
 #SBATCH --cpus-per-task=2                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=10G                                        # Ask for 10 GB of RAM
+#SBATCH --mem=12G                                        # Ask for 10 GB of RAM
 #SBATCH --time=2:15:00                                   # The job will run for 3 hours
 
 # Make sure we are located in the right directory and on right branch
