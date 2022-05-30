@@ -2,7 +2,6 @@
 generalisation and is linked to the amount of dead neurons. Also run on an MLP"""
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
 from aim import Run, Figure
@@ -19,6 +18,9 @@ import utils.utils as utl
 from utils.utils import build_models
 from utils.config import dataset_choice, optimizer_choice, regularizer_choice
 from copy import deepcopy
+
+# Experience name -> for aim logger
+exp_name = "easier_harder_switch_experiment"
 
 
 # Configuration
@@ -38,25 +40,11 @@ class ExpConfig:
 
 cs = ConfigStore.instance()
 # Registering the Config class with the name '_config'.
-cs.store(name="_config", node=ExpConfig)
+cs.store(name=exp_name+"_config", node=ExpConfig)
 
 
-@hydra.main(version_base=None, config_name="_config")
+@hydra.main(version_base=None, config_name=exp_name+"_config")
 def run_exp(exp_config: ExpConfig) -> None:
-
-    # Configuration
-    # exp_config = {
-    #     "size": 100,  # Number of hidden units in first layer; size*3 in second hidden layer
-    #     "total_steps": 1001,
-    #     "report_freq": 50,
-    #     "record_freq": 10,
-    #     "lr": 1e-3,
-    #     "optimizer": "adam",
-    #     "datasets": ("mnist", "fashion mnist"),  # Datasets to use, listed from easier to harder
-    #     "kept_classes": (None, None),  # Number of classes to use, listed from easier to harder
-    #     "regularizer": "cdg_l2",
-    #     "reg_param": 1e-4,
-    # }
 
     total_neurons = exp_config.size + 3 * exp_config.size
     dataset_total_classes = 10  # TODO: allow compatibility with dataset > 10 classes
@@ -70,7 +58,6 @@ def run_exp(exp_config: ExpConfig) -> None:
     assert exp_config.regularizer in regularizer_choice, "Currently supported datasets: " + str(regularizer_choice)
 
     # Logger config
-    exp_name = "easier_harder_switch_experiment"
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
