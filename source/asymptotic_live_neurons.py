@@ -12,37 +12,52 @@ import matplotlib.pyplot as plt
 from aim import Run, Figure
 import os
 import time
+from dataclasses import dataclass
+from typing import Union
+import hydra
+from hydra.core.config_store import ConfigStore
+from omegaconf import OmegaConf
 
 from models.mlp import lenet_var_size
 import utils.utils as utl
 from utils.utils import build_models
 from utils.config import optimizer_choice, dataset_choice, regularizer_choice
 
-if __name__ == "__main__":
+# Experience name -> for aim logger
+exp_name = "asymptotic_live_neurons__lenet"
 
-    # Configuration
-    exp_config = {
-        "training_steps": 20001,  # 20001
-        "report_freq": 500,  # 500
-        "lr": 1e-3,
-        "optimizer": "adam",
-        "dataset": "mnist",
-        "regularizer": "cdg_l2",
-        "reg_param": 1e-4,
-        "epsilon_close": 0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
-    }
 
-    assert exp_config["optimizer"] in optimizer_choice.keys(), "Currently supported optimizers: " + str(optimizer_choice.keys())
-    assert exp_config["dataset"] in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
-    assert exp_config["regularizer"] in regularizer_choice, "Currently supported datasets: " + str(regularizer_choice)
+# Configuration
+@dataclass
+class ExpConfig:
+    training_steps: int = 120001  # 20001
+    report_freq: int = 500  # 500
+    lr: float = 1e-3
+    optimizer: str = "adam"
+    dataset: str = "mnist"
+    regularizer: Union[str, None] = "cdg_l2"
+    reg_param: float = 1e-4
+    epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
+
+
+cs = ConfigStore.instance()
+# Registering the Config class with the name '_config'.
+cs.store(name=exp_name+"_config", node=ExpConfig)
+
+
+@hydra.main(version_base=None, config_name=exp_name+"_config")
+def run_exp(exp_config: ExpConfig) -> None:
+
+    assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(optimizer_choice.keys())
+    assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
+    assert exp_config.regularizer in regularizer_choice, "Currently supported datasets: " + str(regularizer_choice)
 
     # Logger config
-    exp_name = "asymptotic_live_neurons__lenet"
     exp_run = Run(repo="./logs", experiment=exp_name)
-    exp_run["configuration"] = exp_config
+    exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
     # Load the different dataset
-    load_data = dataset_choice[exp_config["dataset"]]
+    load_data = dataset_choice[exp_config.dataset]
     train = load_data(split="train", is_training=True, batch_size=50)
 
     train_eval = load_data(split="train", is_training=False, batch_size=500)
@@ -62,20 +77,20 @@ if __name__ == "__main__":
         architecture = lenet_var_size(size, 10)
         net = build_models(architecture)
 
-        opt = optimizer_choice[exp_config["optimizer"]](exp_config["lr"])
+        opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
         dead_neurons_log = []
         accuracies_log = []
 
         # Set training/monitoring functions
-        loss = utl.ce_loss_given_model(net, regularizer=exp_config["regularizer"], reg_param=exp_config["reg_param"])
+        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
         accuracy_fn = utl.accuracy_given_model(net)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt)
 
         params = net.init(jax.random.PRNGKey(42 - 1), next(train))
         opt_state = opt.init(params)
 
-        for step in range(exp_config["training_steps"]):
-            if step % exp_config["report_freq"] == 0:
+        for step in range(exp_config.training_steps):
+            if step % exp_config.report_freq == 0:
                 # Periodically evaluate classification accuracy on train & test sets.
                 train_loss = loss(params, next(train_eval))
                 train_accuracy = accuracy_fn(params, next(train_eval))
@@ -120,7 +135,7 @@ if __name__ == "__main__":
     plt.plot(size_arr, live_neurons, label="Live neurons", linewidth=4)
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Live neurons at end of training", fontsize=16)
-    plt.title("Effective capacity, 2-hidden layers MLP on "+exp_config["dataset"], fontweight='bold', fontsize=20)
+    plt.title("Effective capacity, 2-hidden layers MLP on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig1.savefig(dir_path+"effective_capacity.png")
     aim_fig1 = Figure(fig1)
@@ -130,7 +145,7 @@ if __name__ == "__main__":
     plt.plot(size_arr, jnp.array(live_neurons) / jnp.array(size_arr), label="alive ratio")
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Ratio of live neurons at end of training", fontsize=16)
-    plt.title("MLP effective capacity on "+exp_config["dataset"], fontweight='bold', fontsize=20)
+    plt.title("MLP effective capacity on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig2.savefig(dir_path+"live_neurons_ratio.png")
     aim_fig2 = Figure(fig2)
@@ -140,8 +155,12 @@ if __name__ == "__main__":
     plt.plot(size_arr, f_acc, label="accuracy", linewidth=4)
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Final accuracy", fontsize=16)
-    plt.title("Performance at convergence, 2-hidden layers MLP on "+exp_config["dataset"], fontweight='bold', fontsize=20)
+    plt.title("Performance at convergence, 2-hidden layers MLP on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig3.savefig(dir_path+"performance_at_convergence.png")
     aim_fig3 = Figure(fig3)
     exp_run.track(aim_fig3, name="Performance at convergence", step=0)
+
+
+if __name__ == "__main__":
+    run_exp()
