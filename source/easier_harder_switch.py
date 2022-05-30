@@ -8,7 +8,7 @@ from aim import Run, Figure
 import os
 import time
 from dataclasses import dataclass, asdict
-from typing import Tuple, Union
+from typing import Tuple, Union, Optional
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -34,7 +34,7 @@ class ExpConfig:
     optimizer: str = "adam"
     datasets: Tuple[str] = ("mnist", "fashion mnist")  # Datasets to use, listed from easier to harder
     kept_classes: Tuple[Union[int, None]] = (None, None)  # Number of classes to use, listed from easier to harder
-    regularizer: Union[str, None] = "cdg_l2"
+    regularizer: Optional[str] = "cdg_l2"
     reg_param: float = 1e-4
 
 
@@ -55,7 +55,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         dataset_choice.keys())
     assert exp_config.datasets[1] in dataset_choice.keys(), "Currently supported datasets: " + str(
         dataset_choice.keys())
-    assert exp_config.regularizer in regularizer_choice, "Currently supported datasets: " + str(regularizer_choice)
+    assert exp_config.regularizer in regularizer_choice, "Currently supported regularizers: " + str(regularizer_choice)
+
+    if exp_config.regularizer == 'None':
+        exp_config.regularizer = None
 
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)

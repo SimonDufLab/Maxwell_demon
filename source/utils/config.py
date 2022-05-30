@@ -18,7 +18,7 @@ dataset_choice = {
 }
 
 regularizer_choice = (
-    None,
+    "None",
     "cdg_l2",
     "cdg_lasso",
     "l2"
