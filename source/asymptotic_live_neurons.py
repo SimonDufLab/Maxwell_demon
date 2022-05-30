@@ -13,6 +13,7 @@ from aim import Run, Figure
 import os
 import time
 from dataclasses import dataclass
+from typing import Union
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -29,12 +30,12 @@ exp_name = "asymptotic_live_neurons__lenet"
 # Configuration
 @dataclass
 class ExpConfig:
-    training_steps: int = 20001  # 20001
+    training_steps: int = 120001  # 20001
     report_freq: int = 500  # 500
     lr: float = 1e-3
     optimizer: str = "adam"
     dataset: str = "mnist"
-    regularizer: str = "cdg_l2"
+    regularizer: Union[str, None] = "cdg_l2"
     reg_param: float = 1e-4
     epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
 

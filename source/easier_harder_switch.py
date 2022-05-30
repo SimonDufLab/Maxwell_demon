@@ -34,7 +34,7 @@ class ExpConfig:
     optimizer: str = "adam"
     datasets: Tuple[str] = ("mnist", "fashion mnist")  # Datasets to use, listed from easier to harder
     kept_classes: Tuple[Union[int, None]] = (None, None)  # Number of classes to use, listed from easier to harder
-    regularizer: str = "cdg_l2"
+    regularizer: Union[str, None] = "cdg_l2"
     reg_param: float = 1e-4
 
 

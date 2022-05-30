@@ -10,6 +10,7 @@ from aim import Run, Figure
 import os
 import time
 from dataclasses import dataclass
+from typing import Union
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -39,7 +40,7 @@ class ExpConfig:
     lr: float = 1e-3
     optimizer: str = "adam"
     dataset: str = "mnist"
-    regularizer: str = "cdg_l2"
+    regularizer: Union[str, None] = "cdg_l2"
     reg_param: float = 1e-4
 
 
