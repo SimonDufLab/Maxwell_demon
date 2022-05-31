@@ -67,7 +67,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                 kept_classes[i] = None
         exp_config.kept_classes = tuple(kept_classes)
 
-
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)

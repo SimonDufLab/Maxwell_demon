@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
-from aim import Run, Figure
+from aim import Run, Figure, Distribution
 import os
 import time
 from dataclasses import dataclass
@@ -17,6 +17,9 @@ from typing import Optional
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
+
+from jax.tree_util import Partial
+from jax.flatten_util import ravel_pytree
 
 from models.mlp import lenet_var_size
 import utils.utils as utl
@@ -75,7 +78,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     size_arr = []
     f_acc = []
 
-    for size in [50, 100, 250, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
+    for size in [50, 100, 250]:#, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
         # Make the network and optimiser
         architecture = lenet_var_size(size, 10)
         net = build_models(architecture)
@@ -88,6 +91,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
         accuracy_fn = utl.accuracy_given_model(net)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+        death_check_fn = utl.death_check_given_model(net)
 
         params = net.init(jax.random.PRNGKey(42 - 1), next(train))
         opt_state = opt.init(params)
@@ -102,7 +106,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
                       f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
 
-                dead_neurons = utl.death_check_given_model(net)(params, next(test_death))
+                dead_neurons = death_check_fn(params, next(test_death))
 
                 # Record some metrics
                 dead_neurons_count = utl.count_dead_neurons(dead_neurons)
@@ -119,13 +123,23 @@ def run_exp(exp_config: ExpConfig) -> None:
         total_neurons = size + 3*size  # TODO: Adapt to other NN than 2-hidden MLP
         final_accuracy = np.array(accuracy_fn(params, next(final_test_eval)))
         size_arr.append(total_neurons)
-        final_dead_neurons = utl.death_check_given_model(net)(params, next(final_test_death))
+        activations, final_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(final_test_death))
         final_dead_neurons_count = utl.count_dead_neurons(final_dead_neurons)
+        activations_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
+        activations_max, _ = ravel_pytree(activations_max)
+        activations_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
+        activations_mean, _ = ravel_pytree(activations_mean)
 
         exp_run.track(np.array(total_neurons - final_dead_neurons_count),
                       name="Live neurons after convergence w/r total neurons", step=total_neurons)
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r total neurons", step=total_neurons)
+        activations_max_dist = Distribution(activations_max, bin_count=250)
+        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
+                      context={"lenet size": f"{size}"})
+        activations_mean_dist = Distribution(activations_mean, bin_count=250)
+        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
+                      context={"lenet size": f"{size}"})
 
         live_neurons.append(total_neurons - final_dead_neurons_count)
         f_acc.append(final_accuracy)

@@ -11,6 +11,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
+from typing import Union, Tuple
 from jax.tree_util import Partial
 
 OptState = Any
@@ -20,13 +21,16 @@ Batch = Mapping[int, np.ndarray]
 ##############################
 # Reviving utilities
 ##############################
-def death_check_given_model(model):
+def death_check_given_model(model, with_activations=False):
     """Return a boolean array per layer; with True values for dead neurons"""
     @jax.jit
-    def _death_check(_params: hk.Params, _batch: Batch) -> jnp.ndarray:
+    def _death_check(_params: hk.Params, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
         _, activations = model.apply(_params, _batch, True)
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
-        return jax.tree_map(lambda arr: arr == 0, sum_activations)
+        if with_activations:
+            return activations, jax.tree_map(lambda arr: arr == 0, sum_activations)
+        else:
+            return jax.tree_map(lambda arr: arr == 0, sum_activations)
 
     return _death_check
 
