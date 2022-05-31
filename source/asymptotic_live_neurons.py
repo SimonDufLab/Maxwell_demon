@@ -78,7 +78,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     size_arr = []
     f_acc = []
 
-    for size in [50, 100, 250]:#, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
+    for size in [50, 100, 250, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
         # Make the network and optimiser
         architecture = lenet_var_size(size, 10)
         net = build_models(architecture)
@@ -129,6 +129,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         activations_max, _ = ravel_pytree(activations_max)
         activations_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
         activations_mean, _ = ravel_pytree(activations_mean)
+        activations_count = utl.count_activations_occurrence(activations)
+        activations_count, _ = ravel_pytree(activations_count)
 
         exp_run.track(np.array(total_neurons - final_dead_neurons_count),
                       name="Live neurons after convergence w/r total neurons", step=total_neurons)
@@ -139,6 +141,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                       context={"lenet size": f"{size}"})
         activations_mean_dist = Distribution(activations_mean, bin_count=250)
         exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
+                      context={"lenet size": f"{size}"})
+        activations_count_dist = Distribution(activations_count, bin_count=50)
+        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
                       context={"lenet size": f"{size}"})
 
         live_neurons.append(total_neurons - final_dead_neurons_count)

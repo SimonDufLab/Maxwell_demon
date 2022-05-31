@@ -41,6 +41,15 @@ def count_dead_neurons(death_check):
 
 
 @jax.jit
+def count_activations_occurrence(activations_list):
+    """Count how many times neurons activated (post-relu; > 0) in the given batch"""
+    def _count_occurrence(leaf):
+        leaf = (leaf > 0).astype(int)
+        return jnp.sum(leaf, axis=0)
+    return jax.tree_map(_count_occurrence, activations_list)
+
+
+@jax.jit
 def map_decision(current_leaf, potential_leaf):
     return jnp.where(current_leaf != 0, current_leaf, potential_leaf)
 
