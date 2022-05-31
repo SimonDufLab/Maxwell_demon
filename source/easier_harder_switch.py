@@ -27,8 +27,8 @@ exp_name = "easier_harder_switch_experiment"
 @dataclass
 class ExpConfig:
     size: int = 100  # Number of hidden units in first layer; size*3 in second hidden layer
-    total_steps: int = 1001
-    report_freq: int = 50
+    total_steps: int = 10001
+    report_freq: int = 500
     record_freq: int = 10
     lr: float = 1e-3
     optimizer: str = "adam"
@@ -59,6 +59,14 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
+
+    if 'None' in exp_config.kept_classes:  # TODO: Probably a better way than to accept None as argument...
+        kept_classes = list(exp_config.kept_classes)
+        for i, item in enumerate(kept_classes):
+            if item == 'None':
+                kept_classes[i] = None
+        exp_config.kept_classes = tuple(kept_classes)
+
 
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)

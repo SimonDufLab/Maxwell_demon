@@ -32,8 +32,8 @@ class ExpConfig:
     total_steps: int = 20001
     report_freq: int = 500
     record_freq: int = 10
-    switching_period: int = 1000  # Switch dataset periodically
-    reset_period: int = 250  # After reset_period steps, reinitialize the parameters
+    switching_period: int = 2000  # Switch dataset periodically
+    reset_period: int = 500  # After reset_period steps, reinitialize the parameters
     reset_horizon: float = 1.0  # Set to lower than one if you want to stop resetting before final steps
     kept_classes: int = 3  # Number of classes in the randomly selected subset
     compare_full_reset: bool = True  # Include the comparison with a complete reset of the parameters
