@@ -30,8 +30,8 @@ exp_name = "asymptotic_live_neurons__lenet"
 # Configuration
 @dataclass
 class ExpConfig:
-    training_steps: int = 120001  # 20001
-    report_freq: int = 500  # 500
+    training_steps: int = 120001
+    report_freq: int = 3000
     lr: float = 1e-3
     optimizer: str = "adam"
     dataset: str = "mnist"
