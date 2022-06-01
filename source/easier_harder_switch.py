@@ -2,6 +2,7 @@
 generalisation and is linked to the amount of dead neurons. Also run on an MLP"""
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
 from aim import Run, Figure, Image
@@ -70,6 +71,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
+
+    # Help function to stack parameters
+    def dict_stack(xx, y):
+        return jnp.stack([xx, y])
 
     # Load the dataset for the 2 tasks (ez and hard)
     load_data_easier = dataset_choice[exp_config.datasets[0]]
@@ -185,9 +190,21 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             # Training step
             train_batch = next(train[idx])
-            params, opt_state = update_fn(params, opt_state, train_batch)
-            params_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
-                                                                        opt_partial_reinit_state, train_batch)
+            # Train in parallel
+            all_params = jax.tree_map(dict_stack, params, params_partial_reinit)
+            all_opt_states = jax.tree_map(dict_stack, opt_state, opt_partial_reinit_state)
+            all_params, all_opt_states = jax.vmap(update_fn, in_axes=(utl.vmap_axes_mapping(params),
+                                                                      utl.vmap_axes_mapping(opt_state), None))(
+                                                                                                        all_params,
+                                                                                                        all_opt_states,
+                                                                                                        train_batch)
+            params, params_partial_reinit = utl.dict_split(all_params)
+            opt_state, opt_partial_reinit_state = utl.dict_split(all_opt_states)
+
+            # Train sequentially the networks instead than in parallel
+            # params, opt_state = update_fn(params, opt_state, train_batch)
+            # params_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
+            #                                                             opt_partial_reinit_state, train_batch)
 
         # Plots
         x = list(range(0, exp_config.total_steps, exp_config.record_freq))
@@ -209,7 +226,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         aim_fig = Figure(fig)
         aim_img = Image(fig)
         exp_run.track(aim_fig, name=f"From {setting[order]} experiment", step=0)
-        exp_run.track(aim_img, name=f"From {setting[order]} experiment", step=0)
+        exp_run.track(aim_img, name=f"From {setting[order]} experiment; img", step=0)
 
 
 if __name__ == "__main__":

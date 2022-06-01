@@ -124,6 +124,26 @@ def update_given_loss_and_optimizer(loss, optimizer):
     return _update
 
 
+def vmap_axes_mapping(dict_container):
+    """Utility function to indicate to vmap that in_axes={key:0} for all keys in dict_container"""
+    def _map_over(v):
+        return 0  # Need to vmap over all arrays in the container
+    return jax.tree_map(_map_over, dict_container)
+
+
+@jax.jit
+def dict_split(container):
+    """Split back the containers into their specific components, returning them as a tuple"""
+    treedef = jax.tree_structure(container)
+    leaves = jax.tree_leaves(container)
+    _to = leaves[0].shape[0]
+
+    leaves = jax.tree_map(Partial(jnp.split, indices_or_sections=_to), leaves)
+    leaves = jax.tree_map(jnp.squeeze, leaves)
+    splitted_dict = tuple([treedef.unflatten(list(z)) for z in zip(*leaves)])
+    return splitted_dict
+
+
 ##############################
 # Dataset loading utilities
 ##############################
