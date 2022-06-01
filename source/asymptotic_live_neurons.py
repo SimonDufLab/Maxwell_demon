@@ -9,7 +9,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
-from aim import Run, Figure, Distribution
+from aim import Run, Figure, Distribution, Image
 import os
 import time
 from dataclasses import dataclass
@@ -70,15 +70,19 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_eval = load_data(split="test", is_training=False, batch_size=500)
     final_test_eval = load_data(split="test", is_training=False, batch_size=10000)
 
-    test_death = load_data(split="train", is_training=False, batch_size=1000)
-    final_test_death = load_data(split="train", is_training=False, batch_size=60000)
+    death_minibatch_size = 1000
+    dataset_size, test_death = load_data(split="train", is_training=False,
+                                         batch_size=death_minibatch_size, cardinality=True)
+    final_test_death = load_data(split="train", is_training=False, batch_size=dataset_size)
 
     # Recording over all widths
     live_neurons = []
+    avg_live_neurons = []
+    std_live_neurons = []
     size_arr = []
     f_acc = []
 
-    for size in [50, 100, 250, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
+    for size in [50, 100, 250]:#, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
         # Make the network and optimiser
         architecture = lenet_var_size(size, 10)
         net = build_models(architecture)
@@ -132,6 +136,19 @@ def run_exp(exp_config: ExpConfig) -> None:
         activations_count = utl.count_activations_occurrence(activations)
         activations_count, _ = ravel_pytree(activations_count)
 
+        # Additionally, track an 'on average' number of death neurons within a batch
+        scan_len = dataset_size // death_minibatch_size
+
+        def scan_f(_, __):
+            _, batch_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(test_death))
+            return None, total_neurons - utl.count_dead_neurons(batch_dead_neurons)
+        _, batches_final_live_neurons = jax.lax.scan(scan_f, None, None, scan_len)
+
+        avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
+        std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
+
+        exp_run.track(np.array(avg_final_live_neurons),
+                      name="On average, live neurons after convergence w/r total neurons", step=total_neurons)
         exp_run.track(np.array(total_neurons - final_dead_neurons_count),
                       name="Live neurons after convergence w/r total neurons", step=total_neurons)
         exp_run.track(final_accuracy,
@@ -147,6 +164,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                       context={"lenet size": f"{size}"})
 
         live_neurons.append(total_neurons - final_dead_neurons_count)
+        avg_live_neurons.append(avg_final_live_neurons)
+        std_live_neurons.append(std_final_live_neurons)
         f_acc.append(final_accuracy)
 
     # Plots
@@ -161,7 +180,20 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 16})
     fig1.savefig(dir_path+"effective_capacity.png")
     aim_fig1 = Figure(fig1)
+    aim_img1 = Image(fig1)
     exp_run.track(aim_fig1, name="Effective capacity", step=0)
+    exp_run.track(aim_img1, name="Effective capacity", step=0)
+
+    fig1_5 = plt.figure(figsize=(15, 10))
+    plt.errorbar(size_arr, avg_live_neurons, std_live_neurons, label="Live neurons", linewidth=4)
+    plt.xlabel("Number of neurons in NN", fontsize=16)
+    plt.ylabel("Average live neurons at end of training", fontsize=16)
+    plt.title((f"Effective capacity averaged on minibatch of size={death_minibatch_size}, 2-hidden layers MLP on "
+               + exp_config.dataset), fontweight='bold', fontsize=20)
+    plt.legend(prop={'size': 16})
+    fig1_5.savefig(dir_path+"avg_effective_capacity.png")
+    aim_img1_5 = Image(fig1_5)
+    exp_run.track(aim_img1_5, name="Average effective capacity", step=0)
 
     fig2 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, jnp.array(live_neurons) / jnp.array(size_arr), label="alive ratio")
@@ -171,7 +203,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 16})
     fig2.savefig(dir_path+"live_neurons_ratio.png")
     aim_fig2 = Figure(fig2)
+    aim_img2 = Image(fig2)
     exp_run.track(aim_fig2, name="Live neurons ratio", step=0)
+    exp_run.track(aim_img2, name="Live neurons ratio", step=0)
 
     fig3 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, f_acc, label="accuracy", linewidth=4)
@@ -181,7 +215,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 16})
     fig3.savefig(dir_path+"performance_at_convergence.png")
     aim_fig3 = Figure(fig3)
+    aim_img3 = Image(fig3)
     exp_run.track(aim_fig3, name="Performance at convergence", step=0)
+    exp_run.track(aim_img3, name="Performance at convergence", step=0)
 
 
 if __name__ == "__main__":

@@ -151,11 +151,13 @@ def interval_zero_one(image, label):
 
 
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
-                 subset: Optional[int] = None, transform: bool = True,):  # -> Generator[Batch, None, None]:
+                    subset: Optional[int] = None, transform: bool = True,
+                    cardinality: bool = False):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
     ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data")
+    ds_size = int(ds.cardinality())
     if subset is not None:
         # assert subset < 10, "subset must be smaller than 10"
         # indices = np.random.choice(10, subset, replace=False)
@@ -176,22 +178,25 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     if (subset is not None) and transform:
         return tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)
     else:
-        return iter(tfds.as_numpy(ds))
+        if cardinality:
+            return ds_size, iter(tfds.as_numpy(ds))
+        else:
+            return iter(tfds.as_numpy(ds))
 
 
-def load_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True):
+def load_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
     return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size,
-                           subset=subset, transform=transform)
+                           subset=subset, transform=transform, cardinality=cardinality)
 
 
-def load_cifar10_tf(split: str, is_training, batch_size, subset=None, transform=True):
+def load_cifar10_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
     return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size,
-                           subset=subset, transform=transform)
+                           subset=subset, transform=transform, cardinality=cardinality)
 
 
-def load_fashion_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True):
+def load_fashion_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
     return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size,
-                           subset=subset, transform=transform)
+                           subset=subset, transform=transform, cardinality=cardinality)
 
 
 # Pytorch dataloader
