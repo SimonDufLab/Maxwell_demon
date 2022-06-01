@@ -4,7 +4,7 @@ generalisation and is linked to the amount of dead neurons. Also run on an MLP""
 import jax
 import numpy as np
 import matplotlib.pyplot as plt
-from aim import Run, Figure
+from aim import Run, Figure, Image
 import os
 import time
 from dataclasses import dataclass, asdict
@@ -66,7 +66,6 @@ def run_exp(exp_config: ExpConfig) -> None:
             if item == 'None':
                 kept_classes[i] = None
         exp_config.kept_classes = tuple(kept_classes)
-
 
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)
@@ -208,7 +207,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         plt.legend(prop={'size': 12})
         fig.savefig(dir_path + f"{setting[order]}.png")
         aim_fig = Figure(fig)
+        aim_img = Image(fig)
         exp_run.track(aim_fig, name=f"From {setting[order]} experiment", step=0)
+        exp_run.track(aim_img, name=f"From {setting[order]} experiment", step=0)
 
 
 if __name__ == "__main__":

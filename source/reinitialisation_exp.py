@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from jax.tree_util import Partial
 import numpy as np
 import matplotlib.pyplot as plt
-from aim import Run, Figure
+from aim import Run, Figure, Image
 import os
 import time
 from dataclasses import dataclass
@@ -259,7 +259,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 12})
     fig1.savefig(dir_path+"perf_vs_dead_neurons.png")
     aim_fig1 = Figure(fig1)
+    aim_img1 = Image(fig1)
     exp_run.track(aim_fig1, name="Switching task performance w/r to dead neurons", step=0)
+    exp_run.track(aim_img1, name="Switching task performance w/r to dead neurons", step=0)
 
     fig2 = plt.figure(figsize=(15, 10))
     plt.plot(no_reinit_dead_neurons, label="without reinitialisation")
@@ -272,7 +274,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 12})
     fig2.savefig(dir_path+"dead_neurons.png")
     aim_fig2 = Figure(fig2)
+    aim_img2 = Image(fig2)
     exp_run.track(aim_fig2, name="Dead neurons over training time", step=0)
+    exp_run.track(aim_img2, name="Dead neurons over training time", step=0)
 
 
 if __name__ == "__main__":
