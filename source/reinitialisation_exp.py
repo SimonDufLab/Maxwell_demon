@@ -74,22 +74,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         def dict_stack(xx, y):
             return jnp.stack([xx, y])
 
-    def vmap_axes_mapping(container):
-        def _map_over(v):
-            return 0  # Need to vmap over all arrays in the container
-        return jax.tree_map(_map_over, container)
-
-    @jax.jit
-    def dict_split(container):
-        treedef = jax.tree_structure(container)
-        leaves = jax.tree_leaves(container)
-        _to = leaves[0].shape[0]
-
-        leaves = jax.tree_map(Partial(jnp.split, indices_or_sections=_to), leaves)
-        leaves = jax.tree_map(jnp.squeeze, leaves)
-        splitted_dict = tuple([treedef.unflatten(list(z)) for z in zip(*leaves)])
-        return splitted_dict
-
     # Load the dataset
     load_data = dataset_choice[exp_config.dataset]
     assert exp_config.kept_classes < 10, "subset must be smaller than 10"
@@ -208,6 +192,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Training step
         train_batch = next(train)
+        # Train in parallel
         if exp_config.compare_full_reset:
             all_params = jax.tree_map(dict_stack, params, params_partial_reinit, params_hard_reinit)
             all_opt_states = jax.tree_map(dict_stack, opt_state, opt_partial_reinit_state, opt_hard_reinit_state)
@@ -215,19 +200,19 @@ def run_exp(exp_config: ExpConfig) -> None:
             all_params = jax.tree_map(dict_stack, params, params_partial_reinit)
             all_opt_states = jax.tree_map(dict_stack, opt_state, opt_partial_reinit_state)
 
-        all_params, all_opt_states = jax.vmap(update_fn, in_axes=(vmap_axes_mapping(params),
-                                                                  vmap_axes_mapping(opt_state), None))(all_params,
-                                                                                                       all_opt_states,
-                                                                                                       train_batch)
+        all_params, all_opt_states = jax.vmap(update_fn, in_axes=(utl.vmap_axes_mapping(params),
+                                                                  utl.vmap_axes_mapping(opt_state), None))(
+                                                                                                        all_params,
+                                                                                                        all_opt_states,
+                                                                                                        train_batch)
         if exp_config.compare_full_reset:
-            params, params_partial_reinit, params_hard_reinit = dict_split(all_params)
-            opt_state, opt_partial_reinit_state, opt_hard_reinit_state = dict_split(all_opt_states)
+            params, params_partial_reinit, params_hard_reinit = utl.dict_split(all_params)
+            opt_state, opt_partial_reinit_state, opt_hard_reinit_state = utl.dict_split(all_opt_states)
         else:
-            params, params_partial_reinit = dict_split(all_params)
-            opt_state, opt_partial_reinit_state = dict_split(all_opt_states)
+            params, params_partial_reinit = utl.dict_split(all_params)
+            opt_state, opt_partial_reinit_state = utl.dict_split(all_opt_states)
 
-        # Train sequentially the network instead than in parallel
-
+        # Train sequentially the networks instead than in parallel
         # params, opt_state = update_fn(params, opt_state, train_batch)
         # params_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
         #                                                             opt_partial_reinit_state, train_batch)
@@ -261,7 +246,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     aim_fig1 = Figure(fig1)
     aim_img1 = Image(fig1)
     exp_run.track(aim_fig1, name="Switching task performance w/r to dead neurons", step=0)
-    exp_run.track(aim_img1, name="Switching task performance w/r to dead neurons", step=0)
+    exp_run.track(aim_img1, name="Switching task performance w/r to dead neurons; img", step=0)
 
     fig2 = plt.figure(figsize=(15, 10))
     plt.plot(no_reinit_dead_neurons, label="without reinitialisation")
@@ -276,7 +261,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     aim_fig2 = Figure(fig2)
     aim_img2 = Image(fig2)
     exp_run.track(aim_fig2, name="Dead neurons over training time", step=0)
-    exp_run.track(aim_img2, name="Dead neurons over training time", step=0)
+    exp_run.track(aim_img2, name="Dead neurons over training time; img", step=0)
 
 
 if __name__ == "__main__":
