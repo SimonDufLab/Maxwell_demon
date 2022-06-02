@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from jax.tree_util import Partial
 import numpy as np
 import matplotlib.pyplot as plt
-from aim import Run, Figure
+from aim import Run, Figure, Image
 import os
 import time
 from dataclasses import dataclass
@@ -32,8 +32,8 @@ class ExpConfig:
     total_steps: int = 20001
     report_freq: int = 500
     record_freq: int = 10
-    switching_period: int = 1000  # Switch dataset periodically
-    reset_period: int = 250  # After reset_period steps, reinitialize the parameters
+    switching_period: int = 2000  # Switch dataset periodically
+    reset_period: int = 500  # After reset_period steps, reinitialize the parameters
     reset_horizon: float = 1.0  # Set to lower than one if you want to stop resetting before final steps
     kept_classes: int = 3  # Number of classes in the randomly selected subset
     compare_full_reset: bool = True  # Include the comparison with a complete reset of the parameters
@@ -73,22 +73,6 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         def dict_stack(xx, y):
             return jnp.stack([xx, y])
-
-    def vmap_axes_mapping(container):
-        def _map_over(v):
-            return 0  # Need to vmap over all arrays in the container
-        return jax.tree_map(_map_over, container)
-
-    @jax.jit
-    def dict_split(container):
-        treedef = jax.tree_structure(container)
-        leaves = jax.tree_leaves(container)
-        _to = leaves[0].shape[0]
-
-        leaves = jax.tree_map(Partial(jnp.split, indices_or_sections=_to), leaves)
-        leaves = jax.tree_map(jnp.squeeze, leaves)
-        splitted_dict = tuple([treedef.unflatten(list(z)) for z in zip(*leaves)])
-        return splitted_dict
 
     # Load the dataset
     load_data = dataset_choice[exp_config.dataset]
@@ -208,6 +192,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Training step
         train_batch = next(train)
+        # Train in parallel
         if exp_config.compare_full_reset:
             all_params = jax.tree_map(dict_stack, params, params_partial_reinit, params_hard_reinit)
             all_opt_states = jax.tree_map(dict_stack, opt_state, opt_partial_reinit_state, opt_hard_reinit_state)
@@ -215,19 +200,19 @@ def run_exp(exp_config: ExpConfig) -> None:
             all_params = jax.tree_map(dict_stack, params, params_partial_reinit)
             all_opt_states = jax.tree_map(dict_stack, opt_state, opt_partial_reinit_state)
 
-        all_params, all_opt_states = jax.vmap(update_fn, in_axes=(vmap_axes_mapping(params),
-                                                                  vmap_axes_mapping(opt_state), None))(all_params,
-                                                                                                       all_opt_states,
-                                                                                                       train_batch)
+        all_params, all_opt_states = jax.vmap(update_fn, in_axes=(utl.vmap_axes_mapping(params),
+                                                                  utl.vmap_axes_mapping(opt_state), None))(
+                                                                                                        all_params,
+                                                                                                        all_opt_states,
+                                                                                                        train_batch)
         if exp_config.compare_full_reset:
-            params, params_partial_reinit, params_hard_reinit = dict_split(all_params)
-            opt_state, opt_partial_reinit_state, opt_hard_reinit_state = dict_split(all_opt_states)
+            params, params_partial_reinit, params_hard_reinit = utl.dict_split(all_params)
+            opt_state, opt_partial_reinit_state, opt_hard_reinit_state = utl.dict_split(all_opt_states)
         else:
-            params, params_partial_reinit = dict_split(all_params)
-            opt_state, opt_partial_reinit_state = dict_split(all_opt_states)
+            params, params_partial_reinit = utl.dict_split(all_params)
+            opt_state, opt_partial_reinit_state = utl.dict_split(all_opt_states)
 
-        # Train sequentially the network instead than in parallel
-
+        # Train sequentially the networks instead than in parallel
         # params, opt_state = update_fn(params, opt_state, train_batch)
         # params_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
         #                                                             opt_partial_reinit_state, train_batch)
@@ -259,7 +244,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 12})
     fig1.savefig(dir_path+"perf_vs_dead_neurons.png")
     aim_fig1 = Figure(fig1)
+    aim_img1 = Image(fig1)
     exp_run.track(aim_fig1, name="Switching task performance w/r to dead neurons", step=0)
+    exp_run.track(aim_img1, name="Switching task performance w/r to dead neurons; img", step=0)
 
     fig2 = plt.figure(figsize=(15, 10))
     plt.plot(no_reinit_dead_neurons, label="without reinitialisation")
@@ -272,7 +259,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 12})
     fig2.savefig(dir_path+"dead_neurons.png")
     aim_fig2 = Figure(fig2)
+    aim_img2 = Image(fig2)
     exp_run.track(aim_fig2, name="Dead neurons over training time", step=0)
+    exp_run.track(aim_img2, name="Dead neurons over training time; img", step=0)
 
 
 if __name__ == "__main__":

@@ -2,9 +2,10 @@
 generalisation and is linked to the amount of dead neurons. Also run on an MLP"""
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 import matplotlib.pyplot as plt
-from aim import Run, Figure
+from aim import Run, Figure, Image
 import os
 import time
 from dataclasses import dataclass, asdict
@@ -27,8 +28,8 @@ exp_name = "easier_harder_switch_experiment"
 @dataclass
 class ExpConfig:
     size: int = 100  # Number of hidden units in first layer; size*3 in second hidden layer
-    total_steps: int = 1001
-    report_freq: int = 50
+    total_steps: int = 10001
+    report_freq: int = 500
     record_freq: int = 10
     lr: float = 1e-3
     optimizer: str = "adam"
@@ -60,9 +61,20 @@ def run_exp(exp_config: ExpConfig) -> None:
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
 
+    if 'None' in exp_config.kept_classes:  # TODO: Probably a better way than to accept None as argument...
+        kept_classes = list(exp_config.kept_classes)
+        for i, item in enumerate(kept_classes):
+            if item == 'None':
+                kept_classes[i] = None
+        exp_config.kept_classes = tuple(kept_classes)
+
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
+
+    # Help function to stack parameters
+    def dict_stack(xx, y):
+        return jnp.stack([xx, y])
 
     # Load the dataset for the 2 tasks (ez and hard)
     load_data_easier = dataset_choice[exp_config.datasets[0]]
@@ -178,9 +190,21 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             # Training step
             train_batch = next(train[idx])
-            params, opt_state = update_fn(params, opt_state, train_batch)
-            params_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
-                                                                        opt_partial_reinit_state, train_batch)
+            # Train in parallel
+            all_params = jax.tree_map(dict_stack, params, params_partial_reinit)
+            all_opt_states = jax.tree_map(dict_stack, opt_state, opt_partial_reinit_state)
+            all_params, all_opt_states = jax.vmap(update_fn, in_axes=(utl.vmap_axes_mapping(params),
+                                                                      utl.vmap_axes_mapping(opt_state), None))(
+                                                                                                        all_params,
+                                                                                                        all_opt_states,
+                                                                                                        train_batch)
+            params, params_partial_reinit = utl.dict_split(all_params)
+            opt_state, opt_partial_reinit_state = utl.dict_split(all_opt_states)
+
+            # Train sequentially the networks instead than in parallel
+            # params, opt_state = update_fn(params, opt_state, train_batch)
+            # params_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
+            #                                                             opt_partial_reinit_state, train_batch)
 
         # Plots
         x = list(range(0, exp_config.total_steps, exp_config.record_freq))
@@ -200,7 +224,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         plt.legend(prop={'size': 12})
         fig.savefig(dir_path + f"{setting[order]}.png")
         aim_fig = Figure(fig)
+        aim_img = Image(fig)
         exp_run.track(aim_fig, name=f"From {setting[order]} experiment", step=0)
+        exp_run.track(aim_img, name=f"From {setting[order]} experiment; img", step=0)
 
 
 if __name__ == "__main__":
