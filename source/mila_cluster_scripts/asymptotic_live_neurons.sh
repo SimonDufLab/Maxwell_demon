@@ -33,8 +33,14 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
 
 # Run experiments
-python source/asymptotic_live_neurons.py dataset='mnist' regularizer=None
+python source/asymptotic_live_neurons.py dataset='mnist' regularizer='l2'
 wait $!
-python source/asymptotic_live_neurons.py dataset='fashion mnist' regularizer=None
+python source/asymptotic_live_neurons.py dataset='fashion mnist' regularizer='l2'
 wait $!
-python source/asymptotic_live_neurons.py dataset='cifar10' regularizer=None
+python source/asymptotic_live_neurons.py dataset='cifar10' regularizer='l2'
+wait $!
+python source/asymptotic_live_neurons.py dataset='mnist' regularizer='cdg_l2'
+wait $!
+python source/asymptotic_live_neurons.py dataset='fashion mnist' regularizer='cdg_l2'
+wait $!
+python source/asymptotic_live_neurons.py dataset='cifar10' regularizer='cdg_l2'
