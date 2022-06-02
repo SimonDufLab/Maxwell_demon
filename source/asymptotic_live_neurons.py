@@ -82,7 +82,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     size_arr = []
     f_acc = []
 
-    for size in [50, 100, 250, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
+    for size in [50, 100]:#, 250, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
         # Make the network and optimiser
         architecture = lenet_var_size(size, 10)
         net = build_models(architecture)
@@ -114,11 +114,17 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 # Record some metrics
                 dead_neurons_count = utl.count_dead_neurons(dead_neurons)
-                dead_neurons_log.append(dead_neurons_count)
+                # dead_neurons_log.append(dead_neurons_count)
                 accuracies_log.append(test_accuracy)
                 exp_run.track(np.array(dead_neurons_count), name="Dead neurons", step=step,
                               context={"lenet size": f"{size}"})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
+                              context={"lenet size": f"{size}"})
+
+            if step % 1000 == 0:
+                dead_neurons = death_check_fn(params, next(final_test_death))
+                dead_neurons_count = utl.count_dead_neurons(dead_neurons)
+                exp_run.track(np.array(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
                               context={"lenet size": f"{size}"})
 
             # Train step over single batch
