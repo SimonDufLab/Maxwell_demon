@@ -13,7 +13,8 @@ from aim import Run, Figure, Distribution, Image
 import os
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Tuple, Any
+from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
@@ -21,13 +22,12 @@ from omegaconf import OmegaConf
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
 
-from models.mlp import lenet_var_size
 import utils.utils as utl
 from utils.utils import build_models
-from utils.config import optimizer_choice, dataset_choice, regularizer_choice
+from utils.config import optimizer_choice, dataset_choice, regularizer_choice, architecture_choice
 
 # Experience name -> for aim logger
-exp_name = "asymptotic_live_neurons__lenet"
+exp_name = "asymptotic_live_neurons"
 
 
 # Configuration
@@ -38,9 +38,16 @@ class ExpConfig:
     lr: float = 1e-3
     optimizer: str = "adam"
     dataset: str = "mnist"
+    classes: int = 10  # Number of classes in the training dataset
+    architecture: str = "mlp_3"
+    sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "cdg_l2"
     reg_param: float = 1e-4
     epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
+
+    # def __post_init__(self):
+    #     if type(self.sizes) == str:
+    #         self.sizes = literal_eval(self.sizes)
 
 
 cs = ConfigStore.instance()
@@ -54,9 +61,17 @@ def run_exp(exp_config: ExpConfig) -> None:
     assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(optimizer_choice.keys())
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
     assert exp_config.regularizer in regularizer_choice, "Currently supported regularizers: " + str(regularizer_choice)
+    assert exp_config.architecture in architecture_choice.keys(), "Current architectures available: " + str(architecture_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
+    if type(exp_config.sizes) == str:
+        exp_config.sizes = literal_eval(exp_config.sizes)
+
+    # print(exp_config.sizes)
+    # for size in exp_config.sizes:
+    #     print(str(tuple(size)))
+    # raise SystemExit(0)
 
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)
@@ -82,13 +97,12 @@ def run_exp(exp_config: ExpConfig) -> None:
     size_arr = []
     f_acc = []
 
-    for size in [50, 100]:#, 250, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
+    for size in exp_config.sizes:  # Vary the NN width
         # Make the network and optimiser
-        architecture = lenet_var_size(size, 10)
+        architecture = architecture_choice[exp_config.architecture](size, 10)
         net = build_models(architecture)
 
         opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
-        dead_neurons_log = []
         accuracies_log = []
 
         # Set training/monitoring functions
@@ -114,23 +128,22 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 # Record some metrics
                 dead_neurons_count = utl.count_dead_neurons(dead_neurons)
-                # dead_neurons_log.append(dead_neurons_count)
                 accuracies_log.append(test_accuracy)
                 exp_run.track(np.array(dead_neurons_count), name="Dead neurons", step=step,
-                              context={"lenet size": f"{size}"})
+                              context={"net size": utl.size_to_string(size)})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
-                              context={"lenet size": f"{size}"})
+                              context={"net size": utl.size_to_string(size)})
 
             if step % 1000 == 0:
                 dead_neurons = death_check_fn(params, next(final_test_death))
                 dead_neurons_count = utl.count_dead_neurons(dead_neurons)
                 exp_run.track(np.array(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
-                              context={"lenet size": f"{size}"})
+                              context={"net size": utl.size_to_string(size)})
 
             # Train step over single batch
             params, opt_state = update_fn(params, opt_state, next(train))
 
-        total_neurons = size + 3*size  # TODO: Adapt to other NN than 2-hidden MLP
+        total_neurons = utl.get_total_neurons(exp_config.architecture, size)
         final_accuracy = np.array(accuracy_fn(params, next(final_test_eval)))
         size_arr.append(total_neurons)
         activations, final_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(final_test_death))
@@ -161,13 +174,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                       name="Accuracy after convergence w/r total neurons", step=total_neurons)
         activations_max_dist = Distribution(activations_max, bin_count=250)
         exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
-                      context={"lenet size": f"{size}"})
+                      context={"net size": utl.size_to_string(size)})
         activations_mean_dist = Distribution(activations_mean, bin_count=250)
         exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
-                      context={"lenet size": f"{size}"})
+                      context={"net size": utl.size_to_string(size)})
         activations_count_dist = Distribution(activations_count, bin_count=50)
         exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
-                      context={"lenet size": f"{size}"})
+                      context={"net size": utl.size_to_string(size)})
 
         live_neurons.append(total_neurons - final_dead_neurons_count)
         avg_live_neurons.append(avg_final_live_neurons)
@@ -182,7 +195,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.plot(size_arr, live_neurons, label="Live neurons", linewidth=4)
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Live neurons at end of training", fontsize=16)
-    plt.title("Effective capacity, 2-hidden layers MLP on "+exp_config.dataset, fontweight='bold', fontsize=20)
+    plt.title("Effective capacity, "+exp_config.architecture+" on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig1.savefig(dir_path+"effective_capacity.png")
     aim_fig1 = Figure(fig1)
@@ -194,7 +207,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.errorbar(size_arr, avg_live_neurons, std_live_neurons, label="Live neurons", linewidth=4)
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Average live neurons at end of training", fontsize=16)
-    plt.title((f"Effective capacity averaged on minibatch of size={death_minibatch_size}, 2-hidden layers MLP on "
+    plt.title((f"Effective capacity averaged on minibatch of size={death_minibatch_size}, "+exp_config.architecture+" on "
                + exp_config.dataset), fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig1_5.savefig(dir_path+"avg_effective_capacity.png")
@@ -205,7 +218,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.plot(size_arr, jnp.array(live_neurons) / jnp.array(size_arr), label="alive ratio")
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Ratio of live neurons at end of training", fontsize=16)
-    plt.title("MLP effective capacity on "+exp_config.dataset, fontweight='bold', fontsize=20)
+    plt.title(exp_config.architecture+" effective capacity on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig2.savefig(dir_path+"live_neurons_ratio.png")
     aim_fig2 = Figure(fig2)
@@ -217,7 +230,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.plot(size_arr, f_acc, label="accuracy", linewidth=4)
     plt.xlabel("Number of neurons in NN", fontsize=16)
     plt.ylabel("Final accuracy", fontsize=16)
-    plt.title("Performance at convergence, 2-hidden layers MLP on "+exp_config.dataset, fontweight='bold', fontsize=20)
+    plt.title("Performance at convergence, "+exp_config.architecture+" on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig3.savefig(dir_path+"performance_at_convergence.png")
     aim_fig3 = Figure(fig3)

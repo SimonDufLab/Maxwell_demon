@@ -13,6 +13,7 @@ from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
 from typing import Union, Tuple
 from jax.tree_util import Partial
+from collections.abc import Iterable
 
 OptState = Any
 Batch = Mapping[int, np.ndarray]
@@ -21,11 +22,19 @@ Batch = Mapping[int, np.ndarray]
 ##############################
 # Reviving utilities
 ##############################
+def sum_across_filter(filters):
+    if filters.ndim > 1:
+        return jnp.sum(filters, axis=tuple(range(filters.ndim - 1)))
+    else:
+        return filters
+
+
 def death_check_given_model(model, with_activations=False):
     """Return a boolean array per layer; with True values for dead neurons"""
     @jax.jit
     def _death_check(_params: hk.Params, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
         _, activations = model.apply(_params, _batch, True)
+        activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
             return activations, jax.tree_map(lambda arr: arr == 0, sum_activations)
@@ -321,3 +330,25 @@ def build_models(layer_list, name=None):
 
     # return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
     return hk.without_apply_rng(hk.transform(secondary_model))
+
+
+##############################
+# Varia
+##############################
+def get_total_neurons(architecture, size):
+    if architecture == 'mlp_3':
+        return size + 3*size
+    if architecture == 'conv_3_2':
+        return size[0]*(1+2+4) + size[1]
+
+
+def size_to_string(item):
+    """Helper function to print correctly layer size within aim logger"""
+    if isinstance(item, Iterable):
+        x = [(str(i) + '_') for i in list(item)]
+        word = ''
+        for i in x:  # Python bug? sum(x) doesn't work...
+            word += i
+        return word[:-1]
+    else:
+        return str(item)

@@ -15,7 +15,7 @@ import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
-from models.mlp import lenet_var_size
+from models.mlp import mlp_3
 import utils.utils as utl
 from utils.utils import build_models
 from utils.config import dataset_choice, optimizer_choice, regularizer_choice
@@ -84,7 +84,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_death = load_data(split="train", is_training=False, batch_size=1000, subset=indices)
 
     # Create network/optimizer and initialize params
-    architecture = lenet_var_size(exp_config.size, exp_config.kept_classes)
+    architecture = mlp_3(exp_config.size, exp_config.kept_classes)
     net = build_models(architecture)
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
 
