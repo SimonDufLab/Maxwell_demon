@@ -4,7 +4,7 @@ import jax
 from jax.tree_util import Partial
 
 
-def lenet_var_size(size, number_classes):
+def mlp_3(size, number_classes):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units"""
     def act():
         return jax.nn.relu
