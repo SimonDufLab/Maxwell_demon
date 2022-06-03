@@ -82,7 +82,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     size_arr = []
     f_acc = []
 
-    for size in [50, 100, 250, 500, 750, 1000, 1250, 1500, 2000]:  # Vary the NN width
+    for size in exp_config.sizes:  # Vary the NN width
         # Make the network and optimiser
         architecture = lenet_var_size(size, 10)
         net = build_models(architecture)
