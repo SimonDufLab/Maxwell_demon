@@ -68,11 +68,6 @@ def run_exp(exp_config: ExpConfig) -> None:
     if type(exp_config.sizes) == str:
         exp_config.sizes = literal_eval(exp_config.sizes)
 
-    # print(exp_config.sizes)
-    # for size in exp_config.sizes:
-    #     print(str(tuple(size)))
-    # raise SystemExit(0)
-
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
@@ -81,14 +76,15 @@ def run_exp(exp_config: ExpConfig) -> None:
     load_data = dataset_choice[exp_config.dataset]
     train = load_data(split="train", is_training=True, batch_size=50)
 
-    train_eval = load_data(split="train", is_training=False, batch_size=500)
-    test_eval = load_data(split="test", is_training=False, batch_size=500)
-    final_test_eval = load_data(split="test", is_training=False, batch_size=10000)
+    eval_size = 500
+    train_eval = load_data(split="train", is_training=False, batch_size=eval_size)
+    test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, cardinality=True)
+    # final_test_eval = load_data(split="test", is_training=False, batch_size=10000)
 
     death_minibatch_size = 1000
     dataset_size, test_death = load_data(split="train", is_training=False,
                                          batch_size=death_minibatch_size, cardinality=True)
-    final_test_death = load_data(split="train", is_training=False, batch_size=dataset_size)
+    # final_test_death = load_data(split="train", is_training=False, batch_size=dataset_size)
 
     # Recording over all widths
     live_neurons = []
@@ -110,6 +106,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         accuracy_fn = utl.accuracy_given_model(net)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt)
         death_check_fn = utl.death_check_given_model(net)
+        scan_len = dataset_size // death_minibatch_size
+        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+        scan_death_check_fn_with_activations = utl.scanned_death_check_fn(
+            utl.death_check_given_model(net, with_activations=True), scan_len)
+        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
 
         params = net.init(jax.random.PRNGKey(42 - 1), next(train))
         opt_state = opt.init(params)
@@ -135,7 +136,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                               context={"net size": utl.size_to_string(size)})
 
             if step % 1000 == 0:
-                dead_neurons = death_check_fn(params, next(final_test_death))
+                dead_neurons = scan_death_check_fn(params, test_death)
+                dead_neurons = jax.tree_map(utl.logical_or_sum, dead_neurons)
                 dead_neurons_count = utl.count_dead_neurons(dead_neurons)
                 exp_run.track(np.array(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
                               context={"net size": utl.size_to_string(size)})
@@ -144,10 +146,18 @@ def run_exp(exp_config: ExpConfig) -> None:
             params, opt_state = update_fn(params, opt_state, next(train))
 
         total_neurons = utl.get_total_neurons(exp_config.architecture, size)
-        final_accuracy = np.array(accuracy_fn(params, next(final_test_eval)))
+        # final_accuracy = np.array(accuracy_fn(params, next(final_test_eval)))
+        final_accuracy = np.array(final_accuracy_fn(params, test_eval))
         size_arr.append(total_neurons)
-        activations, final_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(final_test_death))
+        # activations, final_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(final_test_death))
+        # final_dead_neurons_count = utl.count_dead_neurons(final_dead_neurons)
+
+        batched_activations, batched_dead_neurons = scan_death_check_fn_with_activations(params, test_death)
+
+        activations = [layer.reshape((-1, layer.shape[-1])) for layer in batched_activations]
+        final_dead_neurons = jax.tree_map(utl.logical_or_sum, batched_dead_neurons)
         final_dead_neurons_count = utl.count_dead_neurons(final_dead_neurons)
+
         activations_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
         activations_max, _ = ravel_pytree(activations_max)
         activations_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
@@ -156,8 +166,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         activations_count, _ = ravel_pytree(activations_count)
 
         # Additionally, track an 'on average' number of death neurons within a batch
-        scan_len = dataset_size // death_minibatch_size
-
         def scan_f(_, __):
             _, batch_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(test_death))
             return None, total_neurons - utl.count_dead_neurons(batch_dead_neurons)
