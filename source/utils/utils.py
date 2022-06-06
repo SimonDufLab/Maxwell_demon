@@ -44,9 +44,42 @@ def death_check_given_model(model, with_activations=False):
     return _death_check
 
 
+def scanned_death_check_fn(death_check_fn, scan_len, with_activations=False):
+    if with_activations:
+        def scan_death_check(params, batch_it):
+            def scan_dead_neurons_over_whole_ds(_, __):
+                batched_activations, batched_dead_neurons = death_check_fn(
+                    params, next(batch_it))
+                return None, (batched_activations, batched_dead_neurons)
+
+            _, (batched_activations, batched_dead_neurons) = jax.lax.scan(scan_dead_neurons_over_whole_ds, None, None,
+                                                                          scan_len)
+            return batched_activations, batched_dead_neurons
+        return scan_death_check
+    else:
+        def scan_death_check(params, batch_it):
+            def scan_dead_neurons_over_whole_ds(_, __):
+                batched_dead_neurons = death_check_fn(params, next(batch_it))
+                return None, batched_dead_neurons
+
+            _, batched_dead_neurons = jax.lax.scan(scan_dead_neurons_over_whole_ds, None, None,
+                                                                          scan_len)
+            return batched_dead_neurons
+        return scan_death_check
+
+
 @jax.jit
 def count_dead_neurons(death_check):
     return sum([jnp.sum(layer) for layer in death_check])
+
+
+@jax.jit
+def logical_or_sum(leaf):
+    """Perform a logical_or across the first dimension (over a batch)"""
+    def scan_log_or(carry, next_item):
+        return jnp.logical_or(carry.astype(bool), next_item.astype(bool)), None
+    summed_leaf, _ = jax.lax.scan(scan_log_or, jnp.zeros_like(leaf[0]), leaf)
+    return summed_leaf
 
 
 @jax.jit
@@ -91,6 +124,16 @@ def accuracy_given_model(model):
         return jnp.mean(jnp.argmax(predictions, axis=-1) == _batch[1])
 
     return _accuracy
+
+
+def create_full_accuracy_fn(accuracy_fn, scan_len):
+    def full_accuracy_fn(params, batch_it):
+        def scan_accuracy_fn(_, __):
+            acc = accuracy_fn(params, next(batch_it))
+            return None, acc
+        _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
+        return jnp.mean(all_acc)
+    return full_accuracy_fn
 
 
 def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None):
