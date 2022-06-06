@@ -17,10 +17,11 @@ def conv_3_2(sizes, number_classes, dim=2):
     else:
         raise Exception("Convnet dimension restricted to 1 or 2")
     max_pool = Partial(hk.MaxPool, window_shape=(2, 2), strides=2, padding="VALID")
+    first_max_pool = Partial(hk.MaxPool, window_shape=(4, 4), strides=4, padding="VALID")
 
     layer_1 = [Partial(conv_fn, sizes[0], 5), act]
-    layer_2 = [max_pool, Partial(conv_fn, 2*sizes[0], 5), act]
-    layer_3 = [max_pool, Partial(conv_fn, 4*sizes[0], 5), act]
+    layer_2 = [first_max_pool, Partial(conv_fn, 2*sizes[0], 3), act]
+    layer_3 = [max_pool, Partial(conv_fn, 4*sizes[0], 3), act]
     layer_4 = [max_pool, hk.Flatten, Partial(hk.Linear, sizes[1]), act]
     layer_5 = [Partial(hk.Linear, number_classes)]
 
