@@ -35,6 +35,7 @@ exp_name = "asymptotic_live_neurons"
 class ExpConfig:
     training_steps: int = 120001
     report_freq: int = 3000
+    record_freq: int = 100
     lr: float = 1e-3
     optimizer: str = "adam"
     dataset: str = "mnist"
@@ -74,14 +75,14 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
-    train = load_data(split="train", is_training=True, batch_size=50)
+    train = load_data(split="train", is_training=True, batch_size=64)
 
-    eval_size = 500
+    eval_size = 256
     train_eval = load_data(split="train", is_training=False, batch_size=eval_size)
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, cardinality=True)
     # final_test_eval = load_data(split="test", is_training=False, batch_size=10000)
 
-    death_minibatch_size = 1000
+    death_minibatch_size = 256
     dataset_size, test_death = load_data(split="train", is_training=False,
                                          batch_size=death_minibatch_size, cardinality=True)
     # final_test_death = load_data(split="train", is_training=False, batch_size=dataset_size)
@@ -116,23 +117,26 @@ def run_exp(exp_config: ExpConfig) -> None:
         opt_state = opt.init(params)
 
         for step in range(exp_config.training_steps):
-            if step % exp_config.report_freq == 0:
-                # Periodically evaluate classification accuracy on train & test sets.
+            if step % exp_config.record_freq == 0:
                 train_loss = loss(params, next(train_eval))
                 train_accuracy = accuracy_fn(params, next(train_eval))
                 test_accuracy = accuracy_fn(params, next(test_eval))
                 train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
-                print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
-                      f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
-
+                # Periodically print classification accuracy on train & test sets.
+                if step % exp_config.report_freq == 0:
+                    print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
+                          f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
                 dead_neurons = death_check_fn(params, next(test_death))
-
                 # Record some metrics
                 dead_neurons_count = utl.count_dead_neurons(dead_neurons)
                 accuracies_log.append(test_accuracy)
                 exp_run.track(np.array(dead_neurons_count), name="Dead neurons", step=step,
                               context={"net size": utl.size_to_string(size)})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
+                              context={"net size": utl.size_to_string(size)})
+                exp_run.track(train_accuracy, name="Train accuracy", step=step,
+                              context={"net size": utl.size_to_string(size)})
+                exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
                               context={"net size": utl.size_to_string(size)})
 
             if step % 1000 == 0:
