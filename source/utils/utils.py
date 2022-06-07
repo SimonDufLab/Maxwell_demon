@@ -383,6 +383,8 @@ def get_total_neurons(architecture, size):
         return size + 3*size
     if architecture == 'conv_3_2':
         return size[0]*(1+2+4) + size[1]
+    if architecture == 'conv_6_2':
+        return size[0]*(2+4+6) + size[1]
 
 
 def size_to_string(item):
