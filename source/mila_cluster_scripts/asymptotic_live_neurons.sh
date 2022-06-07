@@ -36,8 +36,19 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
 
 # Run experiments
-python source/asymptotic_live_neurons.py dataset='mnist' regularizer=None
+python source/asymptotic_live_neurons.py dataset='cifar10' regularizer=None training_steps=50001 architecture='conv_3_2' 'sizes="((8, 128), (16, 128), (32, 128), (64, 128), (128, 128), (256, 128), (512, 128), (768, 128))"'
 wait $!
-python source/asymptotic_live_neurons.py dataset='fashion mnist' regularizer=None
+python source/asymptotic_live_neurons.py dataset='cifar10' regularizer='cdg_l2' training_steps=50001 architecture='conv_3_2' 'sizes="((8, 128), (16, 128), (32, 128), (64, 128), (128, 128), (256, 128), (512, 128), (768, 128))"'
 wait $!
-python source/asymptotic_live_neurons.py dataset='cifar10' regularizer=None
+
+#python source/asymptotic_live_neurons.py dataset='mnist' regularizer='None' training_steps=200001 architecture='conv_3_2' 'sizes="((8, 25), (16, 50), (32, 100), (64, 200), (128, 400), (256, 800), (512, 1600), (1024, 1600))"'
+#wait $!
+#python source/asymptotic_live_neurons.py dataset='fashion mnist' regularizer='None' training_steps=200001 architecture='conv_3_2' 'sizes="((8, 25), (16, 50), (32, 100), (64, 200), (128, 400), (256, 800), (512, 1600), (1024, 1600))"'
+#wait $!
+#python source/asymptotic_live_neurons.py dataset='cifar10' regularizer='None' training_steps=200001 architecture='conv_3_2' 'sizes="((8, 25), (16, 50), (32, 100), (64, 200), (128, 400), (256, 800), (512, 1600), (1024, 1600))"'
+#wait $!
+#python source/asymptotic_live_neurons.py dataset='mnist' regularizer='cdg_l2' training_steps=200001 architecture='conv_3_2' 'sizes="((8, 25), (16, 50), (32, 100), (64, 200), (128, 400), (256, 800), (512, 1600), (1024, 1600))"'
+#wait $!
+#python source/asymptotic_live_neurons.py dataset='fashion mnist' regularizer='cdg_l2' training_steps=200001 architecture='conv_3_2' 'sizes="((8, 25), (16, 50), (32, 100), (64, 200), (128, 400), (256, 800), (512, 1600), (1024, 1600))"'
+#wait $!
+#python source/asymptotic_live_neurons.py dataset='cifar10' regularizer='cdg_l2' training_steps=200001 architecture='conv_3_2' 'sizes="((8, 25), (16, 50), (32, 100), (64, 200), (128, 400), (256, 800), (512, 1600), (1024, 1600))"'
