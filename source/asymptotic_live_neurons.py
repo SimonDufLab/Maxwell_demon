@@ -37,6 +37,9 @@ class ExpConfig:
     report_freq: int = 3000
     record_freq: int = 100
     lr: float = 1e-3
+    train_batch_size: int = 32
+    eval_batch_size: int = 128
+    death_batch_size: int = 128
     optimizer: str = "adam"
     dataset: str = "mnist"
     classes: int = 10  # Number of classes in the training dataset
@@ -75,14 +78,14 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
-    train = load_data(split="train", is_training=True, batch_size=64)
+    train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size)
 
-    eval_size = 256
+    eval_size = exp_config.eval_batch_size
     train_eval = load_data(split="train", is_training=False, batch_size=eval_size)
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, cardinality=True)
     # final_test_eval = load_data(split="test", is_training=False, batch_size=10000)
 
-    death_minibatch_size = 256
+    death_minibatch_size = exp_config.death_batch_size
     dataset_size, test_death = load_data(split="train", is_training=False,
                                          batch_size=death_minibatch_size, cardinality=True)
     # final_test_death = load_data(split="train", is_training=False, batch_size=dataset_size)
