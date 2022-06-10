@@ -161,16 +161,22 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         batched_activations, batched_dead_neurons = scan_death_check_fn_with_activations(params, test_death)
 
-        activations = [layer.reshape((-1, layer.shape[-1])) for layer in batched_activations]
+        activations = [layer.reshape((-1, layer.shape[-1])) for layer in batched_activations]  # TODO: Probably huge memory drainer; adapt it
         final_dead_neurons = jax.tree_map(utl.logical_or_sum, batched_dead_neurons)
+        del batched_dead_neurons
         final_dead_neurons_count = utl.count_dead_neurons(final_dead_neurons)
 
         activations_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
         activations_max, _ = ravel_pytree(activations_max)
+        activations_max = np.array(activations_max)
         activations_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
         activations_mean, _ = ravel_pytree(activations_mean)
+        activations_mean = np.array(activations_mean)
         activations_count = utl.count_activations_occurrence(activations)
         activations_count, _ = ravel_pytree(activations_count)
+        activations_count = np.array(activations_count)
+
+        del activations  # Freeing up memory
 
         # Additionally, track an 'on average' number of death neurons within a batch
         def scan_f(_, __):
