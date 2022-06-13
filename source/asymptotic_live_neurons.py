@@ -112,8 +112,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         death_check_fn = utl.death_check_given_model(net)
         scan_len = dataset_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-        scan_death_check_fn_with_activations = utl.scanned_death_check_fn(
-            utl.death_check_given_model(net, with_activations=True), scan_len)
+        # scan_death_check_fn_with_activations = utl.scanned_death_check_fn(
+        #     utl.death_check_given_model(net, with_activations=True), scan_len)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
 
         params = net.init(jax.random.PRNGKey(42 - 1), next(train))
@@ -131,7 +131,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                           f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
                 dead_neurons = death_check_fn(params, next(test_death))
                 # Record some metrics
-                dead_neurons_count = utl.count_dead_neurons(dead_neurons)
+                dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
                 accuracies_log.append(test_accuracy)
                 exp_run.track(np.array(dead_neurons_count), name="Dead neurons", step=step,
                               context={"net size": utl.size_to_string(size)})
@@ -144,44 +144,48 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             if step % 1000 == 0:
                 dead_neurons = scan_death_check_fn(params, test_death)
-                dead_neurons = jax.tree_map(utl.logical_or_sum, dead_neurons)
-                dead_neurons_count = utl.count_dead_neurons(dead_neurons)
+                # dead_neurons = jax.tree_map(utl.logical_or_sum, dead_neurons)
+                dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
+                del dead_neurons  # Freeing memory
                 exp_run.track(np.array(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
                               context={"net size": utl.size_to_string(size)})
+                for i, layer_dead in enumerate(dead_per_layers):
+                    exp_run.track(np.array(layer_dead),
+                                  name=f"Dead neurons in layer {i}; whole training dataset", step=step,
+                                  context={"net size": utl.size_to_string(size)})
 
             # Train step over single batch
             params, opt_state = update_fn(params, opt_state, next(train))
 
-        total_neurons = utl.get_total_neurons(exp_config.architecture, size)
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, size)
         # final_accuracy = np.array(accuracy_fn(params, next(final_test_eval)))
         final_accuracy = np.array(final_accuracy_fn(params, test_eval))
         size_arr.append(total_neurons)
-        # activations, final_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(final_test_death))
-        # final_dead_neurons_count = utl.count_dead_neurons(final_dead_neurons)
 
-        batched_activations, batched_dead_neurons = scan_death_check_fn_with_activations(params, test_death)
+        # batched_activations, final_dead_neurons = scan_death_check_fn_with_activations(params, test_death)
+        final_dead_neurons = scan_death_check_fn(params, test_death)
 
-        activations = [layer.reshape((-1, layer.shape[-1])) for layer in batched_activations]  # TODO: Probably huge memory drainer; adapt it
-        final_dead_neurons = jax.tree_map(utl.logical_or_sum, batched_dead_neurons)
-        del batched_dead_neurons
-        final_dead_neurons_count = utl.count_dead_neurons(final_dead_neurons)
+        # final_dead_neurons = jax.tree_map(utl.logical_or_sum, batched_dead_neurons)
+        final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
+        del final_dead_neurons  # Freeing memory
 
-        activations_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
-        activations_max, _ = ravel_pytree(activations_max)
-        activations_max = np.array(activations_max)
-        activations_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
-        activations_mean, _ = ravel_pytree(activations_mean)
-        activations_mean = np.array(activations_mean)
-        activations_count = utl.count_activations_occurrence(activations)
-        activations_count, _ = ravel_pytree(activations_count)
-        activations_count = np.array(activations_count)
-
-        del activations  # Freeing up memory
+        # activations = [layer.reshape((-1, layer.shape[-1])) for layer in  # TODO get mean within scan fn to reduce mem consumption
+        #                batched_activations]  # TODO: Probably huge memory drainer; adapt it
+        # activations_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
+        # activations_max, _ = ravel_pytree(activations_max)
+        # activations_max = np.array(activations_max)
+        # activations_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
+        # activations_mean, _ = ravel_pytree(activations_mean)
+        # activations_mean = np.array(activations_mean)
+        # activations_count = utl.count_activations_occurrence(activations)
+        # activations_count, _ = ravel_pytree(activations_count)
+        # activations_count = np.array(activations_count)
+        # del activations  # Freeing up memory
 
         # Additionally, track an 'on average' number of death neurons within a batch
         def scan_f(_, __):
             _, batch_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(test_death))
-            return None, total_neurons - utl.count_dead_neurons(batch_dead_neurons)
+            return None, total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0]
         _, batches_final_live_neurons = jax.lax.scan(scan_f, None, None, scan_len)
 
         avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
@@ -191,17 +195,23 @@ def run_exp(exp_config: ExpConfig) -> None:
                       name="On average, live neurons after convergence w/r total neurons", step=total_neurons)
         exp_run.track(np.array(total_neurons - final_dead_neurons_count),
                       name="Live neurons after convergence w/r total neurons", step=total_neurons)
+        for i, layer_dead in enumerate(final_dead_per_layer):
+            total_neuron_in_layer = total_per_layer[i]
+            exp_run.track(np.array(total_neuron_in_layer - layer_dead),
+                          name=f"Live neurons in layer {i} after convergence w/r total neurons",
+                          step=total_neuron_in_layer,
+                          context={"net size": utl.size_to_string(size)})
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r total neurons", step=total_neurons)
-        activations_max_dist = Distribution(activations_max, bin_count=250)
-        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
-                      context={"net size": utl.size_to_string(size)})
-        activations_mean_dist = Distribution(activations_mean, bin_count=250)
-        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
-                      context={"net size": utl.size_to_string(size)})
-        activations_count_dist = Distribution(activations_count, bin_count=50)
-        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
-                      context={"net size": utl.size_to_string(size)})
+        # activations_max_dist = Distribution(activations_max, bin_count=250)
+        # exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
+        #               context={"net size": utl.size_to_string(size)})
+        # activations_mean_dist = Distribution(activations_mean, bin_count=250)
+        # exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
+        #               context={"net size": utl.size_to_string(size)})
+        # activations_count_dist = Distribution(activations_count, bin_count=50)
+        # exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
+        #               context={"net size": utl.size_to_string(size)})
 
         live_neurons.append(total_neurons - final_dead_neurons_count)
         avg_live_neurons.append(avg_final_live_neurons)
