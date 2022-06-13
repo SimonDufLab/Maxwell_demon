@@ -37,6 +37,7 @@ class ExpConfig:
     kept_classes: Tuple[Union[int, None]] = (None, None)  # Number of classes to use, listed from easier to harder
     regularizer: Optional[str] = "cdg_l2"
     reg_param: float = 1e-4
+    init_seed: int = 41
 
 
 cs = ConfigStore.instance()
@@ -114,7 +115,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     update_fn = utl.update_given_loss_and_optimizer(loss, opt)
 
     # First prng key
-    key = jax.random.PRNGKey(0)
+    key = jax.random.PRNGKey(exp_config.init_seed)
 
     setting = ["easier to harder", "harder to easier"]
     dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
@@ -122,7 +123,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     for order in [0, -1]:
         # Initialize params
-        params = net.init(jax.random.PRNGKey(42 - 1), next(train_easier))
+        params = net.init(key, next(train_easier))
         opt_state = opt.init(params)
         params_partial_reinit = deepcopy(params)
         opt_partial_reinit_state = opt.init(params_partial_reinit)
