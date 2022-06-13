@@ -42,6 +42,7 @@ class ExpConfig:
     dataset: str = "mnist"
     regularizer: Optional[str] = "cdg_l2"
     reg_param: float = 1e-4
+    init_seed: int = 41
 
 
 cs = ConfigStore.instance()
@@ -88,7 +89,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     net = build_models(architecture)
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
 
-    params = net.init(jax.random.PRNGKey(42-1), next(train))
+    # First prng key
+    key = jax.random.PRNGKey(exp_config.init_seed)
+
+    params = net.init(key, next(train))
     opt_state = opt.init(params)
     params_partial_reinit = deepcopy(params)
     opt_partial_reinit_state = opt.init(params_partial_reinit)
@@ -110,9 +114,6 @@ def run_exp(exp_config: ExpConfig) -> None:
     if exp_config.compare_full_reset:
         hard_reinit_perf = []
         hard_reinit_dead_neurons = []
-
-    # First prng key
-    key = jax.random.PRNGKey(0)
 
     for step in range(exp_config.total_steps):
         if step % exp_config.report_freq == 0:
