@@ -48,6 +48,7 @@ class ExpConfig:
     regularizer: Optional[str] = "cdg_l2"
     reg_param: float = 1e-4
     epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
+    init_seed: int = 41
 
     # def __post_init__(self):
     #     if type(self.sizes) == str:
@@ -57,6 +58,9 @@ class ExpConfig:
 cs = ConfigStore.instance()
 # Registering the Config class with the name '_config'.
 cs.store(name=exp_name+"_config", node=ExpConfig)
+
+# Using tf on CPU for data loading
+# tf.config.experimental.set_visible_devices([], "GPU")
 
 
 @hydra.main(version_base=None, config_name=exp_name+"_config")
@@ -116,7 +120,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         #     utl.death_check_given_model(net, with_activations=True), scan_len)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
 
-        params = net.init(jax.random.PRNGKey(42 - 1), next(train))
+        params = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         opt_state = opt.init(params)
 
         for step in range(exp_config.training_steps):
