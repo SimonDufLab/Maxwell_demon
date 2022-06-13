@@ -45,32 +45,39 @@ def death_check_given_model(model, with_activations=False):
 
 
 def scanned_death_check_fn(death_check_fn, scan_len, with_activations=False):
+    @jax.jit
+    def sum_dead_neurons(leaf1, leaf2):
+        return jnp.logical_or(leaf1.astype(bool), leaf2.astype(bool))
+
     if with_activations:
         def scan_death_check(params, batch_it):
-            def scan_dead_neurons_over_whole_ds(_, __):
-                batched_activations, batched_dead_neurons = death_check_fn(
+            def scan_dead_neurons_over_whole_ds(previous_dead, __):
+                batched_activations, dead_neurons = death_check_fn(
                     params, next(batch_it))
-                return None, (batched_activations, batched_dead_neurons)
+                return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), batched_activations
 
-            _, (batched_activations, batched_dead_neurons) = jax.lax.scan(scan_dead_neurons_over_whole_ds, None, None,
-                                                                          scan_len)
-            return batched_activations, batched_dead_neurons
+            _, carry_init = death_check_fn(params, next(batch_it))
+            dead_neurons, batched_activations = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
+                                                             scan_len)
+            return batched_activations, dead_neurons
         return scan_death_check
     else:
         def scan_death_check(params, batch_it):
-            def scan_dead_neurons_over_whole_ds(_, __):
-                batched_dead_neurons = death_check_fn(params, next(batch_it))
-                return None, batched_dead_neurons
+            def scan_dead_neurons_over_whole_ds(previous_dead, __):
+                dead_neurons = death_check_fn(params, next(batch_it))
+                return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), None
 
-            _, batched_dead_neurons = jax.lax.scan(scan_dead_neurons_over_whole_ds, None, None,
-                                                                          scan_len)
-            return batched_dead_neurons
+            carry_init = death_check_fn(params, next(batch_it))
+            dead_neurons, _ = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
+                                           scan_len)
+            return dead_neurons
         return scan_death_check
 
 
 @jax.jit
 def count_dead_neurons(death_check):
-    return sum([jnp.sum(layer) for layer in death_check])
+    dead_per_layer = [jnp.sum(layer) for layer in death_check]
+    return sum(dead_per_layer), tuple(dead_per_layer)
 
 
 @jax.jit
@@ -380,11 +387,11 @@ def build_models(layer_list, name=None):
 ##############################
 def get_total_neurons(architecture, size):
     if architecture == 'mlp_3':
-        return size + 3*size
+        return size + 3*size, (size, 3*size)
     if architecture == 'conv_3_2':
-        return size[0]*(1+2+4) + size[1]
+        return size[0]*(1+2+4) + size[1], (size[0], 2*size[0], 4*size[0], size[1])
     if architecture == 'conv_6_2':
-        return size[0]*(2+4+8) + size[1]
+        return size[0]*(2+4+8) + size[1], (size[0], size[0], 2*size[0], 2*size[0], 4*size[0], 4*size[0], size[1])
 
 
 def size_to_string(item):
