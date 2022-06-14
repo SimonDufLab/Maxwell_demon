@@ -61,7 +61,7 @@ cs = ConfigStore.instance()
 cs.store(name=exp_name+"_config", node=ExpConfig)
 
 # Using tf on CPU for data loading
-tf.config.experimental.set_visible_devices([], "GPU")
+# tf.config.experimental.set_visible_devices([], "GPU")
 
 
 @hydra.main(version_base=None, config_name=exp_name+"_config")
@@ -149,7 +149,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             if step % 1000 == 0:
                 dead_neurons = scan_death_check_fn(params, test_death)
-                # dead_neurons = jax.tree_map(utl.logical_or_sum, dead_neurons)
+                # dead_neurons = jax.tree_map(utl.logical_and_sum, dead_neurons)
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
                 del dead_neurons  # Freeing memory
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
@@ -170,7 +170,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # batched_activations, final_dead_neurons = scan_death_check_fn_with_activations(params, test_death)
         final_dead_neurons = scan_death_check_fn(params, test_death)
 
-        # final_dead_neurons = jax.tree_map(utl.logical_or_sum, batched_dead_neurons)
+        # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
         final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
         del final_dead_neurons  # Freeing memory
 
