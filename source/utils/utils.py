@@ -246,13 +246,15 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         ds = ds.filter(filter_fn)  # Only take the randomly selected subset
 
     ds = ds.map(interval_zero_one)
-    ds = ds.cache().repeat()
+    # ds = ds.cache().repeat()
     if is_training:
         # if subset is not None:
         #     ds = ds.cache().repeat()
         ds = ds.shuffle(10 * batch_size, seed=0)
         # ds = ds.take(batch_size).cache().repeat()
+    ds = ds.repeat(-1)
     ds = ds.batch(batch_size)
+    ds = ds.prefetch(-1)
 
     if (subset is not None) and transform:
         return tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)
