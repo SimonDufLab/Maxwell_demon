@@ -252,7 +252,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         #     ds = ds.cache().repeat()
         ds = ds.shuffle(10 * batch_size, seed=0)
         # ds = ds.take(batch_size).cache().repeat()
-    ds = ds.repeat(-1)
+    ds = ds.repeat()
     ds = ds.batch(batch_size)
     ds = ds.prefetch(-1)
 
