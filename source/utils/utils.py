@@ -47,7 +47,7 @@ def death_check_given_model(model, with_activations=False):
 def scanned_death_check_fn(death_check_fn, scan_len, with_activations=False):
     @jax.jit
     def sum_dead_neurons(leaf1, leaf2):
-        return jnp.logical_or(leaf1.astype(bool), leaf2.astype(bool))
+        return jnp.logical_and(leaf1.astype(bool), leaf2.astype(bool))
 
     if with_activations:
         def scan_death_check(params, batch_it):
@@ -81,10 +81,10 @@ def count_dead_neurons(death_check):
 
 
 @jax.jit
-def logical_or_sum(leaf):
-    """Perform a logical_or across the first dimension (over a batch)"""
+def logical_and_sum(leaf):
+    """Perform a logical_and across the first dimension (over a batch)"""
     def scan_log_or(carry, next_item):
-        return jnp.logical_or(carry.astype(bool), next_item.astype(bool)), None
+        return jnp.logical_and(carry.astype(bool), next_item.astype(bool)), None
     summed_leaf, _ = jax.lax.scan(scan_log_or, jnp.zeros_like(leaf[0]), leaf)
     return summed_leaf
 
@@ -252,7 +252,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         #     ds = ds.cache().repeat()
         ds = ds.shuffle(10 * batch_size, seed=0)
         # ds = ds.take(batch_size).cache().repeat()
-    ds = ds.repeat(-1)
+    ds = ds.repeat()
     ds = ds.batch(batch_size)
     ds = ds.prefetch(-1)
 
