@@ -7,6 +7,7 @@ number of live neurons at the end eventually also reaches a plateau."""
 
 import jax
 import jax.numpy as jnp
+import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 from aim import Run, Figure, Distribution, Image
@@ -60,7 +61,7 @@ cs = ConfigStore.instance()
 cs.store(name=exp_name+"_config", node=ExpConfig)
 
 # Using tf on CPU for data loading
-# tf.config.experimental.set_visible_devices([], "GPU")
+tf.config.experimental.set_visible_devices([], "GPU")
 
 
 @hydra.main(version_base=None, config_name=exp_name+"_config")
@@ -137,7 +138,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
                 accuracies_log.append(test_accuracy)
-                exp_run.track(np.array(dead_neurons_count), name="Dead neurons", step=step,
+                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
                               context={"net size": utl.size_to_string(size)})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
                               context={"net size": utl.size_to_string(size)})
@@ -151,10 +152,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # dead_neurons = jax.tree_map(utl.logical_or_sum, dead_neurons)
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
                 del dead_neurons  # Freeing memory
-                exp_run.track(np.array(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
+                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
                               context={"net size": utl.size_to_string(size)})
                 for i, layer_dead in enumerate(dead_per_layers):
-                    exp_run.track(np.array(layer_dead),
+                    exp_run.track(jax.device_get(layer_dead),
                                   name=f"Dead neurons in layer {i}; whole training dataset", step=step,
                                   context={"net size": utl.size_to_string(size)})
 
@@ -162,8 +163,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             params, opt_state = update_fn(params, opt_state, next(train))
 
         total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, size)
-        # final_accuracy = np.array(accuracy_fn(params, next(final_test_eval)))
-        final_accuracy = np.array(final_accuracy_fn(params, test_eval))
+        # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
+        final_accuracy = jax.device_get(final_accuracy_fn(params, test_eval))
         size_arr.append(total_neurons)
 
         # batched_activations, final_dead_neurons = scan_death_check_fn_with_activations(params, test_death)
@@ -177,13 +178,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         #                batched_activations]  # TODO: Probably huge memory drainer; adapt it
         # activations_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
         # activations_max, _ = ravel_pytree(activations_max)
-        # activations_max = np.array(activations_max)
+        # activations_max = jax.device_get(activations_max)
         # activations_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
         # activations_mean, _ = ravel_pytree(activations_mean)
-        # activations_mean = np.array(activations_mean)
+        # activations_mean = jax.device_get(activations_mean)
         # activations_count = utl.count_activations_occurrence(activations)
         # activations_count, _ = ravel_pytree(activations_count)
-        # activations_count = np.array(activations_count)
+        # activations_count = jax.device_get(activations_count)
         # del activations  # Freeing up memory
 
         # Additionally, track an 'on average' number of death neurons within a batch
@@ -195,13 +196,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
         std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
 
-        exp_run.track(np.array(avg_final_live_neurons),
+        exp_run.track(jax.device_get(avg_final_live_neurons),
                       name="On average, live neurons after convergence w/r total neurons", step=total_neurons)
-        exp_run.track(np.array(total_neurons - final_dead_neurons_count),
+        exp_run.track(jax.device_get(total_neurons - final_dead_neurons_count),
                       name="Live neurons after convergence w/r total neurons", step=total_neurons)
         for i, layer_dead in enumerate(final_dead_per_layer):
             total_neuron_in_layer = total_per_layer[i]
-            exp_run.track(np.array(total_neuron_in_layer - layer_dead),
+            exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
                           name=f"Live neurons in layer {i} after convergence w/r total neurons",
                           step=total_neuron_in_layer,
                           context={"net size": utl.size_to_string(size)})
