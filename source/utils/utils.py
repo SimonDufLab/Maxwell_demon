@@ -51,26 +51,44 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations=False):
 
     if with_activations:
         def scan_death_check(params, batch_it):
-            def scan_dead_neurons_over_whole_ds(previous_dead, __):
-                batched_activations, dead_neurons = death_check_fn(
-                    params, next(batch_it))
-                return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), batched_activations
+            # def scan_dead_neurons_over_whole_ds(previous_dead, __):
+            #     batched_activations, dead_neurons = death_check_fn(
+            #         params, next(batch_it))
+            #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), batched_activations
+            #
+            # _, carry_init = death_check_fn(params, next(batch_it))
+            # dead_neurons, batched_activations = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
+            #                                                  scan_len)
+            # return batched_activations, dead_neurons
 
-            _, carry_init = death_check_fn(params, next(batch_it))
-            dead_neurons, batched_activations = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
-                                                             scan_len)
-            return batched_activations, dead_neurons
+            activations, previous_dead = death_check_fn(params, next(batch_it))
+            batched_activations = [activations]
+            for i in range(scan_len-1):
+                activations, dead_neurons = death_check_fn(params, next(batch_it))
+                batched_activations.append(activations)
+                previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
+
+            return jnp.stack(batched_activations), previous_dead
+
         return scan_death_check
     else:
         def scan_death_check(params, batch_it):
-            def scan_dead_neurons_over_whole_ds(previous_dead, __):
-                dead_neurons = death_check_fn(params, next(batch_it))
-                return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), None
+            # def scan_dead_neurons_over_whole_ds(previous_dead, __):
+            #     dead_neurons = death_check_fn(params, next(batch_it))
+            #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), None
+            #
+            # carry_init = death_check_fn(params, next(batch_it))
+            # dead_neurons, _ = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
+            #                                scan_len)
+            # return dead_neurons
 
-            carry_init = death_check_fn(params, next(batch_it))
-            dead_neurons, _ = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
-                                           scan_len)
-            return dead_neurons
+            previous_dead = death_check_fn(params, next(batch_it))
+            for i in range(scan_len-1):
+                dead_neurons = death_check_fn(params, next(batch_it))
+                previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
+
+            return previous_dead
+
         return scan_death_check
 
 
@@ -135,11 +153,16 @@ def accuracy_given_model(model):
 
 def create_full_accuracy_fn(accuracy_fn, scan_len):
     def full_accuracy_fn(params, batch_it):
-        def scan_accuracy_fn(_, __):
-            acc = accuracy_fn(params, next(batch_it))
-            return None, acc
-        _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
-        return jnp.mean(all_acc)
+        # def scan_accuracy_fn(_, __):
+        #     acc = accuracy_fn(params, next(batch_it))
+        #     return None, acc
+        # _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
+        # return jnp.mean(all_acc)
+
+        acc = [accuracy_fn(params, next(batch_it))]
+        for i in range(scan_len-1):
+            acc.append(accuracy_fn(params, next(batch_it)))
+        return jnp.mean(jnp.stack(acc))
     return full_accuracy_fn
 
 
