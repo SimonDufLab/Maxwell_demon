@@ -210,8 +210,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             total_neuron_in_layer = total_per_layer[i]
             exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
                           name=f"Live neurons in layer {i} after convergence w/r total neurons",
-                          step=total_neuron_in_layer,
-                          context={"net size": utl.size_to_string(size)})
+                          step=total_neuron_in_layer)
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r total neurons", step=total_neurons)
         # activations_max_dist = Distribution(activations_max, bin_count=250)
