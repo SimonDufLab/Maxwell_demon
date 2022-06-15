@@ -188,10 +188,16 @@ def run_exp(exp_config: ExpConfig) -> None:
         # del activations  # Freeing up memory
 
         # Additionally, track an 'on average' number of death neurons within a batch
-        def scan_f(_, __):
-            _, batch_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(test_death))
-            return None, total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0]
-        _, batches_final_live_neurons = jax.lax.scan(scan_f, None, None, scan_len)
+        # def scan_f(_, __):
+        #     _, batch_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(test_death))
+        #     return None, total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0]
+        # _, batches_final_live_neurons = jax.lax.scan(scan_f, None, None, scan_len)
+        batch_dead_neurons = death_check_fn(params, next(test_death))
+        batches_final_live_neurons = [total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0]]
+        for i in range(scan_len-1):
+            batch_dead_neurons = death_check_fn(params, next(test_death))
+            batches_final_live_neurons.append(total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0])
+        batches_final_live_neurons = jnp.stack(batches_final_live_neurons)
 
         avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
         std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
@@ -222,6 +228,15 @@ def run_exp(exp_config: ExpConfig) -> None:
         avg_live_neurons.append(avg_final_live_neurons)
         std_live_neurons.append(std_final_live_neurons)
         f_acc.append(final_accuracy)
+
+        # Making sure compiled fn cache was cleared
+        loss._clear_cache()
+        accuracy_fn._clear_cache()
+        update_fn._clear_cache()
+        death_check_fn._clear_cache()
+        # scan_death_check_fn._clear_cache()  # No more cache
+        # scan_death_check_fn_with_activations._clear_cache()  # No more cache
+        # final_accuracy_fn._clear_cache()  # No more cache
 
     # Plots
     dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
