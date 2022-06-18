@@ -13,7 +13,8 @@ import matplotlib.pyplot as plt
 from aim import Run, Figure, Distribution, Image
 import os
 import time
-from dataclasses import dataclass
+import pickle
+from dataclasses import dataclass, field, asdict
 from typing import Optional, Tuple, Any
 from ast import literal_eval
 import hydra
@@ -103,6 +104,14 @@ def run_exp(exp_config: ExpConfig) -> None:
     size_arr = []
     f_acc = []
 
+    # Recording metadata about activations that will be pickled
+    @dataclass
+    class ActivationMeta:
+        maximum: list[float] = field(default_factory=list)
+        mean: list[float] = field(default_factory=list)
+        count: list[int] = field(default_factory=list)
+    activations_meta = ActivationMeta()
+
     for size in exp_config.sizes:  # Vary the NN width
         # Make the network and optimiser
         architecture = architecture_choice[exp_config.architecture](size, 10)
@@ -118,8 +127,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         death_check_fn = utl.death_check_given_model(net)
         scan_len = dataset_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-        # scan_death_check_fn_with_activations = utl.scanned_death_check_fn(
-        #     utl.death_check_given_model(net, with_activations=True), scan_len)
+        scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+            utl.death_check_given_model(net, with_activations=True), scan_len, True)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_size // eval_size)
 
@@ -183,25 +192,23 @@ def run_exp(exp_config: ExpConfig) -> None:
         final_accuracy = jax.device_get(final_accuracy_fn(params, test_eval))
         size_arr.append(total_neurons)
 
-        # batched_activations, final_dead_neurons = scan_death_check_fn_with_activations(params, test_death)
-        final_dead_neurons = scan_death_check_fn(params, test_death)
+        activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, test_death)
+        # final_dead_neurons = scan_death_check_fn(params, test_death)
 
         # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
         final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
         del final_dead_neurons  # Freeing memory
 
-        # activations = [layer.reshape((-1, layer.shape[-1])) for layer in  # TODO get mean within scan fn to reduce mem consumption
-        #                batched_activations]  # TODO: Probably huge memory drainer; adapt it
-        # activations_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
-        # activations_max, _ = ravel_pytree(activations_max)
-        # activations_max = jax.device_get(activations_max)
-        # activations_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
-        # activations_mean, _ = ravel_pytree(activations_mean)
-        # activations_mean = jax.device_get(activations_mean)
-        # activations_count = utl.count_activations_occurrence(activations)
-        # activations_count, _ = ravel_pytree(activations_count)
-        # activations_count = jax.device_get(activations_count)
-        # del activations  # Freeing up memory
+        activations_max, activations_mean, activations_count = activations_data
+        activations_meta.maximum.append(activations_max)
+        activations_meta.mean.append(activations_mean)
+        activations_meta.count.append(activations_count)
+        activations_max, _ = ravel_pytree(activations_max)
+        activations_max = jax.device_get(activations_max)
+        activations_mean, _ = ravel_pytree(activations_mean)
+        activations_mean = jax.device_get(activations_mean)
+        activations_count, _ = ravel_pytree(activations_count)
+        activations_count = jax.device_get(activations_count)
 
         # Additionally, track an 'on average' number of death neurons within a batch
         # def scan_f(_, __):
@@ -229,15 +236,15 @@ def run_exp(exp_config: ExpConfig) -> None:
                           step=total_neuron_in_layer)
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r total neurons", step=total_neurons)
-        # activations_max_dist = Distribution(activations_max, bin_count=250)
-        # exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
-        #               context={"net size": utl.size_to_string(size)})
-        # activations_mean_dist = Distribution(activations_mean, bin_count=250)
-        # exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
-        #               context={"net size": utl.size_to_string(size)})
-        # activations_count_dist = Distribution(activations_count, bin_count=50)
-        # exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
-        #               context={"net size": utl.size_to_string(size)})
+        activations_max_dist = Distribution(activations_max, bin_count=100)
+        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
+                      context={"net size": utl.size_to_string(size)})
+        activations_mean_dist = Distribution(activations_mean, bin_count=100)
+        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
+                      context={"net size": utl.size_to_string(size)})
+        activations_count_dist = Distribution(activations_count, bin_count=50)
+        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
+                      context={"net size": utl.size_to_string(size)})
 
         live_neurons.append(total_neurons - final_dead_neurons_count)
         avg_live_neurons.append(avg_final_live_neurons)
@@ -252,6 +259,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         # scan_death_check_fn._clear_cache()  # No more cache
         # scan_death_check_fn_with_activations._clear_cache()  # No more cache
         # final_accuracy_fn._clear_cache()  # No more cache
+
+    # Pickling activations for later epsilon-close investigation in a .ipynb
+    dir_path = "./logs/metadata/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+    os.makedirs(dir_path)
+    pickle.dump(asdict(activations_meta), open(dir_path+'activations_meta.p', 'wb'))
 
     # Plots
     dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")

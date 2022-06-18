@@ -44,12 +44,12 @@ def death_check_given_model(model, with_activations=False):
     return _death_check
 
 
-def scanned_death_check_fn(death_check_fn, scan_len, with_activations=False):
+def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False):
     @jax.jit
     def sum_dead_neurons(leaf1, leaf2):
         return jnp.logical_and(leaf1.astype(bool), leaf2.astype(bool))
 
-    if with_activations:
+    if with_activations_data:
         def scan_death_check(params, batch_it):
             # def scan_dead_neurons_over_whole_ds(previous_dead, __):
             #     batched_activations, dead_neurons = death_check_fn(
@@ -62,13 +62,22 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations=False):
             # return batched_activations, dead_neurons
 
             activations, previous_dead = death_check_fn(params, next(batch_it))
-            batched_activations = [activations]
+            # batched_activations = [activations]
+            running_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
+            running_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
+            running_count = count_activations_occurrence(activations)
+            N = 1
             for i in range(scan_len-1):
                 activations, dead_neurons = death_check_fn(params, next(batch_it))
-                batched_activations.append(activations)
+                # batched_activations.append(activations)
+                running_max = update_running_max(activations, running_max)
+                running_mean = update_running_mean(activations, running_mean)
+                N += 1
+                running_count = update_running_count(activations, running_count)
+
                 previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
 
-            return jnp.stack(batched_activations), previous_dead
+            return (running_max, jax.tree_map(lambda x: x/N, running_mean), running_count), previous_dead
 
         return scan_death_check
     else:
@@ -108,12 +117,33 @@ def logical_and_sum(leaf):
 
 
 @jax.jit
+def update_running_max(new_batch, previous_max):
+    new_max = jax.tree_map(Partial(jnp.amax, axis=0), new_batch)
+    new_max = jax.tree_map(jnp.maximum, new_max, previous_max)
+    return new_max
+
+
+@jax.jit
 def count_activations_occurrence(activations_list):
     """Count how many times neurons activated (post-relu; > 0) in the given batch"""
     def _count_occurrence(leaf):
         leaf = (leaf > 0).astype(int)
         return jnp.sum(leaf, axis=0)
     return jax.tree_map(_count_occurrence, activations_list)
+
+
+@jax.jit
+def update_running_mean(new_batch, previous_mean):
+    mean_sum = jax.tree_map(Partial(jnp.mean, axis=0), new_batch)
+    mean_sum = jax.tree_map(jnp.add, mean_sum, previous_mean)
+    return mean_sum
+
+
+@jax.jit
+def update_running_count(new_batch, previous_count):
+    new_count = count_activations_occurrence(new_batch)
+    new_count = jax.tree_map(jnp.add, new_count, previous_count)
+    return new_count
 
 
 @jax.jit
