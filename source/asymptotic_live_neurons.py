@@ -15,7 +15,7 @@ import os
 import time
 import pickle
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Tuple, Any
+from typing import Optional, Tuple, Any, List
 from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -107,9 +107,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Recording metadata about activations that will be pickled
     @dataclass
     class ActivationMeta:
-        maximum: list[float] = field(default_factory=list)
-        mean: list[float] = field(default_factory=list)
-        count: list[int] = field(default_factory=list)
+        maximum: List[float] = field(default_factory=list)
+        mean: List[float] = field(default_factory=list)
+        count: List[int] = field(default_factory=list)
     activations_meta = ActivationMeta()
 
     for size in exp_config.sizes:  # Vary the NN width
