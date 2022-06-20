@@ -34,9 +34,6 @@ def death_check_given_model(model, with_activations=False):
     @jax.jit
     def _death_check(_params: hk.Params, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
         _, activations = model.apply(_params, _batch, True)
-        for acti in activations:
-            print(acti.shape)
-        raise SystemExit(0)
         activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
