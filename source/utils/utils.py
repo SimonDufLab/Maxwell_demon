@@ -34,6 +34,9 @@ def death_check_given_model(model, with_activations=False):
     @jax.jit
     def _death_check(_params: hk.Params, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
         _, activations = model.apply(_params, _batch, True)
+        for acti in activations:
+            print(acti.shape)
+        raise SystemExit(0)
         activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
@@ -279,6 +282,8 @@ class tf_compatibility_iterator:
 
 
 def interval_zero_one(image, label):
+    padding = (32 - image.shape[0])//2  # TODO: dirty, ensure compatibility with other shapes than 28, 32, ...
+    image = tf.pad(image, [[padding, padding], [padding, padding], [0, 0]])
     return image/255, label
 
 
@@ -445,6 +450,8 @@ def get_total_neurons(architecture, size):
         return size + 3*size, (size, 3*size)
     if architecture == 'conv_3_2':
         return size[0]*(1+2+4) + size[1], (size[0], 2*size[0], 4*size[0], size[1])
+    if architecture == 'conv_4_2':
+        return size[0]*(1+2+4+4) + size[1], (size[0], 2*size[0], 4*size[0], 4*size[0], size[1])
     if architecture == 'conv_6_2':
         return size[0]*(2+4+8) + size[1], (size[0], size[0], 2*size[0], 2*size[0], 4*size[0], 4*size[0], size[1])
 
