@@ -14,6 +14,7 @@ from aim import Run, Figure, Distribution, Image
 import os
 import time
 import pickle
+import json
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Tuple, Any, List
 from ast import literal_eval
@@ -82,6 +83,13 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
+
+    # Create pickle directory
+    pickle_dir_path = "./logs/metadata/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+    os.makedirs(pickle_dir_path)
+    # Dump config file in it as well
+    with open(pickle_dir_path+'config.json', 'w') as fp:
+        json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
 
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
@@ -260,10 +268,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         # scan_death_check_fn_with_activations._clear_cache()  # No more cache
         # final_accuracy_fn._clear_cache()  # No more cache
 
-    # Pickling activations for later epsilon-close investigation in a .ipynb
-    dir_path = "./logs/metadata/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
-    os.makedirs(dir_path)
-    pickle.dump(asdict(activations_meta), open(dir_path+'activations_meta.p', 'wb'))
+        # Pickling activations for later epsilon-close investigation in a .ipynb
+        with open(pickle_dir_path+'activations_meta.p', 'wb') as fp:
+            pickle.dump(asdict(activations_meta), fp)  # Update by overwrite
 
     # Plots
     dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
