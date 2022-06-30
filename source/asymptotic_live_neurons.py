@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from aim import Run, Figure, Distribution, Image
 import os
 import time
+from datetime import timedelta
 import pickle
 import json
 from dataclasses import dataclass, field, asdict
@@ -70,6 +71,8 @@ cs.store(name=exp_name+"_config", node=ExpConfig)
 @hydra.main(version_base=None, config_name=exp_name+"_config")
 def run_exp(exp_config: ExpConfig) -> None:
 
+    run_start_time = time.time()
+
     assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(optimizer_choice.keys())
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
     assert exp_config.regularizer in regularizer_choice, "Currently supported regularizers: " + str(regularizer_choice)
@@ -120,7 +123,16 @@ def run_exp(exp_config: ExpConfig) -> None:
         count: List[int] = field(default_factory=list)
     activations_meta = ActivationMeta()
 
+    # Recording params value at the end of the training as well
+    @dataclass
+    class FinalParamsMeta:
+        parameters: List[float] = field(default_factory=list)
+    params_meta = FinalParamsMeta()
+
     for size in exp_config.sizes:  # Vary the NN width
+        # Time the subrun for the different sizes
+        subrun_start_time = time.time()
+
         # Make the network and optimiser
         architecture = architecture_choice[exp_config.architecture](size, 10)
         net = build_models(architecture)
@@ -272,6 +284,17 @@ def run_exp(exp_config: ExpConfig) -> None:
         with open(pickle_dir_path+'activations_meta.p', 'wb') as fp:
             pickle.dump(asdict(activations_meta), fp)  # Update by overwrite
 
+        # Pickling the final parameters value as well
+        params_meta.parameters.append(params)
+        with open(pickle_dir_path + 'params_meta.p', 'wb') as fp:
+            pickle.dump(asdict(params_meta), fp)  # Update by overwrite
+
+        # Print running time
+        print()
+        print(f"Running time for size {size}: " + str(timedelta(seconds=time.time()-subrun_start_time)))
+        print("----------------------------------------------")
+        print()
+
     # Plots
     dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
     os.makedirs(dir_path)
@@ -322,6 +345,11 @@ def run_exp(exp_config: ExpConfig) -> None:
     aim_img3 = Image(fig3)
     exp_run.track(aim_fig3, name="Performance at convergence", step=0)
     exp_run.track(aim_img3, name="Performance at convergence; img", step=0)
+
+    # Print total runtime
+    print()
+    print("==================================")
+    print("Whole experiment completed in: " + str(timedelta(seconds=time.time() - run_start_time)))
 
 
 if __name__ == "__main__":
