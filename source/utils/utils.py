@@ -174,28 +174,46 @@ def reinitialize_dead_neurons(neuron_states, old_params, new_params):
 
 
 ##############################
-# Filtering dead utilities
+# Filtering dead utilities (pruning)
 ##############################
 def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
     """Given the current params and the neuron state (True if dead) returns a
      filtered params dict (and its associated optimizer state) with dead weights
       removed and the new size of the layers (that is, # of conv filters or # of
        neurons in fully connected layer, etc.)"""
-    neurons_state = jnp.logical_not(neurons_state)
+    neurons_state = jax.tree_map(jnp.logical_not, neurons_state)
     filtered_params = copy.deepcopy(params)
+
+    print(jax.tree_map(jax.numpy.shape, filtered_params))
 
     if opt_state:
         field_names = [field.name for field in fields(opt_state[0])]
         if 'counter' in field_names:
             field_names.remove('counter')
         filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
-    layers_name = params.keys()
-    for i, layer in enumerate(layers_name):
+    layers_name = list(params.keys())
+    for i, layer in enumerate(layers_name[:-1]):
+        print(i, layer)
+        print(neurons_state[i].shape)
         for dict_key in filtered_params[layer].keys():
+            print(filtered_params[layer][dict_key].shape)
             filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
             if opt_state:
                 for j, field in enumerate(filter_in_opt_state):
                     filter_in_opt_state[j][layer][dict_key] = field[layer][dict_key][..., neurons_state[i]]
+
+        # for dict_key in filtered_params[layers_name[i+1]].keys():
+        #     print(neurons_state[i].shape)
+        #     print(filtered_params[layers_name[i+1]][dict_key].shape)
+        to_repeat = filtered_params[layers_name[i+1]]['w'].shape[-2] // neurons_state[i].size
+        if to_repeat > 1 :
+            current_state = jnp.repeat(neurons_state[i].reshape(1, -1), to_repeat, axis=0).flatten()
+            # print(neurons_state[i])
+            # print(current_state)
+        else:
+            current_state = neurons_state[i]
+        filtered_params[layers_name[i+1]]['w'] = filtered_params[layers_name[i+1]]['w'][..., current_state, :]
+
 
     if opt_state:
         filtered_opt_state, empty_state = copy.copy(opt_state)
@@ -203,7 +221,7 @@ def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
             setattr(filtered_opt_state, field, filter_in_opt_state[j])
         new_opt_state = filtered_opt_state, empty_state
 
-    new_sizes = [jnp.sum(layer) for layer in neurons_state]
+    new_sizes = [int(jnp.sum(layer)) for layer in neurons_state]
 
     if opt_state:
         return filtered_params, new_opt_state, tuple(new_sizes)

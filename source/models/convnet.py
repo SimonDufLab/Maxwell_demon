@@ -19,8 +19,8 @@ def conv_3_2(sizes, number_classes, dim=2):
     if len(sizes) == 2:  # Size can be specified with 2 args
         sizes = [sizes[0], 2*sizes[0], 4*sizes[0], sizes[1]]
 
-    max_pool = Partial(hk.MaxPool, window_shape=(2, 2), strides=2, padding="VALID")
-    bigger_max_pool = Partial(hk.MaxPool, window_shape=(4, 4), strides=4, padding="VALID")
+    max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
+    bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
 
     layer_1 = [Partial(conv_fn, sizes[0], 3), act]
     layer_2 = [max_pool, Partial(conv_fn, sizes[1], 3), act]
@@ -46,8 +46,8 @@ def conv_4_2(sizes, number_classes, dim=2):
     if len(sizes) == 2:  # Size can be specified with 2 args
         sizes = [sizes[0], 2*sizes[0], 4*sizes[0], 4*sizes[0], sizes[1]]
 
-    max_pool = Partial(hk.MaxPool, window_shape=(2, 2), strides=2, padding="VALID")
-    bigger_max_pool = Partial(hk.MaxPool, window_shape=(4, 4), strides=4, padding="VALID")
+    max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
+    bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
 
     layer_1 = [Partial(conv_fn, sizes[0], 3), act]
     layer_2 = [max_pool, Partial(conv_fn, sizes[1], 3), act]
@@ -74,8 +74,8 @@ def conv_6_2(sizes, number_classes, dim=2):
     if len(sizes) == 2:  # Size can be specified with 2 args
         sizes = [sizes[0], sizes[0], 2*sizes[0], 2*sizes[0], 4*sizes[0], 4*sizes[0], sizes[1]]
 
-    max_pool = Partial(hk.MaxPool, window_shape=(2, 2), strides=2, padding="VALID")
-    bigger_max_pool = Partial(hk.MaxPool, window_shape=(4, 4), strides=4, padding="VALID")
+    max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
+    bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
 
     layer_1 = [Partial(conv_fn, sizes[0], 3), act]
     layer_2 = [Partial(conv_fn, sizes[1], 3), act]
