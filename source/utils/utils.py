@@ -184,22 +184,25 @@ def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
     neurons_state = jax.tree_map(jnp.logical_not, neurons_state)
     filtered_params = copy.deepcopy(params)
 
-    print(jax.tree_map(jax.numpy.shape, filtered_params))
+    # print(jax.tree_map(jax.numpy.shape, filtered_params))
 
     if opt_state:
-        field_names = [field.name for field in fields(opt_state[0])]
-        if 'counter' in field_names:
-            field_names.remove('counter')
+        # field_names = [field.name for field in fields(opt_state[0])]
+        field_names = list(opt_state[0]._fields)
+        # print(field_names)
+        if 'count' in field_names:
+            field_names.remove('count')
         filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
     layers_name = list(params.keys())
     for i, layer in enumerate(layers_name[:-1]):
-        print(i, layer)
-        print(neurons_state[i].shape)
+        # print(i, layer)
+        # print(neurons_state[i].shape)
         for dict_key in filtered_params[layer].keys():
-            print(filtered_params[layer][dict_key].shape)
+            # print(filtered_params[layer][dict_key].shape)
             filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
             if opt_state:
                 for j, field in enumerate(filter_in_opt_state):
+                    # print(field)
                     filter_in_opt_state[j][layer][dict_key] = field[layer][dict_key][..., neurons_state[i]]
 
         # for dict_key in filtered_params[layers_name[i+1]].keys():
@@ -213,12 +216,17 @@ def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
         else:
             current_state = neurons_state[i]
         filtered_params[layers_name[i+1]]['w'] = filtered_params[layers_name[i+1]]['w'][..., current_state, :]
+        if opt_state:
+            for j, field in enumerate(filter_in_opt_state):
+                filter_in_opt_state[j][layers_name[i + 1]]['w'] = filter_in_opt_state[j][layers_name[i + 1]]['w'][...,
+                                                                  current_state, :]
 
 
     if opt_state:
         filtered_opt_state, empty_state = copy.copy(opt_state)
         for j, field in enumerate(field_names):
-            setattr(filtered_opt_state, field, filter_in_opt_state[j])
+            # setattr(filtered_opt_state, field, filter_in_opt_state[j])
+            filtered_opt_state = filtered_opt_state._replace(**{field:filter_in_opt_state[j]})
         new_opt_state = filtered_opt_state, empty_state
 
     new_sizes = [int(jnp.sum(layer)) for layer in neurons_state]
