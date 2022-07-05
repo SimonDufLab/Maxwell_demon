@@ -517,15 +517,21 @@ def build_models(layer_list, name=None):
 ##############################
 # Varia
 ##############################
-def get_total_neurons(architecture, size):
+def get_total_neurons(architecture, sizes):
     if architecture == 'mlp_3':
-        return size + 3*size, (size, 3*size)
-    if architecture == 'conv_3_2':
-        return size[0]*(1+2+4) + size[1], (size[0], 2*size[0], 4*size[0], size[1])
-    if architecture == 'conv_4_2':
-        return size[0]*(1+2+4+4) + size[1], (size[0], 2*size[0], 4*size[0], 4*size[0], size[1])
-    if architecture == 'conv_6_2':
-        return size[0]*(2+4+8) + size[1], (size[0], size[0], 2*size[0], 2*size[0], 4*size[0], 4*size[0], size[1])
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes, sizes * 3]
+    elif architecture == 'conv_3_2':
+        if len(sizes) == 2:  # Size can be specified with 2 args
+            sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], sizes[1]]
+    elif architecture == 'conv_4_2':
+        if len(sizes) == 2:  # Size can be specified with 2 args
+            sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
+    elif architecture == 'conv_6_2':
+        if len(sizes) == 2:  # Size can be specified with 2 args
+            sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
+
+    return sum(sizes), tuple(sizes)
 
 
 def size_to_string(item):
