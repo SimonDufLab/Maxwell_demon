@@ -30,6 +30,7 @@ import utils.utils as utl
 from utils.utils import build_models
 from utils.config import optimizer_choice, dataset_choice, regularizer_choice, architecture_choice
 
+
 # Experience name -> for aim logger
 exp_name = "asymptotic_live_neurons"
 
@@ -202,6 +203,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                     net = build_models(architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
+                    # Clear previous cache
+                    loss.clear_cache()
+                    accuracy_fn.clear_cache()
+                    update_fn.clear_cache()
+                    death_check_fn.clear_cache()
                     # Recompile training/monitoring functions
                     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
                     accuracy_fn = utl.accuracy_given_model(net)
@@ -310,10 +316,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         f_acc.append(final_accuracy)
 
         # Making sure compiled fn cache was cleared
-        loss._clear_cache()
-        accuracy_fn._clear_cache()
-        update_fn._clear_cache()
-        death_check_fn._clear_cache()
+        loss.clear_cache()
+        accuracy_fn.clear_cache()
+        update_fn.clear_cache()
+        death_check_fn.clear_cache()
         # scan_death_check_fn._clear_cache()  # No more cache
         # scan_death_check_fn_with_activations._clear_cache()  # No more cache
         # final_accuracy_fn._clear_cache()  # No more cache

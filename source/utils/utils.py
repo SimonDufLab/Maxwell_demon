@@ -17,6 +17,10 @@ from typing import Union, Tuple
 from jax.tree_util import Partial
 from collections.abc import Iterable
 
+import psutil
+import sys
+import gc
+
 OptState = Any
 Batch = Mapping[int, np.ndarray]
 
@@ -544,3 +548,17 @@ def size_to_string(item):
         return word[:-1]
     else:
         return str(item)
+
+
+def clear_caches():
+    """Just in case for future needs, clear whole cache associated to jax
+    Taken from: https://github.com/google/jax/issues/10828"""
+    process = psutil.Process()
+    # if process.memory_info().vms > 4 * 2**30:  # >4GB memory usage
+    for module_name, module in sys.modules.items():
+        if module_name.startswith("jax"):
+            for obj_name in dir(module):
+                obj = getattr(module, obj_name)
+                if hasattr(obj, "cache_clear"):
+                    obj.cache_clear()
+    gc.collect()
