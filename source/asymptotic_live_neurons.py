@@ -217,9 +217,17 @@ def run_exp(exp_config: ExpConfig) -> None:
                 del dead_neurons  # Freeing memory
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
                               context={"net size": utl.size_to_string(size)})
+                exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
+                              name="Live neurons; whole training dataset",
+                              step=step,
+                              context={"net size": utl.size_to_string(size)})
                 for i, layer_dead in enumerate(dead_per_layers):
+                    total_neuron_in_layer = total_per_layer[i]
                     exp_run.track(jax.device_get(layer_dead),
                                   name=f"Dead neurons in layer {i}; whole training dataset", step=step,
+                                  context={"net size": utl.size_to_string(size)})
+                    exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
+                                  name=f"Live neurons in layer {i}; whole training dataset", step=step,
                                   context={"net size": utl.size_to_string(size)})
                 del dead_per_layers
                 train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, train_eval))
