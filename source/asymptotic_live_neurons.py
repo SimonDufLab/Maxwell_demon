@@ -40,6 +40,7 @@ class ExpConfig:
     training_steps: int = 120001
     report_freq: int = 3000
     record_freq: int = 100
+    pruning_freq: int = 2000
     live_freq: int = 20000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     lr: float = 1e-3
     train_batch_size: int = 128
@@ -54,6 +55,7 @@ class ExpConfig:
     reg_param: float = 1e-4
     epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
     init_seed: int = 41
+    dynamic_pruning: bool = False
 
     # def __post_init__(self):
     #     if type(self.sizes) == str:
@@ -83,12 +85,17 @@ def run_exp(exp_config: ExpConfig) -> None:
     if type(exp_config.sizes) == str:
         exp_config.sizes = literal_eval(exp_config.sizes)
 
+    if exp_config.dynamic_pruning:
+        exp_name_ = exp_name+"_with_dynamic_pruning"
+    else:
+        exp_name_ = exp_name
+
     # Logger config
-    exp_run = Run(repo="./logs", experiment=exp_name)
+    exp_run = Run(repo="./logs", experiment=exp_name_)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
     # Create pickle directory
-    pickle_dir_path = "./logs/metadata/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+    pickle_dir_path = "./logs/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
     os.makedirs(pickle_dir_path)
     # Dump config file in it as well
     with open(pickle_dir_path+'config.json', 'w') as fp:
@@ -134,7 +141,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         subrun_start_time = time.time()
 
         # Make the network and optimiser
-        architecture = architecture_choice[exp_config.architecture](size, 10)
+        architecture = architecture_choice[exp_config.architecture](size, exp_config.classes)
         net = build_models(architecture)
 
         opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
@@ -155,7 +162,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         params = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         opt_state = opt.init(params)
 
-        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, size)
+        starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
+        total_neurons, total_per_layer = starting_neurons, starting_per_layer
 
         for step in range(exp_config.training_steps):
             if step % exp_config.record_freq == 0:
@@ -173,6 +181,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 accuracies_log.append(test_accuracy)
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
                               context={"net size": utl.size_to_string(size)})
+                exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
+                              context={"net size": utl.size_to_string(size)})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
                               context={"net size": utl.size_to_string(size)})
                 exp_run.track(train_accuracy, name="Train accuracy", step=step,
@@ -180,10 +190,30 @@ def run_exp(exp_config: ExpConfig) -> None:
                 exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
                               context={"net size": utl.size_to_string(size)})
 
-            if step % 2000 == 0:
+            if step % exp_config.pruning_freq == 0:
                 dead_neurons = scan_death_check_fn(params, test_death)
                 # dead_neurons = jax.tree_map(utl.logical_and_sum, dead_neurons)
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
+
+                if exp_config.dynamic_pruning:
+                    # Pruning the network
+                    params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
+                    architecture = architecture_choice[exp_config.architecture](new_sizes, exp_config.classes)
+                    net = build_models(architecture)
+                    total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+
+                    # Recompile training/monitoring functions
+                    loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
+                    accuracy_fn = utl.accuracy_given_model(net)
+                    update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+                    death_check_fn = utl.death_check_given_model(net)
+                    scan_len = dataset_size // death_minibatch_size
+                    scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+                    scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+                        utl.death_check_given_model(net, with_activations=True), scan_len, True)
+                    final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
+                    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_size // eval_size)
+
                 del dead_neurons  # Freeing memory
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset", step=step,
                               context={"net size": utl.size_to_string(size)})
@@ -203,14 +233,14 @@ def run_exp(exp_config: ExpConfig) -> None:
                 del current_dead_neurons
                 del _
                 exp_run.track(jax.device_get(total_neurons - current_dead_neurons_count),
-                              name=f"Live neurons at training step {step+1}", step=total_neurons)
+                              name=f"Live neurons at training step {step+1}", step=starting_neurons)
 
             # Train step over single batch
             params, opt_state = update_fn(params, opt_state, next(train))
 
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
         final_accuracy = jax.device_get(final_accuracy_fn(params, test_eval))
-        size_arr.append(total_neurons)
+        size_arr.append(starting_neurons)
 
         activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, test_death)
         # final_dead_neurons = scan_death_check_fn(params, test_death)
@@ -246,16 +276,16 @@ def run_exp(exp_config: ExpConfig) -> None:
         std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
 
         exp_run.track(jax.device_get(avg_final_live_neurons),
-                      name="On average, live neurons after convergence w/r total neurons", step=total_neurons)
+                      name="On average, live neurons after convergence w/r total neurons", step=starting_neurons)
         exp_run.track(jax.device_get(total_neurons - final_dead_neurons_count),
-                      name="Live neurons after convergence w/r total neurons", step=total_neurons)
+                      name="Live neurons after convergence w/r total neurons", step=starting_neurons)
         for i, layer_dead in enumerate(final_dead_per_layer):
             total_neuron_in_layer = total_per_layer[i]
             exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
                           name=f"Live neurons in layer {i} after convergence w/r total neurons",
-                          step=total_neurons)  # Either total_neuron_in_layer/total_neurons
+                          step=starting_neurons)  # Either total_neuron_in_layer/total_neurons
         exp_run.track(final_accuracy,
-                      name="Accuracy after convergence w/r total neurons", step=total_neurons)
+                      name="Accuracy after convergence w/r total neurons", step=starting_neurons)
         activations_max_dist = Distribution(activations_max, bin_count=100)
         exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
                       context={"net size": utl.size_to_string(size)})
@@ -296,7 +326,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         print()
 
     # Plots
-    dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+    dir_path = "./logs/plots/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
     os.makedirs(dir_path)
 
     fig1 = plt.figure(figsize=(15, 10))
