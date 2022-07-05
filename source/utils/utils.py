@@ -1,4 +1,6 @@
+import copy
 from typing import Any, Generator, Mapping, Optional, Tuple
+from dataclasses import fields
 
 import haiku as hk
 import jax
@@ -20,7 +22,7 @@ Batch = Mapping[int, np.ndarray]
 
 
 ##############################
-# Reviving utilities
+# Death detection and revival utilities
 ##############################
 def sum_across_filter(filters):
     if filters.ndim > 1:
@@ -29,17 +31,19 @@ def sum_across_filter(filters):
         return filters
 
 
-def death_check_given_model(model, with_activations=False):
+def death_check_given_model(model, with_activations=False, epsilon=0):
     """Return a boolean array per layer; with True values for dead neurons"""
+    assert epsilon >= 0, "epsilon value must be positive"
+
     @jax.jit
     def _death_check(_params: hk.Params, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
         _, activations = model.apply(_params, _batch, True)
         activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
-            return activations, jax.tree_map(lambda arr: arr == 0, sum_activations)
+            return activations, jax.tree_map(lambda arr: arr <= epsilon, sum_activations)
         else:
-            return jax.tree_map(lambda arr: arr == 0, sum_activations)
+            return jax.tree_map(lambda arr: arr <= epsilon, sum_activations)
 
     return _death_check
 
@@ -167,6 +171,77 @@ def reinitialize_dead_neurons(neuron_states, old_params, new_params):
     reinitialized_params = jax.tree_util.tree_map(map_decision, old_params, new_params)
 
     return reinitialized_params
+
+
+##############################
+# Filtering dead utilities (pruning)
+##############################
+def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
+    """Given the current params and the neuron state (True if dead) returns a
+     filtered params dict (and its associated optimizer state) with dead weights
+      removed and the new size of the layers (that is, # of conv filters or # of
+       neurons in fully connected layer, etc.)"""
+    neurons_state = jax.tree_map(jnp.logical_not, neurons_state)
+    filtered_params = copy.deepcopy(params)
+
+    # print(jax.tree_map(jax.numpy.shape, filtered_params))
+
+    if opt_state:
+        # field_names = [field.name for field in fields(opt_state[0])]
+        field_names = list(opt_state[0]._fields)
+        # print(field_names)
+        if 'count' in field_names:
+            field_names.remove('count')
+        filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
+    layers_name = list(params.keys())
+    for i, layer in enumerate(layers_name[:-1]):
+        # print(i, layer)
+        # print(neurons_state[i].shape)
+        for dict_key in filtered_params[layer].keys():
+            # print(filtered_params[layer][dict_key].shape)
+            filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
+            if opt_state:
+                for j, field in enumerate(filter_in_opt_state):
+                    # print(field)
+                    filter_in_opt_state[j][layer][dict_key] = field[layer][dict_key][..., neurons_state[i]]
+
+        # for dict_key in filtered_params[layers_name[i+1]].keys():
+        #     print(neurons_state[i].shape)
+        #     print(filtered_params[layers_name[i+1]][dict_key].shape)
+        to_repeat = filtered_params[layers_name[i+1]]['w'].shape[-2] // neurons_state[i].size
+        if to_repeat > 1 :
+            current_state = jnp.repeat(neurons_state[i].reshape(1, -1), to_repeat, axis=0).flatten()
+            # print(neurons_state[i])
+            # print(current_state)
+        else:
+            current_state = neurons_state[i]
+        filtered_params[layers_name[i+1]]['w'] = filtered_params[layers_name[i+1]]['w'][..., current_state, :]
+        if opt_state:
+            for j, field in enumerate(filter_in_opt_state):
+                filter_in_opt_state[j][layers_name[i + 1]]['w'] = filter_in_opt_state[j][layers_name[i + 1]]['w'][...,
+                                                                  current_state, :]
+
+
+    if opt_state:
+        filtered_opt_state, empty_state = copy.copy(opt_state)
+        for j, field in enumerate(field_names):
+            # setattr(filtered_opt_state, field, filter_in_opt_state[j])
+            filtered_opt_state = filtered_opt_state._replace(**{field:filter_in_opt_state[j]})
+        new_opt_state = filtered_opt_state, empty_state
+
+    new_sizes = [int(jnp.sum(layer)) for layer in neurons_state]
+
+    if opt_state:
+        return filtered_params, new_opt_state, tuple(new_sizes)
+    else:
+        return filtered_params, tuple(new_sizes)
+
+
+# def rebuild_model(new_architecture, sizes):
+#     """Rebuild a model with less params to accommodate the filtering of dead neurons"""
+#     new_architecture = architecture_choice[exp_architecture](sizes, 10)  # TODO accomate more than 10 classes...
+#     new_net = build_models(new_architecture)
+#     return new_net
 
 
 ##############################
@@ -442,15 +517,21 @@ def build_models(layer_list, name=None):
 ##############################
 # Varia
 ##############################
-def get_total_neurons(architecture, size):
+def get_total_neurons(architecture, sizes):
     if architecture == 'mlp_3':
-        return size + 3*size, (size, 3*size)
-    if architecture == 'conv_3_2':
-        return size[0]*(1+2+4) + size[1], (size[0], 2*size[0], 4*size[0], size[1])
-    if architecture == 'conv_4_2':
-        return size[0]*(1+2+4+4) + size[1], (size[0], 2*size[0], 4*size[0], 4*size[0], size[1])
-    if architecture == 'conv_6_2':
-        return size[0]*(2+4+8) + size[1], (size[0], size[0], 2*size[0], 2*size[0], 4*size[0], 4*size[0], size[1])
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes, sizes * 3]
+    elif architecture == 'conv_3_2':
+        if len(sizes) == 2:  # Size can be specified with 2 args
+            sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], sizes[1]]
+    elif architecture == 'conv_4_2':
+        if len(sizes) == 2:  # Size can be specified with 2 args
+            sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
+    elif architecture == 'conv_6_2':
+        if len(sizes) == 2:  # Size can be specified with 2 args
+            sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
+
+    return sum(sizes), tuple(sizes)
 
 
 def size_to_string(item):
