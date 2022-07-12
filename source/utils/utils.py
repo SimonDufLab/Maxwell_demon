@@ -248,6 +248,17 @@ def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
 #     return new_net
 
 
+def neuron_state_from_params_magnitude(params, eps):
+    """ Return neuron state (to detect 'quais-dead') according to the mean size of
+    the parameters of a neuron"""
+    neuron_state = []
+    for key in list(params.keys())[:-1]:
+        neuron_means = jax.tree_leaves(jax.tree_map(abs_mean_except_last_dim, params[key]))
+        neuron_means = sum(neuron_means) / len(neuron_means)
+        neuron_state.append(neuron_means <= eps)
+    return neuron_state
+
+
 ##############################
 # Training utilities
 ##############################
@@ -548,6 +559,11 @@ def size_to_string(item):
         return word[:-1]
     else:
         return str(item)
+
+
+def abs_mean_except_last_dim(tree_leaf):
+    axes = tuple(range(len(tree_leaf.shape)-1))
+    return jnp.mean(jnp.abs(tree_leaf), axis=axes)
 
 
 def clear_caches():
