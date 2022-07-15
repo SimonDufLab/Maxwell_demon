@@ -28,7 +28,7 @@ def conv_3_2(sizes, number_classes, dim=2):
     layer_4 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[3]), act]
     layer_5 = [Partial(hk.Linear, number_classes)]
 
-    return [layer_1, layer_2, layer_3, layer_4, layer_5]
+    return [layer_1, layer_2, layer_3, layer_4, layer_5],
 
 
 def conv_4_2(sizes, number_classes, dim=2):
@@ -56,7 +56,7 @@ def conv_4_2(sizes, number_classes, dim=2):
     layer_5 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[4]), act]
     layer_6 = [Partial(hk.Linear, number_classes)]
 
-    return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6]
+    return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6],
 
 
 def conv_6_2(sizes, number_classes, dim=2):
@@ -86,4 +86,4 @@ def conv_6_2(sizes, number_classes, dim=2):
     layer_7 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[6]), act]
     layer_8 = [Partial(hk.Linear, number_classes)]
 
-    return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6, layer_7, layer_8]
+    return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6, layer_7, layer_8],

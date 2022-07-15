@@ -16,4 +16,4 @@ def mlp_3(sizes, number_classes):
     layer_2 = [Partial(hk.Linear, sizes[1]), act]
     layer_3 = [Partial(hk.Linear, number_classes)]
 
-    return [layer_1, layer_2, layer_3]
+    return [layer_1, layer_2, layer_3],

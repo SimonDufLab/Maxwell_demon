@@ -41,7 +41,7 @@ def death_check_given_model(model, with_activations=False, epsilon=0):
 
     @jax.jit
     def _death_check(_params: hk.Params, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
-        _, activations = model.apply(_params, _batch, True)
+        _, activations = model.apply(_params, _batch, True, False)
         activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
@@ -265,7 +265,7 @@ def neuron_state_from_params_magnitude(params, eps):
 def accuracy_given_model(model):
     @jax.jit
     def _accuracy(_params: hk.Params, _batch: Batch) -> jnp.ndarray:
-        predictions = model.apply(_params, _batch, False)
+        predictions = model.apply(_params, _batch, False, False)
         return jnp.mean(jnp.argmax(predictions, axis=-1) == _batch[1])
 
     return _accuracy
@@ -286,14 +286,14 @@ def create_full_accuracy_fn(accuracy_fn, scan_len):
     return full_accuracy_fn
 
 
-def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None):
+def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True):
     """ Build the cross-entropy loss given the model"""
     if not classes:
         classes = 10
 
     @jax.jit
     def _loss(params: hk.Params, batch: Batch) -> jnp.ndarray:
-        logits = model.apply(params, batch, False)
+        logits = model.apply(params, batch, False, is_training=is_training)
         labels = jax.nn.one_hot(batch[1], classes)
 
         softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
@@ -493,7 +493,7 @@ def load_fashion_mnist_torch(is_training, batch_size, subset=None, transform=Tru
 ##############################
 # Module utilities
 ##############################
-def build_models(layer_list, name=None):
+def build_models(train_layer_list, test_layer_list=None, name=None):
     """ Take as input a list of haiku modules and return 2 different transform object:
     1) First is the typical model returning the outputs
     2) The other is the same model returning all activations values + output"""
@@ -508,15 +508,27 @@ def build_models(layer_list, name=None):
     class ModelAndActivations(hk.Module):
         def __init__(self):
             super().__init__(name=name)
-            self.layers = layer_list
+            self.train_layers = train_layer_list
+            self.test_layers = test_layer_list
 
-        def __call__(self, x, return_activations=False):
+        def __call__(self, x, return_activations=False, is_training=True):
             activations = []
             x = x[0].astype(jnp.float32)
-            for layer in self.layers[:-1]:  # Don't append final output in activations list
+            if (is_training or (self.test_layers is None)):
+                layers = self.train_layers
+            else:
+                layers = self.test_layers
+            for layer in layers[:-1]:  # Don't append final output in activations list
                 x = hk.Sequential([mdl() for mdl in layer])(x)
-                activations.append(x)
-            x = hk.Sequential([mdl() for mdl in self.layers[-1]])(x)
+                if return_activations:
+                    if type(x) is tuple:
+                        activations += x[1]
+                        activations.append(x[0])
+                    else:
+                        activations.append(x)
+                if type(x) is tuple:
+                    x = x[0]
+            x = hk.Sequential([mdl() for mdl in layers[-1]])(x)
             if return_activations:
                 return x, activations
             else:

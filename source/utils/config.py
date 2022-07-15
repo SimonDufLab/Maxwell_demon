@@ -26,9 +26,11 @@ regularizer_choice = (
     "l2"
 )
 
+# Return the desired architecture along with a bool indicating if there is a
+# is_training flag for this specific model
 architecture_choice = {
-    "mlp_3": mlp_3,
-    "conv_3_2": conv_3_2,
-    "conv_4_2": conv_4_2,
-    "conv_6_2": conv_6_2
+    "mlp_3": (mlp_3, False),
+    "conv_3_2": (conv_3_2, False),
+    "conv_4_2": (conv_4_2, False),
+    "conv_6_2": (conv_6_2, False)
 }
