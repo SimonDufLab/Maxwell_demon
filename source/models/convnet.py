@@ -7,17 +7,19 @@ from jax.tree_util import Partial
 def conv_3_2(sizes, number_classes, dim=2):
     """ Convnet with 3 convolutional layers followed by 2 fully-connected
     """
+
     def act():
         return jax.nn.relu
-    if dim==1:
+
+    if dim == 1:
         conv_fn = hk.Conv1D
-    elif dim==2:
+    elif dim == 2:
         conv_fn = hk.Conv2D
     else:
         raise Exception("Convnet dimension restricted to 1 or 2")
 
     if len(sizes) == 2:  # Size can be specified with 2 args
-        sizes = [sizes[0], 2*sizes[0], 4*sizes[0], sizes[1]]
+        sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], sizes[1]]
 
     max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
     bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
@@ -34,17 +36,19 @@ def conv_3_2(sizes, number_classes, dim=2):
 def conv_4_2(sizes, number_classes, dim=2):
     """ Convnet with 4 convolutional layers followed by 2 fully-connected
     """
+
     def act():
         return jax.nn.relu
-    if dim==1:
+
+    if dim == 1:
         conv_fn = hk.Conv1D
-    elif dim==2:
+    elif dim == 2:
         conv_fn = hk.Conv2D
     else:
         raise Exception("Convnet dimension restricted to 1 or 2")
 
     if len(sizes) == 2:  # Size can be specified with 2 args
-        sizes = [sizes[0], 2*sizes[0], 4*sizes[0], 4*sizes[0], sizes[1]]
+        sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
 
     max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
     bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
@@ -62,17 +66,19 @@ def conv_4_2(sizes, number_classes, dim=2):
 def conv_6_2(sizes, number_classes, dim=2):
     """ Convnet with 6 convolutional layers followed by 2 fully-connected
     """
+
     def act():
         return jax.nn.relu
-    if dim==1:
+
+    if dim == 1:
         conv_fn = hk.Conv1D
-    elif dim==2:
+    elif dim == 2:
         conv_fn = hk.Conv2D
     else:
         raise Exception("Convnet dimension restricted to 1 or 2")
 
     if len(sizes) == 2:  # Size can be specified with 2 args
-        sizes = [sizes[0], sizes[0], 2*sizes[0], 2*sizes[0], 4*sizes[0], 4*sizes[0], sizes[1]]
+        sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
 
     max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
     bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")

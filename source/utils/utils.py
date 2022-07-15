@@ -514,7 +514,7 @@ def build_models(train_layer_list, test_layer_list=None, name=None):
         def __call__(self, x, return_activations=False, is_training=True):
             activations = []
             x = x[0].astype(jnp.float32)
-            if (is_training or (self.test_layers is None)):
+            if is_training or (self.test_layers is None):
                 layers = self.train_layers
             else:
                 layers = self.test_layers
