@@ -92,7 +92,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Make the network and optimiser
     architecture = architecture_choice[exp_config.architecture](exp_config.size, exp_config.classes)
-    net = build_models(architecture)
+    net = build_models(*architecture)
 
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
 
