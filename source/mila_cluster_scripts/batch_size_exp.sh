@@ -41,12 +41,12 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    init_seed: int = 41
 
 # Run experiments
-python source/batch_size_exp.py dataset='mnist' regularizer=None architecture='mlp_3'
-wait $!
+#python source/batch_size_exp.py dataset='mnist' regularizer=None architecture='mlp_3'
+#wait $!
 #python source/batch_size_exp.py dataset='cifar10' regularizer=None architecture='mlp_3'
 #wait $!
 
 #python source/batch_size_exp.py dataset='mnist' regularizer=None architecture='conv_3_2' 'size="(32, 128)"'
 #wait $!
-#python source/batch_size_exp.py dataset='cifar10' regularizer=None architecture='conv_3_2' 'size="(32, 128)"'
-#wait $!
+python source/batch_size_exp.py dataset='cifar10' regularizer=None architecture='conv_3_2' 'size="(32, 128)"'
+wait $!

@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=asymptotic_live_neurons
-#SBATCH --partition=unkillable                           # Ask for unkillable job
-#SBATCH --cpus-per-task=2                                # Ask for 2 CPUs
+#SBATCH --partition=main                           # Ask for unkillable job
+#SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=12G                                        # Ask for 10 GB of RAM
-#SBATCH --time=2:15:00                                   # The job will run for 2.5 hours
+#SBATCH --mem=32G                                        # Ask for 10 GB of RAM
+#SBATCH --time=72:00:00                                   # The job will run for 2.5 hours
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -36,9 +36,12 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
 
 # Run experiments
-python source/asymptotic_live_neurons.py dataset='cifar10' regularizer=None training_steps=120001 architecture='conv_3_2' 'sizes="((8, 128), (16, 128), (32, 128), (64, 128), (128, 128), (256, 128), (512, 128), (640, 128), (768, 128), (1024, 128))"'
+python source/asymptotic_live_neurons.py dataset='cifar10' regularizer='cdg_l2' training_steps=200001 architecture='conv_6_2' 'sizes="((8, 32), (16, 32), (32, 32), (64, 32), (128, 64), (256, 128), (512, 256), (640, 384), (768, 512))"' init_seed=97 dynamic_pruning=True
 wait $!
-#python source/asymptotic_live_neurons.py dataset='cifar10' regularizer='cdg_l2' training_steps=100001 architecture='conv_3_2' 'sizes="((8, 128), (16, 128), (32, 128), (64, 128), (128, 128), (256, 128), (512, 128), (640, 128), (768, 128), (1024, 128))"'
+#python source/asymptotic_live_neurons.py dataset='cifar10' regularizer=None training_steps=200001 architecture='conv_6_2' 'sizes="((8, 128), (16, 128), (32, 128), (64, 128), (128, 128), (256, 128), (512, 128), (640, 128), (768, 128), (1024, 128))"' init_seed=28
+#wait $!
+
+#python source/asymptotic_live_neurons.py dataset='cifar10' regularizer=None training_steps=200001 architecture='conv_4_2' 'sizes="((1024, 768),)"' dynamic_pruning=True 
 #wait $!
 
 #python source/asymptotic_live_neurons.py dataset='mnist' regularizer='None' training_steps=200001 architecture='conv_3_2' 'sizes="((8, 25), (16, 50), (32, 100), (64, 200), (128, 400), (256, 800), (512, 1600), (1024, 1600))"'

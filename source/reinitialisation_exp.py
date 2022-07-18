@@ -86,7 +86,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Create network/optimizer and initialize params
     architecture = mlp_3(exp_config.size, exp_config.kept_classes)
-    net = build_models(architecture)
+    net = build_models(*architecture)
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
 
     # First prng key

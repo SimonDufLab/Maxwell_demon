@@ -4,6 +4,7 @@ from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from models.mlp import mlp_3
 from models.convnet import conv_3_2, conv_4_2, conv_6_2
+from models.resnet import resnet18
 
 optimizer_choice = {
     "adam": optax.adam,
@@ -26,9 +27,12 @@ regularizer_choice = (
     "l2"
 )
 
+# Return the desired architecture along with a bool indicating if there is a
+# is_training flag for this specific model
 architecture_choice = {
-    "mlp_3": mlp_3,
-    "conv_3_2": conv_3_2,
-    "conv_4_2": conv_4_2,
-    "conv_6_2": conv_6_2
+    "mlp_3": (mlp_3, False),
+    "conv_3_2": (conv_3_2, False),
+    "conv_4_2": (conv_4_2, False),
+    "conv_6_2": (conv_6_2, False),
+    "resnet18": (resnet18, True)
 }
