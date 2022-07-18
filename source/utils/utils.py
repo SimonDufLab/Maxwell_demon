@@ -40,8 +40,8 @@ def death_check_given_model(model, with_activations=False, epsilon=0):
     assert epsilon >= 0, "epsilon value must be positive"
 
     @jax.jit
-    def _death_check(_params: hk.Params, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
-        _, activations = model.apply(_params, _batch, True, False)
+    def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
+        (_, activations), _ = model.apply(_params, _state, _batch, True, False)
         activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
@@ -58,7 +58,7 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
         return jnp.logical_and(leaf1.astype(bool), leaf2.astype(bool))
 
     if with_activations_data:
-        def scan_death_check(params, batch_it):
+        def scan_death_check(params, state, batch_it):
             # def scan_dead_neurons_over_whole_ds(previous_dead, __):
             #     batched_activations, dead_neurons = death_check_fn(
             #         params, next(batch_it))
@@ -69,14 +69,14 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
             #                                                  scan_len)
             # return batched_activations, dead_neurons
 
-            activations, previous_dead = death_check_fn(params, next(batch_it))
+            activations, previous_dead = death_check_fn(params, state, next(batch_it))
             # batched_activations = [activations]
             running_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
             running_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
             running_count = count_activations_occurrence(activations)
             N = 1
             for i in range(scan_len-1):
-                activations, dead_neurons = death_check_fn(params, next(batch_it))
+                activations, dead_neurons = death_check_fn(params, state, next(batch_it))
                 # batched_activations.append(activations)
                 running_max = update_running_max(activations, running_max)
                 running_mean = update_running_mean(activations, running_mean)
@@ -89,7 +89,7 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
 
         return scan_death_check
     else:
-        def scan_death_check(params, batch_it):
+        def scan_death_check(params, state, batch_it):
             # def scan_dead_neurons_over_whole_ds(previous_dead, __):
             #     dead_neurons = death_check_fn(params, next(batch_it))
             #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), None
@@ -99,9 +99,9 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
             #                                scan_len)
             # return dead_neurons
 
-            previous_dead = death_check_fn(params, next(batch_it))
+            previous_dead = death_check_fn(params, state, next(batch_it))
             for i in range(scan_len-1):
-                dead_neurons = death_check_fn(params, next(batch_it))
+                dead_neurons = death_check_fn(params, state, next(batch_it))
                 previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
 
             return previous_dead
@@ -264,24 +264,24 @@ def neuron_state_from_params_magnitude(params, eps):
 ##############################
 def accuracy_given_model(model):
     @jax.jit
-    def _accuracy(_params: hk.Params, _batch: Batch) -> jnp.ndarray:
-        predictions = model.apply(_params, _batch, False, False)
+    def _accuracy(_params: hk.Params, _state: hk.State, _batch: Batch) -> jnp.ndarray:
+        predictions, _ = model.apply(_params, _state, _batch, False, False)
         return jnp.mean(jnp.argmax(predictions, axis=-1) == _batch[1])
 
     return _accuracy
 
 
 def create_full_accuracy_fn(accuracy_fn, scan_len):
-    def full_accuracy_fn(params, batch_it):
+    def full_accuracy_fn(params, state, batch_it):
         # def scan_accuracy_fn(_, __):
         #     acc = accuracy_fn(params, next(batch_it))
         #     return None, acc
         # _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
         # return jnp.mean(all_acc)
 
-        acc = [accuracy_fn(params, next(batch_it))]
+        acc = [accuracy_fn(params, state, next(batch_it))]
         for i in range(scan_len-1):
-            acc.append(accuracy_fn(params, next(batch_it)))
+            acc.append(accuracy_fn(params, state, next(batch_it)))
         return jnp.mean(jnp.stack(acc))
     return full_accuracy_fn
 
@@ -292,8 +292,8 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         classes = 10
 
     @jax.jit
-    def _loss(params: hk.Params, batch: Batch) -> jnp.ndarray:
-        logits = model.apply(params, batch, False, is_training=is_training)
+    def _loss(params: hk.Params, state: hk.State, batch: Batch) -> Union[jnp.ndarray, Any]:
+        logits, state = model.apply(params, state, batch, return_activations=False, is_training=is_training)
         labels = jax.nn.one_hot(batch[1], classes)
 
         softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
@@ -307,9 +307,15 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
                 reg_loss = 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
             if regularizer == "cdg_lasso":
                 reg_loss = sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_leaves(params))
-            return softmax_xent + reg_param * reg_loss
+            loss = softmax_xent + reg_param * reg_loss
         else:
-            return softmax_xent
+            loss = softmax_xent
+
+        if is_training:
+            return loss, state
+        else:
+            return loss
+
     return _loss
 
 
@@ -317,11 +323,11 @@ def update_given_loss_and_optimizer(loss, optimizer):
     """Learning rule (stochastic gradient descent)."""
 
     @jax.jit
-    def _update(_params: hk.Params, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, OptState]:
-        grads = jax.grad(loss)(_params, _batch)
+    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any,  OptState]:
+        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
         updates, _opt_state = optimizer.update(grads, _opt_state)
         new_params = optax.apply_updates(_params, updates)
-        return new_params, _opt_state
+        return new_params, new_state, _opt_state
 
     return _update
 
@@ -523,7 +529,7 @@ def build_models(train_layer_list, test_layer_list=None, name=None):
                 if return_activations:
                     if type(x) is tuple:
                         activations += x[1]
-                        activations.append(x[0])
+                        # activations.append(x[0])
                     else:
                         activations.append(x)
                 if type(x) is tuple:
@@ -534,11 +540,11 @@ def build_models(train_layer_list, test_layer_list=None, name=None):
             else:
                 return x
 
-    def secondary_model(x, return_activations=False):
-        return ModelAndActivations()(x, return_activations)
+    def secondary_model(x, return_activations=False, is_training=True):
+        return ModelAndActivations()(x, return_activations, is_training)
 
     # return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
-    return hk.without_apply_rng(hk.transform(secondary_model))
+    return hk.without_apply_rng(hk.transform_with_state(secondary_model))
 
 
 ##############################
@@ -557,6 +563,18 @@ def get_total_neurons(architecture, sizes):
     elif architecture == 'conv_6_2':
         if len(sizes) == 2:  # Size can be specified with 2 args
             sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
+    elif architecture == "resnet18":
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes,
+                     sizes, sizes,
+                     sizes, sizes,
+                     2*sizes, 2*sizes,
+                     2*sizes, 2*sizes,
+                     4 * sizes, 4 * sizes,
+                     4 * sizes, 4 * sizes,
+                     8 * sizes, 8 * sizes,
+                     8 * sizes, 8 * sizes,
+                     ]
 
     return sum(sizes), tuple(sizes)
 

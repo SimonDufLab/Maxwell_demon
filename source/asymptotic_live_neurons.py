@@ -166,7 +166,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_size // eval_size)
 
-        params = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+        params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         opt_state = opt.init(params)
 
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
@@ -174,15 +174,15 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         for step in range(exp_config.training_steps):
             if step % exp_config.record_freq == 0:
-                train_loss = test_loss(params, next(train_eval))
-                train_accuracy = accuracy_fn(params, next(train_eval))
-                test_accuracy = accuracy_fn(params, next(test_eval))
+                train_loss = test_loss(params, state, next(train_eval))
+                train_accuracy = accuracy_fn(params, state, next(train_eval))
+                test_accuracy = accuracy_fn(params, state, next(test_eval))
                 train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
                 # Periodically print classification accuracy on train & test sets.
                 if step % exp_config.report_freq == 0:
                     print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
                           f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
-                dead_neurons = death_check_fn(params, next(test_death))
+                dead_neurons = death_check_fn(params, state, next(test_death))
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
                 accuracies_log.append(test_accuracy)
@@ -198,7 +198,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                               context={"net size": utl.size_to_string(size)})
 
             if step % exp_config.pruning_freq == 0:
-                dead_neurons = scan_death_check_fn(params, test_death)
+                dead_neurons = scan_death_check_fn(params, state, test_death)
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
 
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
@@ -251,13 +251,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                     full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_size // eval_size)
 
                 del dead_neurons  # Freeing memory
-                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, train_eval))
+                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
                 exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
                               step=step,
                               context={"net size": utl.size_to_string(size)})
 
             if ((step+1) % exp_config.live_freq == 0) and (step+2 < exp_config.training_steps):
-                current_dead_neurons = scan_death_check_fn(params, test_death)
+                current_dead_neurons = scan_death_check_fn(params, state, test_death)
                 current_dead_neurons_count, _ = utl.count_dead_neurons(current_dead_neurons)
                 del current_dead_neurons
                 del _
@@ -265,13 +265,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name=f"Live neurons at training step {step+1}", step=starting_neurons)
 
             # Train step over single batch
-            params, opt_state = update_fn(params, opt_state, next(train))
+            params, state, opt_state = update_fn(params, state, opt_state, next(train))
 
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
-        final_accuracy = jax.device_get(final_accuracy_fn(params, test_eval))
+        final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
         size_arr.append(starting_neurons)
 
-        activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, test_death)
+        activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
         # final_dead_neurons = scan_death_check_fn(params, test_death)
 
         # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
@@ -294,10 +294,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         #     _, batch_dead_neurons = utl.death_check_given_model(net, with_activations=True)(params, next(test_death))
         #     return None, total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0]
         # _, batches_final_live_neurons = jax.lax.scan(scan_f, None, None, scan_len)
-        batch_dead_neurons = death_check_fn(params, next(test_death))
+        batch_dead_neurons = death_check_fn(params, state, next(test_death))
         batches_final_live_neurons = [total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0]]
         for i in range(scan_len-1):
-            batch_dead_neurons = death_check_fn(params, next(test_death))
+            batch_dead_neurons = death_check_fn(params, state, next(test_death))
             batches_final_live_neurons.append(total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0])
         batches_final_live_neurons = jnp.stack(batches_final_live_neurons)
 
