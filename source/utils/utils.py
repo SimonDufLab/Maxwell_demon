@@ -426,6 +426,11 @@ def load_cifar10_tf(split: str, is_training, batch_size, subset=None, transform=
                            subset=subset, transform=transform, cardinality=cardinality)
 
 
+def load_cifar100_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
+    return load_tf_dataset("cifar100", split=split, is_training=is_training, batch_size=batch_size,
+                           subset=subset, transform=transform, cardinality=cardinality)
+
+
 def load_fashion_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
     return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size,
                            subset=subset, transform=transform, cardinality=cardinality)
