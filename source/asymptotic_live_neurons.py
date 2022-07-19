@@ -142,7 +142,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         subrun_start_time = time.time()
 
         # Make the network and optimiser
-        architecture, is_training_flag = architecture_choice[exp_config.architecture]
+        architecture = architecture_choice[exp_config.architecture]
         architecture = architecture(size, exp_config.classes)
         net = build_models(*architecture)
 
@@ -151,11 +151,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Set training/monitoring functions
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
-        if is_training_flag:
-            test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                                is_training=False)
-        else:
-            test_loss = loss
+        test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
+                                            is_training=False)
         accuracy_fn = utl.accuracy_given_model(net)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt)
         death_check_fn = utl.death_check_given_model(net)
@@ -221,7 +218,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if exp_config.dynamic_pruning:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
-                    architecture, is_training_flag = architecture_choice[exp_config.architecture]
+                    architecture = architecture_choice[exp_config.architecture]
                     architecture = architecture(new_sizes, exp_config.classes)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
@@ -234,12 +231,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                     death_check_fn.clear_cache()
                     # Recompile training/monitoring functions
                     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
-                    if is_training_flag:
-                        test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                                            reg_param=exp_config.reg_param,
-                                                            is_training=False)
-                    else:
-                        test_loss = loss
+                    test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                        reg_param=exp_config.reg_param,
+                                                        is_training=False)
                     accuracy_fn = utl.accuracy_given_model(net)
                     update_fn = utl.update_given_loss_and_optimizer(loss, opt)
                     death_check_fn = utl.death_check_given_model(net)
