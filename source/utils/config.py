@@ -8,7 +8,8 @@ from models.resnet import resnet18
 
 optimizer_choice = {
     "adam": optax.adam,
-    "sgd": optax.sgd
+    "sgd": optax.sgd,
+    "noisy_sgd": optax.noisy_sgd,
 }
 
 dataset_choice = {
