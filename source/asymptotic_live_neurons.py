@@ -49,6 +49,7 @@ class ExpConfig:
     death_batch_size: int = 512
     optimizer: str = "adam"
     noisy_sgd_eta: float = 0.01
+    noisy_sgd_gamma: float = 0.55
     dataset: str = "mnist"
     classes: int = 10  # Number of classes in the training dataset
     architecture: str = "mlp_3"
@@ -148,7 +149,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         net = build_models(*architecture)
 
         if 'noisy' in exp_config.optimizer:
-            opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noisy_sgd_eta)
+            opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noisy_sgd_eta,
+                                                         gamma=exp_config.noisy_sgd_gamma)
         else:
             opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
         accuracies_log = []
