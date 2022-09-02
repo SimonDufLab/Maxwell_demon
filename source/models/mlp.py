@@ -1,13 +1,13 @@
 """ Models definition for MLP lie architecture. Defined fitting requirements of repo"""
 import haiku as hk
-import jax
 from jax.tree_util import Partial
+from jax.nn import relu
 
 
-def mlp_3(sizes, number_classes):
+def mlp_3(sizes, number_classes, activation_fn=relu):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units"""
     def act():
-        return jax.nn.relu
+        return activation_fn
 
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]

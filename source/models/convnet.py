@@ -1,15 +1,15 @@
 """ Models definition for convolutional nets architecture. Defined fitting requirements of repo"""
 import haiku as hk
-import jax
 from jax.tree_util import Partial
+from jax.nn import relu
 
 
-def conv_3_2(sizes, number_classes, dim=2):
+def conv_3_2(sizes, number_classes, dim=2, activation_fn=relu):
     """ Convnet with 3 convolutional layers followed by 2 fully-connected
     """
 
     def act():
-        return jax.nn.relu
+        return activation_fn
 
     if dim == 1:
         conv_fn = hk.Conv1D
@@ -33,12 +33,12 @@ def conv_3_2(sizes, number_classes, dim=2):
     return [layer_1, layer_2, layer_3, layer_4, layer_5],
 
 
-def conv_4_2(sizes, number_classes, dim=2):
+def conv_4_2(sizes, number_classes, dim=2, activation_fn=relu):
     """ Convnet with 4 convolutional layers followed by 2 fully-connected
     """
 
     def act():
-        return jax.nn.relu
+        return activation_fn
 
     if dim == 1:
         conv_fn = hk.Conv1D
@@ -63,12 +63,12 @@ def conv_4_2(sizes, number_classes, dim=2):
     return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6],
 
 
-def conv_6_2(sizes, number_classes, dim=2):
+def conv_6_2(sizes, number_classes, dim=2, activation_fn=relu):
     """ Convnet with 6 convolutional layers followed by 2 fully-connected
     """
 
     def act():
-        return jax.nn.relu
+        return activation_fn
 
     if dim == 1:
         conv_fn = hk.Conv1D
