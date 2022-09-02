@@ -1,4 +1,5 @@
 """Optax optimizers configured to work with logger"""
+import jax
 import optax
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
@@ -37,4 +38,10 @@ architecture_choice = {
     "conv_4_2": conv_4_2,
     "conv_6_2": conv_6_2,
     "resnet18": resnet18,
+}
+
+activation_choice = {
+    "relu": jax.nn.relu,
+    "leaky_relu": jax.nn.leaky_relu,
+    "abs": jax.numpy.abs,  # Absolute value as the activation function
 }
