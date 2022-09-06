@@ -45,3 +45,10 @@ activation_choice = {
     "leaky_relu": jax.nn.leaky_relu,
     "abs": jax.numpy.abs,  # Absolute value as the activation function
 }
+
+dataset_target_cardinality = {  # Hard-encoding the number of classes in given dataset for easy retrieval
+    "mnist": 10,
+    "fashion mnist": 10,
+    "cifar10": 10,
+    "cifar100": 100
+}

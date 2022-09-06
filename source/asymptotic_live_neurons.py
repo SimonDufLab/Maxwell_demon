@@ -28,7 +28,7 @@ from jax.flatten_util import ravel_pytree
 
 import utils.utils as utl
 from utils.utils import build_models
-from utils.config import optimizer_choice, dataset_choice, regularizer_choice, architecture_choice
+from utils.config import optimizer_choice, dataset_choice, dataset_target_cardinality, regularizer_choice, architecture_choice
 
 
 # Experience name -> for aim logger
@@ -51,7 +51,6 @@ class ExpConfig:
     noisy_sgd_eta: float = 0.01
     noisy_sgd_gamma: float = 0.55
     dataset: str = "mnist"
-    classes: int = 10  # Number of classes in the training dataset
     architecture: str = "mlp_3"
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "cdg_l2"
@@ -145,7 +144,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Make the network and optimiser
         architecture = architecture_choice[exp_config.architecture]
-        architecture = architecture(size, exp_config.classes)
+        classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
+        architecture = architecture(size, classes)
         net = build_models(*architecture)
 
         if 'noisy' in exp_config.optimizer:
@@ -225,7 +225,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
                     architecture = architecture_choice[exp_config.architecture]
-                    architecture = architecture(new_sizes, exp_config.classes)
+                    architecture = architecture(new_sizes, classes)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 

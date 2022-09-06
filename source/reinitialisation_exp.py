@@ -18,7 +18,8 @@ from omegaconf import OmegaConf
 
 import utils.utils as utl
 from utils.utils import build_models
-from utils.config import activation_choice, architecture_choice, dataset_choice, optimizer_choice, regularizer_choice
+from utils.config import activation_choice, architecture_choice, dataset_choice, dataset_target_cardinality,\
+    optimizer_choice, regularizer_choice
 from copy import deepcopy
 
 # Experience name -> for aim logger
@@ -95,8 +96,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Load the dataset
     load_data = dataset_choice[exp_config.dataset]
-    assert exp_config.kept_classes < 10, "subset must be smaller than 10"
-    indices = np.random.choice(10, exp_config.kept_classes, replace=False)
+    total_classes = dataset_target_cardinality[exp_config.dataset]
+    assert exp_config.kept_classes <= total_classes, "subset must be smaller or equal to total number of classes in ds"
+    indices = np.random.choice(total_classes, exp_config.kept_classes, replace=False)
     train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size, subset=indices)
     train_eval = load_data(split="train", is_training=False, batch_size=exp_config.eval_batch_size, subset=indices)
     test_eval = load_data(split="test", is_training=False, batch_size=exp_config.eval_batch_size, subset=indices)
@@ -126,7 +128,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                    classes=exp_config.kept_classes)
     test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                   classes=exp_config.kept_classes, is_training=False)
+                                        classes=exp_config.kept_classes, is_training=False)
     accuracy_fn = utl.accuracy_given_model(net)
     update_fn = utl.update_given_loss_and_optimizer(loss, opt)
     death_check_fn = utl.death_check_given_model(net)
@@ -154,11 +156,14 @@ def run_exp(exp_config: ExpConfig) -> None:
         if (step % exp_config.switching_period == 0) and \
                 (step < exp_config.total_steps-exp_config.switching_period-1):  # switch task
             # new datasets
-            indices = np.random.choice(10, exp_config.kept_classes, replace=False)
-            train = load_data(split='train', is_training=True, batch_size=50, subset=indices)
-            train_eval = load_data(split='train', is_training=False, batch_size=250, subset=indices)
-            test_eval = load_data(split='test', is_training=False, batch_size=250, subset=indices)
-            test_death = load_data(split='train', is_training=False, batch_size=1000, subset=indices)
+            indices = np.random.choice(total_classes, exp_config.kept_classes, replace=False)
+            train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size, subset=indices)
+            train_eval = load_data(split="train", is_training=False, batch_size=exp_config.eval_batch_size,
+                                   subset=indices)
+            test_eval = load_data(split="test", is_training=False, batch_size=exp_config.eval_batch_size,
+                                  subset=indices)
+            test_death = load_data(split="train", is_training=False, batch_size=exp_config.death_batch_size,
+                                   subset=indices)
 
             # reinitialize optimizers state
             opt_state = opt.init(params)
