@@ -15,6 +15,7 @@ from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
 from typing import Union, Tuple
 from jax.tree_util import Partial
+from jax.flatten_util import ravel_pytree
 from collections.abc import Iterable
 
 import psutil
@@ -332,15 +333,30 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
     return _loss
 
 
-def update_given_loss_and_optimizer(loss, optimizer):
+def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1)):
     """Learning rule (stochastic gradient descent)."""
 
-    @jax.jit
-    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any,  OptState]:
-        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
-        updates, _opt_state = optimizer.update(grads, _opt_state)
-        new_params = optax.apply_updates(_params, updates)
-        return new_params, new_state, _opt_state
+    if not noise:
+        @jax.jit
+        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any,  OptState]:
+            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+            updates, _opt_state = optimizer.update(grads, _opt_state)
+            new_params = optax.apply_updates(_params, updates)
+            return new_params, new_state, _opt_state
+    else:
+        a, b = noise_imp
+
+        @jax.jit
+        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
+                    _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
+            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+            key, next_key = jax.random.split(_key)
+            flat_grads, unravel_fn = ravel_pytree(grads)
+            added_noise = _var*jax.random.normal(key, shape=flat_grads.shape)
+            noisy_grad = unravel_fn(a*flat_grads + b*added_noise)
+            updates, _opt_state = optimizer.update(noisy_grad, _opt_state)
+            new_params = optax.apply_updates(_params, updates)
+            return new_params, new_state, _opt_state, next_key
 
     return _update
 
