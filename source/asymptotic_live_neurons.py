@@ -48,8 +48,6 @@ class ExpConfig:
     eval_batch_size: int = 512
     death_batch_size: int = 512
     optimizer: str = "adam"
-    noisy_sgd_eta: float = 0.01
-    noisy_sgd_gamma: float = 0.55
     dataset: str = "mnist"
     architecture: str = "mlp_3"
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
@@ -58,6 +56,11 @@ class ExpConfig:
     epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
     init_seed: int = 41
     dynamic_pruning: bool = False
+    add_noise: bool = False
+    noise_imp: Tuple[float] = (1, 1)
+    noise_eta: float = 0.01
+    noise_gamma: float = 0.0
+    noise_seed: int = 1
 
     # def __post_init__(self):
     #     if type(self.sizes) == str:
@@ -149,8 +152,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         net = build_models(*architecture)
 
         if 'noisy' in exp_config.optimizer:
-            opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noisy_sgd_eta,
-                                                         gamma=exp_config.noisy_sgd_gamma)
+            opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noise_eta,
+                                                         gamma=exp_config.noise_gamma)
         else:
             opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
         accuracies_log = []
@@ -160,7 +163,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                             is_training=False)
         accuracy_fn = utl.accuracy_given_model(net)
-        update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp)
         death_check_fn = utl.death_check_given_model(net)
         scan_len = dataset_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
@@ -171,6 +174,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         opt_state = opt.init(params)
+
+        noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
         total_neurons, total_per_layer = starting_neurons, starting_per_layer
@@ -241,7 +246,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                         reg_param=exp_config.reg_param,
                                                         is_training=False)
                     accuracy_fn = utl.accuracy_given_model(net)
-                    update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+                    update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp)
                     death_check_fn = utl.death_check_given_model(net)
                     scan_len = dataset_size // death_minibatch_size
                     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
@@ -265,7 +270,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name=f"Live neurons at training step {step+1}", step=starting_neurons)
 
             # Train step over single batch
-            params, state, opt_state = update_fn(params, state, opt_state, next(train))
+            if not exp_config.add_noise:
+                params, state, opt_state = update_fn(params, state, opt_state, next(train))
+            else:
+                noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
+                params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train), noise_var,
+                                                                noise_key)
 
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
