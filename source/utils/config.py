@@ -44,6 +44,9 @@ activation_choice = {
     "relu": jax.nn.relu,
     "leaky_relu": jax.nn.leaky_relu,
     "abs": jax.numpy.abs,  # Absolute value as the activation function
+    "elu": jax.nn.elu,
+    "swish": jax.nn.swish,
+    "tanh": jax.nn.tanh
 }
 
 dataset_target_cardinality = {  # Hard-encoding the number of classes in given dataset for easy retrieval

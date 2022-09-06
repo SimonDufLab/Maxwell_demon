@@ -35,9 +35,22 @@ def sum_across_filter(filters):
         return filters
 
 
-def death_check_given_model(model, with_activations=False, epsilon=0):
+def death_check_given_model(model, with_activations=False, epsilon=0, check_tail=False):
     """Return a boolean array per layer; with True values for dead neurons"""
     assert epsilon >= 0, "epsilon value must be positive"
+    if check_tail:
+        assert epsilon <= 1, "for tanh activation fn, epsilon must be smaller than 1"
+
+    def relu_test(arr):  # Test for relu, leaky-relu, elu, swish, etc. activation fn. Check if bigger than epsilon
+        return arr <= epsilon
+
+    def tanh_test(arr):  # Test for tanh, sigmoid, etc. activation fn. Check if abs(tanh(x)) >= 1-epsilon
+        return jnp.abs(arr) >= 1-epsilon  # TODO: test fn not compatible with convnets
+
+    if check_tail:
+        test_fn = tanh_test
+    else:
+        test_fn = relu_test
 
     @jax.jit
     def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
@@ -45,9 +58,9 @@ def death_check_given_model(model, with_activations=False, epsilon=0):
         activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
-            return activations, jax.tree_map(lambda arr: arr <= epsilon, sum_activations)
+            return activations, jax.tree_map(test_fn, sum_activations)
         else:
-            return jax.tree_map(lambda arr: arr <= epsilon, sum_activations)
+            return jax.tree_map(test_fn, sum_activations)
 
     return _death_check
 

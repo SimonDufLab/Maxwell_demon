@@ -131,7 +131,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                                         classes=exp_config.kept_classes, is_training=False)
     accuracy_fn = utl.accuracy_given_model(net)
     update_fn = utl.update_given_loss_and_optimizer(loss, opt)
-    death_check_fn = utl.death_check_given_model(net)
+    if exp_config.activation in ['tanh']:  # Extend list if needed
+        death_check_fn = utl.death_check_given_model(net, epsilon=0.005, check_tail=True)
+    else:
+        death_check_fn = utl.death_check_given_model(net)
 
     # Monitoring:
     no_reinit_perf = []
