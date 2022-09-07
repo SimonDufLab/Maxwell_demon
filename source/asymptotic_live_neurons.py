@@ -56,11 +56,13 @@ class ExpConfig:
     epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate
     init_seed: int = 41
     dynamic_pruning: bool = False
-    add_noise: bool = False
-    noise_imp: Tuple[float] = (1, 1)
+    add_noise: bool = False  # Add Gaussian noise to the gradient signal
+    noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones
+    noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
     noise_eta: float = 0.01
     noise_gamma: float = 0.0
     noise_seed: int = 1
+    save_wanda: bool = False  # Whether to save weights and activations value or not
 
     # def __post_init__(self):
     #     if type(self.sizes) == str:
@@ -89,6 +91,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.regularizer = None
     if type(exp_config.sizes) == str:
         exp_config.sizes = literal_eval(exp_config.sizes)
+    if type(exp_config.noise_imp) == str:
+        exp_config.noise_imp = literal_eval(exp_config.noise_imp)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
@@ -127,19 +131,20 @@ def run_exp(exp_config: ExpConfig) -> None:
     size_arr = []
     f_acc = []
 
-    # Recording metadata about activations that will be pickled
-    @dataclass
-    class ActivationMeta:
-        maximum: List[float] = field(default_factory=list)
-        mean: List[float] = field(default_factory=list)
-        count: List[int] = field(default_factory=list)
-    activations_meta = ActivationMeta()
+    if exp_config.save_wanda:
+        # Recording metadata about activations that will be pickled
+        @dataclass
+        class ActivationMeta:
+            maximum: List[float] = field(default_factory=list)
+            mean: List[float] = field(default_factory=list)
+            count: List[int] = field(default_factory=list)
+        activations_meta = ActivationMeta()
 
-    # Recording params value at the end of the training as well
-    @dataclass
-    class FinalParamsMeta:
-        parameters: List[float] = field(default_factory=list)
-    params_meta = FinalParamsMeta()
+        # Recording params value at the end of the training as well
+        @dataclass
+        class FinalParamsMeta:
+            parameters: List[float] = field(default_factory=list)
+        params_meta = FinalParamsMeta()
 
     for size in exp_config.sizes:  # Vary the NN width
         # Time the subrun for the different sizes
@@ -289,9 +294,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         del final_dead_neurons  # Freeing memory
 
         activations_max, activations_mean, activations_count = activations_data
-        activations_meta.maximum.append(activations_max)
-        activations_meta.mean.append(activations_mean)
-        activations_meta.count.append(activations_count)
+        if exp_config.save_wanda:
+            activations_meta.maximum.append(activations_max)
+            activations_meta.mean.append(activations_mean)
+            activations_meta.count.append(activations_count)
         activations_max, _ = ravel_pytree(activations_max)
         activations_max = jax.device_get(activations_max)
         activations_mean, _ = ravel_pytree(activations_mean)
@@ -350,14 +356,15 @@ def run_exp(exp_config: ExpConfig) -> None:
         # scan_death_check_fn_with_activations._clear_cache()  # No more cache
         # final_accuracy_fn._clear_cache()  # No more cache
 
-        # Pickling activations for later epsilon-close investigation in a .ipynb
-        with open(pickle_dir_path+'activations_meta.p', 'wb') as fp:
-            pickle.dump(asdict(activations_meta), fp)  # Update by overwrite
+        if exp_config.save_wanda:
+            # Pickling activations for later epsilon-close investigation in a .ipynb
+            with open(pickle_dir_path+'activations_meta.p', 'wb') as fp:
+                pickle.dump(asdict(activations_meta), fp)  # Update by overwrite
 
-        # Pickling the final parameters value as well
-        params_meta.parameters.append(params)
-        with open(pickle_dir_path + 'params_meta.p', 'wb') as fp:
-            pickle.dump(asdict(params_meta), fp)  # Update by overwrite
+            # Pickling the final parameters value as well
+            params_meta.parameters.append(params)
+            with open(pickle_dir_path + 'params_meta.p', 'wb') as fp:
+                pickle.dump(asdict(params_meta), fp)  # Update by overwrite
 
         # Print running time
         print()
