@@ -239,7 +239,6 @@ def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
                 filter_in_opt_state[j][layers_name[i + 1]]['w'] = filter_in_opt_state[j][layers_name[i + 1]]['w'][...,
                                                                   current_state, :]
 
-
     if opt_state:
         filtered_opt_state, empty_state = copy.copy(opt_state)
         for j, field in enumerate(field_names):
@@ -333,7 +332,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
     return _loss
 
 
-def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1)):
+def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only = False):
     """Learning rule (stochastic gradient descent)."""
 
     if not noise:
@@ -345,18 +344,31 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
             return new_params, new_state, _opt_state
     else:
         a, b = noise_imp
-
-        @jax.jit
-        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
-                    _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
-            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
-            key, next_key = jax.random.split(_key)
-            flat_grads, unravel_fn = ravel_pytree(grads)
-            added_noise = _var*jax.random.normal(key, shape=flat_grads.shape)
-            noisy_grad = unravel_fn(a*flat_grads + b*added_noise)
-            updates, _opt_state = optimizer.update(noisy_grad, _opt_state)
-            new_params = optax.apply_updates(_params, updates)
-            return new_params, new_state, _opt_state, next_key
+        if noise_live_only:
+            @jax.jit
+            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
+                        _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
+                grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                key, next_key = jax.random.split(_key)
+                flat_grads, unravel_fn = ravel_pytree(grads)
+                added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
+                added_noise = added_noise * (jnp.abs(flat_grads) >= 1e-8)  # Only apply noise to weights with gradient>0
+                noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
+                updates, _opt_state = optimizer.update(noisy_grad, _opt_state)
+                new_params = optax.apply_updates(_params, updates)
+                return new_params, new_state, _opt_state, next_key
+        else:
+            @jax.jit
+            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
+                        _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
+                grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                key, next_key = jax.random.split(_key)
+                flat_grads, unravel_fn = ravel_pytree(grads)
+                added_noise = _var*jax.random.normal(key, shape=flat_grads.shape)
+                noisy_grad = unravel_fn(a*flat_grads + b*added_noise)
+                updates, _opt_state = optimizer.update(noisy_grad, _opt_state)
+                new_params = optax.apply_updates(_params, updates)
+                return new_params, new_state, _opt_state, next_key
 
     return _update
 
