@@ -168,7 +168,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                             is_training=False)
         accuracy_fn = utl.accuracy_given_model(net)
-        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp, exp_config.noise_live_only)
         death_check_fn = utl.death_check_given_model(net)
         scan_len = dataset_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
@@ -251,7 +251,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                         reg_param=exp_config.reg_param,
                                                         is_training=False)
                     accuracy_fn = utl.accuracy_given_model(net)
-                    update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp)
+                    update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp, exp_config.noise_live_only)
                     death_check_fn = utl.death_check_given_model(net)
                     scan_len = dataset_size // death_minibatch_size
                     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
