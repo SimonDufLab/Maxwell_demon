@@ -342,7 +342,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
 
     if not noise:
         @jax.jit
-        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any,  OptState]:
+        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
             grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
             if norm_grad:
                 grads = jax.tree_map(grad_normalisation_per_layer, grads)
