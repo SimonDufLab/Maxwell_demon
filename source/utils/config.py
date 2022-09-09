@@ -3,8 +3,8 @@ import jax
 import optax
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
-from models.mlp import mlp_3
-from models.convnet import conv_3_2, conv_4_2, conv_6_2
+from models.mlp import mlp_3, mlp_3_bn
+from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_2, conv_6_2_bn
 from models.resnet import resnet18
 
 optimizer_choice = {
@@ -38,6 +38,13 @@ architecture_choice = {
     "conv_4_2": conv_4_2,
     "conv_6_2": conv_6_2,
     "resnet18": resnet18,
+}
+
+bn_architecture_choice = {
+    "mlp_3": mlp_3_bn,
+    "conv_3_2": conv_3_2_bn,
+    "conv_4_2": conv_4_2_bn,
+    "conv_6_2": conv_6_2_bn,
 }
 
 activation_choice = {
