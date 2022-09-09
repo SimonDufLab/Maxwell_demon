@@ -332,13 +332,20 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
     return _loss
 
 
-def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only = False):
+def grad_normalisation_per_layer(param_leaf):
+    var = jnp.var(param_leaf)
+    return param_leaf/jnp.sqrt(var+1)
+
+
+def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only=False, norm_grad=False):
     """Learning rule (stochastic gradient descent)."""
 
     if not noise:
         @jax.jit
         def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any,  OptState]:
             grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+            if norm_grad:
+                grads = jax.tree_map(grad_normalisation_per_layer, grads)
             updates, _opt_state = optimizer.update(grads, _opt_state)
             new_params = optax.apply_updates(_params, updates)
             return new_params, new_state, _opt_state

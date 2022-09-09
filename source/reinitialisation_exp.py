@@ -50,6 +50,7 @@ class ExpConfig:
     regularizer: Optional[str] = "None"
     reg_param: float = 1e-4
     init_seed: int = 41
+    norm_grad: bool = False
 
 
 cs = ConfigStore.instance()
@@ -130,7 +131,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                         classes=exp_config.kept_classes, is_training=False)
     accuracy_fn = utl.accuracy_given_model(net)
-    update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+    update_fn = utl.update_given_loss_and_optimizer(loss, opt, norm_grad=exp_config.norm_grad)
     if exp_config.activation in ['tanh']:  # Extend list if needed
         death_check_fn = utl.death_check_given_model(net, epsilon=0.005, check_tail=True)
     else:
