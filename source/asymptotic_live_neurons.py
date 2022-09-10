@@ -279,6 +279,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 params, state, opt_state = update_fn(params, state, opt_state, next(train))
             else:
                 noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
+                noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
                 params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train), noise_var,
                                                                 noise_key)
 
