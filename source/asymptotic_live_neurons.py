@@ -164,9 +164,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         accuracies_log = []
 
         # Set training/monitoring functions
-        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
+        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param, classes=classes)
         test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                            is_training=False)
+                                            classes=classes, is_training=False)
         accuracy_fn = utl.accuracy_given_model(net)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp, exp_config.noise_live_only)
         death_check_fn = utl.death_check_given_model(net)
@@ -246,9 +246,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                     update_fn.clear_cache()
                     death_check_fn.clear_cache()
                     # Recompile training/monitoring functions
-                    loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
+                    loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param, classes=classes)
                     test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                         reg_param=exp_config.reg_param,
+                                                        classes=classes,
                                                         is_training=False)
                     accuracy_fn = utl.accuracy_given_model(net)
                     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp, exp_config.noise_live_only)
