@@ -359,22 +359,24 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                 key, next_key = jax.random.split(_key)
                 flat_grads, unravel_fn = ravel_pytree(grads)
                 added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
-                added_noise = added_noise * (jnp.abs(flat_grads) >= 1e-8)  # Only apply noise to weights with gradient>0
-                noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
-                updates, _opt_state = optimizer.update(noisy_grad, _opt_state)
-                new_params = optax.apply_updates(_params, updates)
+                added_noise = added_noise * (jnp.abs(flat_grads) >= 1e-8)  # Only apply noise to weights with gradient!=0
+                # noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
+                updates, _opt_state = optimizer.update(grads, _opt_state)
+                flat_updates, _ = ravel_pytree(updates)
+                noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
+                new_params = optax.apply_updates(_params, noisy_updates)
                 return new_params, new_state, _opt_state, next_key
         else:
             @jax.jit
             def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
                         _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
                 grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                updates, _opt_state = optimizer.update(grads, _opt_state)
                 key, next_key = jax.random.split(_key)
-                flat_grads, unravel_fn = ravel_pytree(grads)
-                added_noise = _var*jax.random.normal(key, shape=flat_grads.shape)
-                noisy_grad = unravel_fn(a*flat_grads + b*added_noise)
-                updates, _opt_state = optimizer.update(noisy_grad, _opt_state)
-                new_params = optax.apply_updates(_params, updates)
+                flat_updates, unravel_fn = ravel_pytree(updates)
+                added_noise = _var*jax.random.normal(key, shape=flat_updates.shape)
+                noisy_updates = unravel_fn(a*flat_updates + b*added_noise)
+                new_params = optax.apply_updates(_params, noisy_updates)
                 return new_params, new_state, _opt_state, next_key
 
     return _update
