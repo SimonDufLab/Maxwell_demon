@@ -58,6 +58,7 @@ class ExpConfig:
     noise_eta: float = 0.01
     noise_gamma: float = 0.0
     noise_seed: int = 1
+    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 
 cs = ConfigStore.instance()

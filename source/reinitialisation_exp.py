@@ -51,6 +51,7 @@ class ExpConfig:
     reg_param: float = 1e-4
     init_seed: int = 41
     norm_grad: bool = False
+    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 
 cs = ConfigStore.instance()
