@@ -57,7 +57,7 @@ def mlp_3_act_pre_relu(sizes, number_classes, activation_fn=relu):
 
     layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0])]
     layer_2 = [act, Partial(hk.Linear, sizes[1])]
-    layer_3 = [act,Partial(hk.Linear, number_classes)]
+    layer_3 = [act, Partial(hk.Linear, number_classes)]
 
     return [layer_1, layer_2, layer_3],
 

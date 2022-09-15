@@ -3,7 +3,7 @@ import haiku as hk
 from jax.tree_util import Partial
 from jax.nn import relu
 
-from models.bn_base_unit import Conv_BN, Linear_BN
+from models.bn_base_unit import Base_BN, Conv_BN, Linear_BN
 
 
 def conv_3_2(sizes, number_classes, dim=2, activation_fn=relu):
@@ -108,18 +108,18 @@ def conv_4_2_bn(sizes, number_classes, activation_fn=relu):
     max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
     bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
 
-    train_layer_1 = [Partial(Conv_BN, True, sizes[0], 3), act]
-    train_layer_2 = [max_pool, Partial(Conv_BN, True, sizes[1], 3), act]
-    train_layer_3 = [max_pool, Partial(Conv_BN, True, sizes[2], 3), act]
-    train_layer_4 = [max_pool, Partial(Conv_BN, True, sizes[3], 3), act]
-    train_layer_5 = [bigger_max_pool, hk.Flatten, Partial(Linear_BN, True, sizes[4]), act]
+    train_layer_1 = [Partial(hk.Conv2D, sizes[0], 3), Partial(Base_BN, True), act]
+    train_layer_2 = [max_pool, Partial(hk.Conv2D, sizes[1], 3), Partial(Base_BN, True), act]
+    train_layer_3 = [max_pool, Partial(hk.Conv2D, sizes[2], 3), Partial(Base_BN, True), act]
+    train_layer_4 = [max_pool, Partial(hk.Conv2D, sizes[3], 3), Partial(Base_BN, True), act]
+    train_layer_5 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[4]), Partial(Base_BN, True), act]
     layer_6 = [Partial(hk.Linear, number_classes)]
 
-    test_layer_1 = [Partial(Conv_BN, False, sizes[0], 3), act]
-    test_layer_2 = [max_pool, Partial(Conv_BN, False, sizes[1], 3), act]
-    test_layer_3 = [max_pool, Partial(Conv_BN, False, sizes[2], 3), act]
-    test_layer_4 = [max_pool, Partial(Conv_BN, False, sizes[3], 3), act]
-    test_layer_5 = [bigger_max_pool, hk.Flatten, Partial(Linear_BN, False, sizes[4]), act]
+    test_layer_1 = [Partial(hk.Conv2D, sizes[0], 3), Partial(Base_BN, False), act]
+    test_layer_2 = [max_pool, Partial(hk.Conv2D, sizes[1], 3), Partial(Base_BN, False), act]
+    test_layer_3 = [max_pool, Partial(hk.Conv2D, sizes[2], 3), Partial(Base_BN, False), act]
+    test_layer_4 = [max_pool, Partial(hk.Conv2D, sizes[3], 3), Partial(Base_BN, False), act]
+    test_layer_5 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[4]), Partial(Base_BN, False), act]
 
     return [train_layer_1, train_layer_2, train_layer_3, train_layer_4, train_layer_5, layer_6], \
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, test_layer_5, layer_6]
