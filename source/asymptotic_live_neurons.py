@@ -63,6 +63,7 @@ class ExpConfig:
     noise_gamma: float = 0.0
     noise_seed: int = 1
     save_wanda: bool = False  # Whether to save weights and activations value or not
+    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
     # def __post_init__(self):
     #     if type(self.sizes) == str:

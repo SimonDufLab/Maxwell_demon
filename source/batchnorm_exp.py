@@ -26,6 +26,7 @@ from jax.flatten_util import ravel_pytree
 import utils.utils as utl
 from utils.utils import build_models
 from utils.config import optimizer_choice, dataset_choice, dataset_target_cardinality, regularizer_choice, architecture_choice, bn_architecture_choice
+from utils.config import activations_pre_relu, activations_with_bn
 
 
 # Experience name -> for aim logger
@@ -38,6 +39,7 @@ class ExpConfig:
     training_steps: int = 120001
     report_freq: int = 3000
     record_freq: int = 100
+    snapshot_freq: int = 20_000
     lr: float = 1e-3
     train_batch_size: int = 128
     eval_batch_size: int = 512
@@ -56,6 +58,7 @@ class ExpConfig:
     noise_eta: float = 0.01
     noise_gamma: float = 0.0
     noise_seed: int = 1
+    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 
 cs = ConfigStore.instance()
@@ -78,8 +81,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
-    if type(exp_config.sizes) == str:
-        exp_config.sizes = literal_eval(exp_config.sizes)
+    if type(exp_config.size) == str:
+        exp_config.size = literal_eval(exp_config.size)
     if type(exp_config.noise_imp) == str:
         exp_config.noise_imp = literal_eval(exp_config.noise_imp)
 
@@ -104,7 +107,18 @@ def run_exp(exp_config: ExpConfig) -> None:
     dataset_size, test_death = load_data(split="train", is_training=False,
                                          batch_size=exp_config.death_batch_size, cardinality=True)
 
-    for arc_choice, context in ((architecture_choice, bn_architecture_choice), ('With BN', 'Without BN')):
+    def desired_activations(context, architecture):
+        if context == 'Without BN':
+            return activations_pre_relu[architecture]
+        if context == 'With BN':
+            return activations_with_bn[architecture]
+
+    labels = {
+        'Without BN': ("pre_relu",) ,
+        'With BN': ("pre_bn", "post_bn")
+    }
+
+    for arc_choice, context in ((architecture_choice, 'Without BN'), (bn_architecture_choice, 'With BN')):
         # Time the subrun, with or without BN
         subrun_start_time = time.time()
 
@@ -134,6 +148,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
         total_neurons, total_per_layer = starting_neurons, starting_per_layer
+        num_layers = len(starting_per_layer)
 
         for step in range(exp_config.training_steps):
             if step % exp_config.record_freq == 0:
@@ -149,15 +164,47 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
-                              context={"Normalization": context})
+                              context={'Normalization': context})
                 exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
-                              context={"Normalization": context})
+                              context={'Normalization': context})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
-                              context={"Normalization": context})
+                              context={'Normalization': context})
                 exp_run.track(train_accuracy, name="Train accuracy", step=step,
-                              context={"Normalization": context})
+                              context={'Normalization': context})
                 exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
-                              context={"Normalization": context})
+                              context={'Normalization': context})
+
+            if step % exp_config.snapshot_freq == 0:
+                dist_start_time = time.time()
+                fig, axs = plt.subplots(1 + num_layers//4, 4)
+                if axs.ndim == 1:
+                    axs = np.expand_dims(axs, axis=0)
+                for k, _arch in enumerate(desired_activations(context, exp_config.architecture)):
+                    _label = labels[context][k]
+                    _arch = _arch(exp_config.size, classes)
+                    _net = build_models(*_arch)
+                    (_, activations), _ = _net.apply(params, state, next(test_death), True, False)
+                    activations = jax.device_get(activations)
+                    for j, layer_act in enumerate(activations):
+                        axs[j//4, j % 4].hist(layer_act, 200, label=f"{context} :{_label}")
+                        axs[j // 4, j % 4].set_title(f"layer {j}")
+
+                for ax in axs.flat:
+                    ax.set(xlabel='activations value', ylabel='count')
+
+                # Hide x labels and tick labels for top plots and y ticks for right plots.
+                for ax in axs.flat:
+                    ax.label_outer()
+
+                # aim_fig = Figure(fig)
+                aim_img = Image(fig)
+                # exp_run.track(aim_fig, name=f"Activations distribution {context}", step=step)
+                exp_run.track(aim_img, name=f"Activations distribution {context}; img", step=step)
+
+                print()
+                print(f"Activations dist generated in: " + str(timedelta(seconds=time.time() - dist_start_time)))
+                print("----------------------------------------------")
+                print()
 
             params, state, opt_state = update_fn(params, state, opt_state, next(train))
 
@@ -173,13 +220,13 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         activations_max_dist = Distribution(activations_max, bin_count=100)
         exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
-                      context={"Normalization": context})
+                      context={'Normalization': context})
         activations_mean_dist = Distribution(activations_mean, bin_count=100)
         exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
-                      context={"Normalization": context})
+                      context={'Normalization': context})
         activations_count_dist = Distribution(activations_count, bin_count=50)
         exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
-                      context={"Normalization": context})
+                      context={'Normalization': context})
 
         # Print running time
         print()
