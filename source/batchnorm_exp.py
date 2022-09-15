@@ -39,7 +39,7 @@ class ExpConfig:
     training_steps: int = 120001
     report_freq: int = 3000
     record_freq: int = 100
-    snapshot_freq: int = 20_000
+    snapshot_freq: int = 10_000
     lr: float = 1e-3
     train_batch_size: int = 128
     eval_batch_size: int = 512
@@ -113,7 +113,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         if context == 'With BN':
             return activations_with_bn[architecture]
 
-    labels = {
+    labels_dict = {
         'Without BN': ("pre_relu",) ,
         'With BN': ("pre_bn", "post_bn")
     }
@@ -175,19 +175,25 @@ def run_exp(exp_config: ExpConfig) -> None:
                               context={'Normalization': context})
 
             if step % exp_config.snapshot_freq == 0:
+                num_col = 2
                 dist_start_time = time.time()
-                fig, axs = plt.subplots(1 + num_layers//4, 4)
+                num_rows = 1 + (num_layers-1)//num_col
+                fig, axs = plt.subplots(num_rows, num_col, figsize=(20, 5*num_rows))
                 if axs.ndim == 1:
                     axs = np.expand_dims(axs, axis=0)
                 for k, _arch in enumerate(desired_activations(context, exp_config.architecture)):
-                    _label = labels[context][k]
+                    _label = labels_dict[context][k]
                     _arch = _arch(exp_config.size, classes)
                     _net = build_models(*_arch)
                     (_, activations), _ = _net.apply(params, state, next(test_death), True, False)
-                    activations = jax.device_get(activations)
-                    for j, layer_act in enumerate(activations):
-                        axs[j//4, j % 4].hist(layer_act, 200, label=f"{context} :{_label}")
-                        axs[j // 4, j % 4].set_title(f"layer {j}")
+                    mean_activations = jax.tree_map(Partial(jnp.mean, axis=0), activations)
+                    bin_limit = jnp.max(jnp.abs(ravel_pytree(mean_activations)[0]))
+                    bins = jnp.linspace(-bin_limit, bin_limit, 100)
+                    mean_activations = jax.device_get(mean_activations)
+                    for j, layer_act in enumerate(mean_activations):
+                        # layer_act = jnp.mean(layer_act, axis=0)
+                        axs[j//num_col, j % num_col].hist(layer_act, bins, alpha=0.5, label=f"{context} :{_label}", histtype='bar')
+                        axs[j // num_col, j % num_col].set_title(f"layer {j}")
 
                 for ax in axs.flat:
                     ax.set(xlabel='activations value', ylabel='count')
@@ -195,6 +201,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # Hide x labels and tick labels for top plots and y ticks for right plots.
                 for ax in axs.flat:
                     ax.label_outer()
+
+                # Legend:
+                handles, labels = ax.get_legend_handles_labels()
+                fig.legend(handles, labels)
 
                 # aim_fig = Figure(fig)
                 aim_img = Image(fig)
