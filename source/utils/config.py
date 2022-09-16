@@ -6,6 +6,7 @@ from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from models.mlp import mlp_3, mlp_3_bn
 from models.mlp import mlp_3_act_pre_relu, mlp_3_act_pre_bn, mlp_3_act_post_bn
 from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_2, conv_6_2_bn
+from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_act_post_bn
 from models.resnet import resnet18
 
 optimizer_choice = {
@@ -59,10 +60,12 @@ activation_choice = {
 
 activations_pre_relu = {
     "mlp_3": (mlp_3_act_pre_relu, ),
+    "conv_4_2": (conv_4_2_act_pre_relu, )
 }
 
 activations_with_bn = {
     "mlp_3": (mlp_3_act_pre_bn, mlp_3_act_post_bn),
+    "conv_4_2": (conv_4_2_act_pre_bn, conv_4_2_act_post_bn)
 }
 
 dataset_target_cardinality = {  # Hard-encoding the number of classes in given dataset for easy retrieval
