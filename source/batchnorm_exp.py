@@ -78,6 +78,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
     assert exp_config.regularizer in regularizer_choice, "Currently supported regularizers: " + str(regularizer_choice)
     assert exp_config.architecture in bn_architecture_choice.keys(), "Current architectures available: " + str(bn_architecture_choice.keys())
+    assert exp_config.architecture in activations_pre_relu.keys(), "Current architectures available: " + str(activations_pre_relu.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -186,6 +187,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                     _arch = _arch(exp_config.size, classes)
                     _net = build_models(*_arch)
                     (_, activations), _ = _net.apply(params, state, next(test_death), True, False)
+                    activations = jax.tree_map(jax.vmap(utl.sum_across_filter),
+                                               activations)  # Sum across the filter first if conv layer; do nothing if fully connected
                     mean_activations = jax.tree_map(Partial(jnp.mean, axis=0), activations)
                     bin_limit = jnp.max(jnp.abs(ravel_pytree(mean_activations)[0]))
                     bins = jnp.linspace(-bin_limit, bin_limit, 100)
