@@ -6,7 +6,7 @@ from jax.nn import relu
 from models.bn_base_unit import Linear_BN, Base_BN
 
 
-def mlp_3(sizes, number_classes, activation_fn=relu):
+def mlp_3(sizes, number_classes, activation_fn=relu, dropout_rate=0):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units"""
     def act():
         return activation_fn

@@ -7,6 +7,7 @@ number of live neurons at the end eventually also reaches a plateau."""
 
 import jax
 import jax.numpy as jnp
+import haiku as hk
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
@@ -62,6 +63,8 @@ class ExpConfig:
     noise_eta: float = 0.01
     noise_gamma: float = 0.0
     noise_seed: int = 1
+    dropout_rate: float = 0
+    with_rng_seed: int = 428
     save_wanda: bool = False  # Whether to save weights and activations value or not
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
@@ -111,6 +114,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     with open(pickle_dir_path+'config.json', 'w') as fp:
         json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
 
+    # Sequence for with_rng
+    hk.with_rng(jax.random.PRNGKey(exp_config.with_rng_seed))
+
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
     train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size)
@@ -154,7 +160,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Make the network and optimiser
         architecture = architecture_choice[exp_config.architecture]
         classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
-        architecture = architecture(size, classes)
+        architecture = architecture(size, classes, dropout_rate=exp_config.dropout_rate)
         net = build_models(*architecture)
 
         if 'noisy' in exp_config.optimizer:
@@ -236,7 +242,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
                     architecture = architecture_choice[exp_config.architecture]
-                    architecture = architecture(new_sizes, classes)
+                    architecture = architecture(new_sizes, classes, dropout_rate=exp_config.dropout_rate)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
