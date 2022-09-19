@@ -5,8 +5,10 @@ from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from models.mlp import mlp_3, mlp_3_bn
 from models.mlp import mlp_3_act_pre_relu, mlp_3_act_pre_bn, mlp_3_act_post_bn
+from models.mlp import mlp_3_dropout
 from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_2, conv_6_2_bn
 from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_act_post_bn
+from models.convnet import conv_4_2_dropout
 from models.resnet import resnet18
 
 optimizer_choice = {
@@ -42,6 +44,11 @@ architecture_choice = {
     "resnet18": resnet18,
 }
 
+architecture_choice_dropout = {
+    "mlp_3": mlp_3_dropout,
+    "conv_4_2": conv_4_2_dropout
+}
+
 bn_architecture_choice = {
     "mlp_3": mlp_3_bn,
     "conv_3_2": conv_3_2_bn,
@@ -74,3 +81,10 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
     "cifar10": 10,
     "cifar100": 100
 }
+
+
+def pick_architecture(with_dropout=False):
+    if with_dropout:
+        return architecture_choice_dropout
+    else:
+        return architecture_choice

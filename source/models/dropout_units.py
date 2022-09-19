@@ -14,5 +14,5 @@ class Base_Dropout(hk.Module):
         self.drop = Partial(hk.dropout, rate=dropout_rate)
 
     def __call__(self, x):
-        x = self.drop(hk.next_rng_key(), x)
+        x = self.drop(rng=hk.next_rng_key(), x=x)
         return x

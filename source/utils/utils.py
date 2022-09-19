@@ -36,7 +36,7 @@ def sum_across_filter(filters):
         return filters
 
 
-def death_check_given_model(model, with_activations=False, epsilon=0, check_tail=False):
+def death_check_given_model(model, with_activations=False, epsilon=0, check_tail=False, with_dropout=False):
     """Return a boolean array per layer; with True values for dead neurons"""
     assert epsilon >= 0, "epsilon value must be positive"
     if check_tail:
@@ -53,9 +53,15 @@ def death_check_given_model(model, with_activations=False, epsilon=0, check_tail
     else:
         test_fn = relu_test
 
+    if with_dropout:
+        dropout_key = jax.random.PRNGKey(0)  # dropout rate is zero during death eval
+        model_apply_fn = Partial(model.apply, rng=dropout_key)
+    else:
+        model_apply_fn = model.apply
+
     @jax.jit
     def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
-        (_, activations), _ = model.apply(_params, _state, _batch, True, False)
+        (_, activations), _ = model_apply_fn(_params, _state, x=_batch, return_activations=True, is_training=False)
         activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
@@ -275,10 +281,17 @@ def neuron_state_from_params_magnitude(params, eps):
 ##############################
 # Training utilities
 ##############################
-def accuracy_given_model(model):
+def accuracy_given_model(model, with_dropout=False):
+
+    if with_dropout:
+        dropout_key = jax.random.PRNGKey(0)  # dropout rate is zero during death eval
+        model_apply_fn = Partial(model.apply, rng=dropout_key)
+    else:
+        model_apply_fn = model.apply
+
     @jax.jit
     def _accuracy(_params: hk.Params, _state: hk.State, _batch: Batch) -> jnp.ndarray:
-        predictions, _ = model.apply(_params, _state, _batch, False, False)
+        predictions, _ = model_apply_fn(_params, _state, x=_batch, return_activations=False, is_training=False)
         return jnp.mean(jnp.argmax(predictions, axis=-1) == _batch[1])
 
     return _accuracy
@@ -299,35 +312,61 @@ def create_full_accuracy_fn(accuracy_fn, scan_len):
     return full_accuracy_fn
 
 
-def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True):
+def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False):
     """ Build the cross-entropy loss given the model"""
     if not classes:
         classes = 10
 
-    @jax.jit
-    def _loss(params: hk.Params, state: hk.State, batch: Batch) -> Union[jnp.ndarray, Any]:
-        logits, state = model.apply(params, state, batch, return_activations=False, is_training=is_training)
-        labels = jax.nn.one_hot(batch[1], classes)
+    if regularizer:
+        assert regularizer in ["cdg_l2", "cdg_lasso", "l2"]
+        if regularizer == "l2":
+            def reg_fn(params):
+                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
+        if regularizer == "cdg_l2":
+            def reg_fn(params):
+                return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
+        if regularizer == "cdg_lasso":
+            def reg_fn(params):
+                return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_leaves(params))
+    else:
+        def reg_fn(params):
+            return 0
 
-        softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
-        softmax_xent /= labels.shape[0]
+    if is_training and with_dropout:
+        @jax.jit
+        def _loss(params: hk.Params, state: hk.State, batch: Batch, dropout_key: Any) -> Union[jnp.ndarray, Any]:
+            next_dropout_key, rng = jax.random.split(dropout_key)
+            logits, state = model.apply(params, state, rng, batch, return_activations=False, is_training=is_training)
+            labels = jax.nn.one_hot(batch[1], classes)
 
-        if regularizer:
-            assert regularizer in ["cdg_l2", "cdg_lasso", "l2"]
-            if regularizer == "l2":
-                reg_loss = 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
-            if regularizer == "cdg_l2":
-                reg_loss = 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
-            if regularizer == "cdg_lasso":
-                reg_loss = sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_leaves(params))
-            loss = softmax_xent + reg_param * reg_loss
+            softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
+            softmax_xent /= labels.shape[0]
+
+            loss = softmax_xent + reg_param * reg_fn(params)
+
+            return loss, (state, next_dropout_key)
+
+    else:
+        if with_dropout:
+            dropout_key = jax.random.PRNGKey(0)  # dropout rate is zero during death eval
+            model_apply_fn = Partial(model.apply, rng=dropout_key)
         else:
-            loss = softmax_xent
+            model_apply_fn = model.apply
 
-        if is_training:
-            return loss, state
-        else:
-            return loss
+        @jax.jit
+        def _loss(params: hk.Params, state: hk.State, batch: Batch) -> Union[jnp.ndarray, Any]:
+            logits, state = model_apply_fn(params, state, x=batch, return_activations=False, is_training=is_training)
+            labels = jax.nn.one_hot(batch[1], classes)
+
+            softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
+            softmax_xent /= labels.shape[0]
+
+            loss = softmax_xent + reg_param * reg_fn(params)
+
+            if is_training:
+                return loss, state
+            else:
+                return loss
 
     return _loss
 
@@ -337,47 +376,59 @@ def grad_normalisation_per_layer(param_leaf):
     return param_leaf/jnp.sqrt(var+1)
 
 
-def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only=False, norm_grad=False):
+def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only=False, norm_grad=False, with_dropout=False):
     """Learning rule (stochastic gradient descent)."""
 
-    if not noise:
+    if with_dropout:
         @jax.jit
-        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
-            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _drop_key) -> Tuple[
+            hk.Params, Any, OptState, jax.random.PRNGKeyArray]:
+            grads, (new_state, next_drop_key) = jax.grad(loss, has_aux=True)(_params, _state, _batch, _drop_key)
             if norm_grad:
                 grads = jax.tree_map(grad_normalisation_per_layer, grads)
             updates, _opt_state = optimizer.update(grads, _opt_state)
             new_params = optax.apply_updates(_params, updates)
-            return new_params, new_state, _opt_state
+            return new_params, new_state, _opt_state, next_drop_key
+
     else:
-        a, b = noise_imp
-        if noise_live_only:
+        if not noise:
             @jax.jit
-            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
-                        _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
+            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
                 grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
-                key, next_key = jax.random.split(_key)
-                flat_grads, unravel_fn = ravel_pytree(grads)
-                added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
-                added_noise = added_noise * (jnp.abs(flat_grads) >= 1e-8)  # Only apply noise to weights with gradient!=0
-                # noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
+                if norm_grad:
+                    grads = jax.tree_map(grad_normalisation_per_layer, grads)
                 updates, _opt_state = optimizer.update(grads, _opt_state)
-                flat_updates, _ = ravel_pytree(updates)
-                noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
-                new_params = optax.apply_updates(_params, noisy_updates)
-                return new_params, new_state, _opt_state, next_key
+                new_params = optax.apply_updates(_params, updates)
+                return new_params, new_state, _opt_state
         else:
-            @jax.jit
-            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
-                        _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
-                grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
-                updates, _opt_state = optimizer.update(grads, _opt_state)
-                key, next_key = jax.random.split(_key)
-                flat_updates, unravel_fn = ravel_pytree(updates)
-                added_noise = _var*jax.random.normal(key, shape=flat_updates.shape)
-                noisy_updates = unravel_fn(a*flat_updates + b*added_noise)
-                new_params = optax.apply_updates(_params, noisy_updates)
-                return new_params, new_state, _opt_state, next_key
+            a, b = noise_imp
+            if noise_live_only:
+                @jax.jit
+                def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
+                            _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
+                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                    key, next_key = jax.random.split(_key)
+                    flat_grads, unravel_fn = ravel_pytree(grads)
+                    added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
+                    added_noise = added_noise * (jnp.abs(flat_grads) >= 1e-8)  # Only apply noise to weights with gradient!=0
+                    # noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
+                    updates, _opt_state = optimizer.update(grads, _opt_state)
+                    flat_updates, _ = ravel_pytree(updates)
+                    noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
+                    new_params = optax.apply_updates(_params, noisy_updates)
+                    return new_params, new_state, _opt_state, next_key
+            else:
+                @jax.jit
+                def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
+                            _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
+                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                    updates, _opt_state = optimizer.update(grads, _opt_state)
+                    key, next_key = jax.random.split(_key)
+                    flat_updates, unravel_fn = ravel_pytree(updates)
+                    added_noise = _var*jax.random.normal(key, shape=flat_updates.shape)
+                    noisy_updates = unravel_fn(a*flat_updates + b*added_noise)
+                    new_params = optax.apply_updates(_params, noisy_updates)
+                    return new_params, new_state, _opt_state, next_key
 
     return _update
 
@@ -554,7 +605,7 @@ def load_fashion_mnist_torch(is_training, batch_size, subset=None, transform=Tru
 ##############################
 # Module utilities
 ##############################
-def build_models(train_layer_list, test_layer_list=None, name=None):
+def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout=False):
     """ Take as input a list of haiku modules and return 2 different transform object:
     1) First is the typical model returning the outputs
     2) The other is the same model returning all activations values + output"""
@@ -595,11 +646,14 @@ def build_models(train_layer_list, test_layer_list=None, name=None):
             else:
                 return x
 
-    def secondary_model(x, return_activations=False, is_training=True):
+    def primary_model(x, return_activations=False, is_training=True):
         return ModelAndActivations()(x, return_activations, is_training)
 
     # return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
-    return hk.without_apply_rng(hk.transform_with_state(secondary_model))
+    if not with_dropout:
+        return hk.without_apply_rng(hk.transform_with_state(primary_model))
+    else:
+        return hk.transform_with_state(primary_model)
 
 
 ##############################
