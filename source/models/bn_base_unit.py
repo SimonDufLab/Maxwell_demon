@@ -1,4 +1,4 @@
-""" Base units used to build the different models with batchnçorm layers"""
+""" Base units used to build the different models with batchnorm layers"""
 
 import haiku as hk
 import jax

@@ -7,6 +7,7 @@ number of live neurons at the end eventually also reaches a plateau."""
 
 import jax
 import jax.numpy as jnp
+import haiku as hk
 import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
@@ -29,6 +30,7 @@ from jax.flatten_util import ravel_pytree
 import utils.utils as utl
 from utils.utils import build_models
 from utils.config import optimizer_choice, dataset_choice, dataset_target_cardinality, regularizer_choice, architecture_choice
+from utils.config import pick_architecture
 
 
 # Experience name -> for aim logger
@@ -62,6 +64,8 @@ class ExpConfig:
     noise_eta: float = 0.01
     noise_gamma: float = 0.0
     noise_seed: int = 1
+    dropout_rate: float = 0
+    with_rng_seed: int = 428
     save_wanda: bool = False  # Whether to save weights and activations value or not
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
@@ -111,6 +115,14 @@ def run_exp(exp_config: ExpConfig) -> None:
     with open(pickle_dir_path+'config.json', 'w') as fp:
         json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
 
+    # Experiments with dropout
+    with_dropout = exp_config.dropout_rate > 0
+    if with_dropout:
+        dropout_key = jax.random.PRNGKey(exp_config.with_rng_seed)
+        assert exp_config.architecture in pick_architecture(
+            True).keys(), "Current architectures available with dropout: " + str(
+            pick_architecture(True).keys())
+
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
     train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size)
@@ -152,10 +164,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         subrun_start_time = time.time()
 
         # Make the network and optimiser
-        architecture = architecture_choice[exp_config.architecture]
+        architecture = pick_architecture(with_dropout)[exp_config.architecture]
         classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
-        architecture = architecture(size, classes)
-        net = build_models(*architecture)
+        architecture = architecture(size, classes, dropout_rate=exp_config.dropout_rate)
+        net = build_models(*architecture, with_dropout=with_dropout)
 
         if 'noisy' in exp_config.optimizer:
             opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noise_eta,
@@ -165,16 +177,18 @@ def run_exp(exp_config: ExpConfig) -> None:
         accuracies_log = []
 
         # Set training/monitoring functions
-        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param, classes=classes)
+        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
+                                       classes=classes, with_dropout=with_dropout)
         test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                            classes=classes, is_training=False)
-        accuracy_fn = utl.accuracy_given_model(net)
-        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp, exp_config.noise_live_only)
-        death_check_fn = utl.death_check_given_model(net)
+                                            classes=classes, is_training=False, with_dropout=with_dropout)
+        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                        exp_config.noise_live_only, with_dropout=with_dropout)
+        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
         scan_len = dataset_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
         scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
-            utl.death_check_given_model(net, with_activations=True), scan_len, True)
+            utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_size // eval_size)
 
@@ -235,8 +249,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if exp_config.dynamic_pruning:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
-                    architecture = architecture_choice[exp_config.architecture]
-                    architecture = architecture(new_sizes, classes)
+                    architecture = pick_architecture(with_dropout)[exp_config.architecture]
+                    architecture = architecture(new_sizes, classes, dropout_rate=exp_config.dropout_rate)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
@@ -247,18 +261,22 @@ def run_exp(exp_config: ExpConfig) -> None:
                     update_fn.clear_cache()
                     death_check_fn.clear_cache()
                     # Recompile training/monitoring functions
-                    loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param, classes=classes)
+                    loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                   reg_param=exp_config.reg_param, classes=classes,
+                                                   with_dropout=with_dropout)
                     test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                         reg_param=exp_config.reg_param,
                                                         classes=classes,
-                                                        is_training=False)
-                    accuracy_fn = utl.accuracy_given_model(net)
-                    update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp, exp_config.noise_live_only)
-                    death_check_fn = utl.death_check_given_model(net)
+                                                        is_training=False, with_dropout=with_dropout)
+                    accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+                    update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
+                                                                    exp_config.noise_imp, exp_config.noise_live_only,
+                                                                    with_dropout=with_dropout)
+                    death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                     scan_len = dataset_size // death_minibatch_size
                     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                     scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
-                        utl.death_check_given_model(net, with_activations=True), scan_len, True)
+                        utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
                     final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
                     full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_size // eval_size)
 
@@ -277,13 +295,16 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name=f"Live neurons at training step {step+1}", step=starting_neurons)
 
             # Train step over single batch
-            if not exp_config.add_noise:
-                params, state, opt_state = update_fn(params, state, opt_state, next(train))
+            if with_dropout:
+                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train), dropout_key)
             else:
-                noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
-                noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
-                params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train), noise_var,
-                                                                noise_key)
+                if not exp_config.add_noise:
+                    params, state, opt_state = update_fn(params, state, opt_state, next(train))
+                else:
+                    noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
+                    noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
+                    params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train), noise_var,
+                                                                    noise_key)
 
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
