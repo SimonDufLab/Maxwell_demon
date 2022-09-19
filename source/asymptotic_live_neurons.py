@@ -122,6 +122,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         assert exp_config.architecture in pick_architecture(
             True).keys(), "Current architectures available with dropout: " + str(
             pick_architecture(True).keys())
+        drop_config = {"dropout_rate": exp_config.dropout_rate}
+    else:
+        drop_config = {}
 
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
@@ -166,7 +169,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout)[exp_config.architecture]
         classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
-        architecture = architecture(size, classes, dropout_rate=exp_config.dropout_rate)
+        architecture = architecture(size, classes, **drop_config)
         net = build_models(*architecture, with_dropout=with_dropout)
 
         if 'noisy' in exp_config.optimizer:
