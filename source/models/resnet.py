@@ -206,7 +206,7 @@ def resnet18(size: Union[int, Sequence[int]],
     resnet_config = {
                     "blocks_per_group": (2, 2, 2, 2),
                     "bottleneck": False,
-                    "channels_per_group": (size, size*2, size*4, size*8),
+                    "channels_per_group": (size, size*2, size*4, size*8),  # typical resnet18 size = 64
                     "use_projection": (False, True, True, True),
                     }
     default_initial_conv_config["output_channels"] = size
