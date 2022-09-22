@@ -440,15 +440,17 @@ def vmap_axes_mapping(dict_container):
     return jax.tree_map(_map_over, dict_container)
 
 
-@jax.jit
-def dict_split(container):
+@Partial(jax.jit, static_argnames='_len')
+def dict_split(container, _len=2):
     """Split back the containers into their specific components, returning them as a tuple"""
+    if not container:  # Empty case
+        return (container, ) * _len
     treedef = jax.tree_structure(container)
     leaves = jax.tree_leaves(container)
     _to = leaves[0].shape[0]
 
     leaves = jax.tree_map(Partial(jnp.split, indices_or_sections=_to), leaves)
-    leaves = jax.tree_map(jnp.squeeze, leaves)
+    leaves = jax.tree_map(Partial(jnp.squeeze, axis=0), leaves)
     splitted_dict = tuple([treedef.unflatten(list(z)) for z in zip(*leaves)])
     return splitted_dict
 
@@ -509,7 +511,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     ds = ds.prefetch(-1)
 
     if (subset is not None) and transform:
-        return tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)
+        return tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
     else:
         if cardinality:
             return ds_size, iter(tfds.as_numpy(ds))
@@ -717,3 +719,13 @@ def clear_caches():
                 if hasattr(obj, "cache_clear"):
                     obj.cache_clear()
     gc.collect()
+
+
+def add_comma_in_str(string: str):
+    """ Helper fn to format string from hydra before literal eval"""
+    string = string.replace("mnist", "'mnist'")
+    string = string.replace("fashion mnist", "'fashion mnist'")
+    string = string.replace("cifar10", "'cifar10'")
+    string = string.replace("cifar100", "'cifar100'")
+
+    return string
