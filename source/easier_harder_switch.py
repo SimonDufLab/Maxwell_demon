@@ -56,7 +56,7 @@ cs.store(name=exp_name+"_config", node=ExpConfig)
 @hydra.main(version_base=None, config_name=exp_name+"_config")
 def run_exp(exp_config: ExpConfig) -> None:
 
-    total_neurons = exp_config.size + 3 * exp_config.size
+    total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
     dataset_total_classes = 10  # TODO: allow compatibility with dataset > 10 classes
 
     if type(exp_config.datasets) == str:
@@ -103,6 +103,24 @@ def run_exp(exp_config: ExpConfig) -> None:
         def dict_stack(xx, y):
             return jnp.stack([xx, y])
 
+    # Helper function for logging dead neurons statistics w/r to whole ds
+    def log_whole_ds_deaths(dead_neurons_count, dead_per_layers, step, context):
+        exp_run.track(jax.device_get(dead_neurons_count), name=f"Dead neurons w/r whole ds; {setting[order]}",
+                      step=step,
+                      context={"reinitialisation": context})
+        exp_run.track(jax.device_get(dead_neurons_count/total_neurons),
+                      name=f"Dead neurons ratio w/r whole ds; {setting[order]}",
+                      step=step,
+                      context={"reinitialisation": context})
+        for i, layer_dead in enumerate(dead_per_layers):
+            total_neuron_in_layer = total_per_layer[i]
+            exp_run.track(jax.device_get(layer_dead),
+                          name=f"Dead neurons in layer {i}; w/r whole ds; {setting[order]}", step=step,
+                          context={"reinitialisation": context})
+            exp_run.track(jax.device_get(layer_dead/total_neuron_in_layer),
+                          name=f"Dead neurons ratio in layer {i}; w/r whole ds; {setting[order]}", step=step,
+                          context={"reinitialisation": context})
+
     # Load the dataset for the 2 tasks (ez and hard)
     load_data_easier = dataset_choice[exp_config.datasets[0]]
     if exp_config.kept_classes[0]:
@@ -111,8 +129,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         indices = None
     train_easier = load_data_easier(split='train', is_training=True, batch_size=exp_config.train_batch_size, subset=indices, transform=False)
     train_eval_easier = load_data_easier(split='train', is_training=False, batch_size=exp_config.eval_batch_size, subset=indices, transform=False)
-    test_eval_easier = load_data_easier(split='test', is_training=False, batch_size=exp_config.eval_batch_size, subset=indices, transform=False)
-    test_death_easier = load_data_easier(split='train', is_training=False, batch_size=exp_config.death_batch_size, subset=indices, transform=False)
+    test_size, test_eval_easier = load_data_easier(split='test', is_training=False, batch_size=exp_config.eval_batch_size, subset=indices, transform=False, cardinality=True)
+    dataset_size, test_death_easier = load_data_easier(split='train', is_training=False, batch_size=exp_config.death_batch_size, subset=indices, transform=False, cardinality=True)
 
     load_data_harder = dataset_choice[exp_config.datasets[1]]
     if exp_config.kept_classes[1]:
@@ -142,6 +160,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                                         classes=dataset_total_classes, is_training=False)
     accuracy_fn = utl.accuracy_given_model(net)
     update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+    scan_len = dataset_size // exp_config.death_batch_size
+    scan_death_check_fn = utl.scanned_death_check_fn(utl.death_check_given_model(net), scan_len)
+    final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // exp_config.eval_batch_size)
 
     # First prng key
     key = jax.random.PRNGKey(exp_config.init_seed)
@@ -252,6 +273,23 @@ def run_exp(exp_config: ExpConfig) -> None:
                                       name=f"Dead neurons; {setting[order]}", step=step, context={"reinitialisation": 'Partial'})
                         exp_run.track(np.array(partial_reinit_dead_neurons[-1] / total_neurons),
                                       name=f"Dead neurons ratio; {setting[order]}", step=step, context={"reinitialisation": 'Partial'})
+
+            if step % exp_config.pruning_freq == 0:
+                dead_neurons = scan_death_check_fn(params, state, test_death[idx])
+                dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
+                log_whole_ds_deaths(dead_neurons_count, dead_per_layers, step, 'None')
+
+                if after_switch:
+                    full_dead_neurons = scan_death_check_fn(params_full_reset, state_full_reset, test_death[idx])
+                    full_dead_neurons_count, full_dead_per_layers = utl.count_dead_neurons(full_dead_neurons)
+                    log_whole_ds_deaths(full_dead_neurons_count, full_dead_per_layers, step, 'Full')
+
+                    if exp_config.compare_to_partial_reset:
+                        partial_dead_neurons = scan_death_check_fn(params_partial_reinit, state_partial_reinit,
+                                                                   test_death[idx])
+                        partial_dead_neurons_count, partial_dead_per_layers = utl.count_dead_neurons(
+                            partial_dead_neurons)
+                        log_whole_ds_deaths(partial_dead_neurons_count, partial_dead_per_layers, step, 'Partial')
 
             # Training step
             train_batch = next(train[idx])
