@@ -27,15 +27,16 @@ exp_name = "easier_harder_switch_experiment"
 # Configuration
 @dataclass
 class ExpConfig:
-    total_steps: int = 500001
+    total_steps: int = 700001
     report_freq: int = 3000
-    record_freq: int = 100
+    record_freq: int = 250
+    full_checkpoint_freq: int = 5000
     lr: float = 1e-3
     train_batch_size: int = 128
     eval_batch_size: int = 512
     death_batch_size: int = 512
     architecture: str = "mlp_3"
-    size: Any = 100  # Number of hidden units in the different layers (tuple for convnet)
+    size: Any = 256  # Number of hidden units in the different layers (tuple for convnet)
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     datasets: Any = ("mnist", "fashion mnist")  # Datasets to use, listed from easier to harder
@@ -103,13 +104,17 @@ def run_exp(exp_config: ExpConfig) -> None:
         def dict_stack(xx, y):
             return jnp.stack([xx, y])
 
-    # Helper function for logging dead neurons statistics w/r to whole ds
-    def log_whole_ds_deaths(dead_neurons_count, dead_per_layers, step, context):
+    # Helper function for logging dead neurons statistics w/r to whole ds and validation acc
+    def log_whole_ds_deaths_and_valid_acc(dead_neurons_count, dead_per_layers, valid_acc, step, context):
         exp_run.track(jax.device_get(dead_neurons_count), name=f"Dead neurons w/r whole ds; {setting[order]}",
                       step=step,
                       context={"reinitialisation": context})
         exp_run.track(jax.device_get(dead_neurons_count/total_neurons),
                       name=f"Dead neurons ratio w/r whole ds; {setting[order]}",
+                      step=step,
+                      context={"reinitialisation": context})
+        exp_run.track(jax.device_get(valid_acc),
+                      name=f"Validation full accuracy; {setting[order]}",
                       step=step,
                       context={"reinitialisation": context})
         for i, layer_dead in enumerate(dead_per_layers):
@@ -162,7 +167,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     update_fn = utl.update_given_loss_and_optimizer(loss, opt)
     scan_len = dataset_size // exp_config.death_batch_size
     scan_death_check_fn = utl.scanned_death_check_fn(utl.death_check_given_model(net), scan_len)
-    final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // exp_config.eval_batch_size)
+    full_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // exp_config.eval_batch_size)
 
     # First prng key
     key = jax.random.PRNGKey(exp_config.init_seed)
@@ -274,22 +279,30 @@ def run_exp(exp_config: ExpConfig) -> None:
                         exp_run.track(np.array(partial_reinit_dead_neurons[-1] / total_neurons),
                                       name=f"Dead neurons ratio; {setting[order]}", step=step, context={"reinitialisation": 'Partial'})
 
-            if step % exp_config.pruning_freq == 0:
+            if step % exp_config.full_checkpoint_freq == 0:
                 dead_neurons = scan_death_check_fn(params, state, test_death[idx])
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
-                log_whole_ds_deaths(dead_neurons_count, dead_per_layers, step, 'None')
+                validation_accuracy = full_accuracy_fn(params, state, test_eval[idx])
+                log_whole_ds_deaths_and_valid_acc(dead_neurons_count, dead_per_layers, validation_accuracy, step,
+                                                  'None')
 
                 if after_switch:
                     full_dead_neurons = scan_death_check_fn(params_full_reset, state_full_reset, test_death[idx])
                     full_dead_neurons_count, full_dead_per_layers = utl.count_dead_neurons(full_dead_neurons)
-                    log_whole_ds_deaths(full_dead_neurons_count, full_dead_per_layers, step, 'Full')
+                    full_reset_validation_accuracy = full_accuracy_fn(params_full_reset, state_full_reset,
+                                                                      test_eval[idx])
+                    log_whole_ds_deaths_and_valid_acc(full_dead_neurons_count, full_dead_per_layers,
+                                                      full_reset_validation_accuracy, step, 'Full')
 
                     if exp_config.compare_to_partial_reset:
                         partial_dead_neurons = scan_death_check_fn(params_partial_reinit, state_partial_reinit,
                                                                    test_death[idx])
                         partial_dead_neurons_count, partial_dead_per_layers = utl.count_dead_neurons(
                             partial_dead_neurons)
-                        log_whole_ds_deaths(partial_dead_neurons_count, partial_dead_per_layers, step, 'Partial')
+                        partial_validation_accuracy = full_accuracy_fn(params_partial_reinit, state_partial_reinit,
+                                                                       test_eval[idx])
+                        log_whole_ds_deaths_and_valid_acc(partial_dead_neurons_count, partial_dead_per_layers,
+                                                          partial_validation_accuracy, step, 'Partial')
 
             # Training step
             train_batch = next(train[idx])
