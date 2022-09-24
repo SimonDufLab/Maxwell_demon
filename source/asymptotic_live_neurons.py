@@ -29,7 +29,7 @@ from jax.flatten_util import ravel_pytree
 
 import utils.utils as utl
 from utils.utils import build_models
-from utils.config import optimizer_choice, dataset_choice, dataset_target_cardinality, regularizer_choice, architecture_choice
+from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality, regularizer_choice, architecture_choice
 from utils.config import pick_architecture
 
 
@@ -50,6 +50,7 @@ class ExpConfig:
     eval_batch_size: int = 512
     death_batch_size: int = 512
     optimizer: str = "adam"
+    activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
     architecture: str = "mlp_3"
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
@@ -91,6 +92,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
     assert exp_config.regularizer in regularizer_choice, "Currently supported regularizers: " + str(regularizer_choice)
     assert exp_config.architecture in architecture_choice.keys(), "Current architectures available: " + str(architecture_choice.keys())
+    assert exp_config.activation in activation_choice.keys(), "Current activation function available: " + str(
+        activation_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -103,6 +106,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_name_ = exp_name+"_with_dynamic_pruning"
     else:
         exp_name_ = exp_name
+
+    activation_fn = activation_choice[exp_config.activation]
 
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name_)
@@ -169,7 +174,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout)[exp_config.architecture]
         classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
-        architecture = architecture(size, classes, **drop_config)
+        architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
         net = build_models(*architecture, with_dropout=with_dropout)
 
         if 'noisy' in exp_config.optimizer:
@@ -253,7 +258,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
                     architecture = pick_architecture(with_dropout)[exp_config.architecture]
-                    architecture = architecture(new_sizes, classes, dropout_rate=exp_config.dropout_rate)
+                    architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **drop_config)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
@@ -410,9 +415,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.title("Effective capacity, "+exp_config.architecture+" on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig1.savefig(dir_path+"effective_capacity.png")
-    aim_fig1 = Figure(fig1)
+    # aim_fig1 = Figure(fig1)
     aim_img1 = Image(fig1)
-    exp_run.track(aim_fig1, name="Effective capacity", step=0)
+    # exp_run.track(aim_fig1, name="Effective capacity", step=0)
     exp_run.track(aim_img1, name="Effective capacity; img", step=0)
 
     fig1_5 = plt.figure(figsize=(15, 10))
@@ -433,9 +438,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.title(exp_config.architecture+" effective capacity on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig2.savefig(dir_path+"live_neurons_ratio.png")
-    aim_fig2 = Figure(fig2)
+    # aim_fig2 = Figure(fig2)
     aim_img2 = Image(fig2)
-    exp_run.track(aim_fig2, name="Live neurons ratio", step=0)
+    # exp_run.track(aim_fig2, name="Live neurons ratio", step=0)
     exp_run.track(aim_img2, name="Live neurons ratio; img", step=0)
 
     fig3 = plt.figure(figsize=(15, 10))
@@ -445,9 +450,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.title("Performance at convergence, "+exp_config.architecture+" on "+exp_config.dataset, fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig3.savefig(dir_path+"performance_at_convergence.png")
-    aim_fig3 = Figure(fig3)
+    # aim_fig3 = Figure(fig3)
     aim_img3 = Image(fig3)
-    exp_run.track(aim_fig3, name="Performance at convergence", step=0)
+    # exp_run.track(aim_fig3, name="Performance at convergence", step=0)
     exp_run.track(aim_img3, name="Performance at convergence; img", step=0)
 
     # Print total runtime
