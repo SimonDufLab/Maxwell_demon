@@ -52,6 +52,7 @@ class ExpConfig:
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
+    noisy_label: float = 0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     architecture: str = "mlp_3"
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "cdg_l2"
@@ -133,17 +134,14 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
-    train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size)
-
     eval_size = exp_config.eval_batch_size
-    train_size, train_eval = load_data(split="train", is_training=False, batch_size=eval_size, cardinality=True)
-    test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, cardinality=True)
-    # final_test_eval = load_data(split="test", is_training=False, batch_size=10000)
-
     death_minibatch_size = exp_config.death_batch_size
-    dataset_size, test_death = load_data(split="train", is_training=False,
-                                         batch_size=death_minibatch_size, cardinality=True)
-    # final_test_death = load_data(split="train", is_training=False, batch_size=dataset_size)
+    train_ds_size, train, train_eval, test_death = load_data(split="train", is_training=True,
+                                                             batch_size=exp_config.train_batch_size,
+                                                             other_bs=[eval_size, death_minibatch_size],
+                                                             cardinality=True,
+                                                             noisy_label=exp_config.noisy_label)
+    test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, cardinality=True)
 
     # Recording over all widths
     live_neurons = []
@@ -193,12 +191,12 @@ def run_exp(exp_config: ExpConfig) -> None:
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                         exp_config.noise_live_only, with_dropout=with_dropout)
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-        scan_len = dataset_size // death_minibatch_size
+        scan_len = train_ds_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
         scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
             utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_size // eval_size)
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         opt_state = opt.init(params)
@@ -281,12 +279,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                     exp_config.noise_imp, exp_config.noise_live_only,
                                                                     with_dropout=with_dropout)
                     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-                    scan_len = dataset_size // death_minibatch_size
+                    scan_len = train_ds_size // death_minibatch_size
                     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                     scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
                         utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
                     final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-                    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_size // eval_size)
+                    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
                 del dead_neurons  # Freeing memory
                 train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
@@ -354,13 +352,20 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         exp_run.track(jax.device_get(avg_final_live_neurons),
                       name="On average, live neurons after convergence w/r total neurons", step=starting_neurons)
-        exp_run.track(jax.device_get(total_neurons - final_dead_neurons_count),
+        total_live_neurons = total_neurons - final_dead_neurons_count
+        exp_run.track(jax.device_get(total_live_neurons),
                       name="Live neurons after convergence w/r total neurons", step=starting_neurons)
+        exp_run.track(jax.device_get(total_live_neurons/total_neurons),
+                      name="Live neurons ratio after convergence w/r total neurons", step=starting_neurons)
         for i, layer_dead in enumerate(final_dead_per_layer):
             total_neuron_in_layer = total_per_layer[i]
-            exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
+            live_in_layer = total_neuron_in_layer - layer_dead
+            exp_run.track(jax.device_get(live_in_layer),
                           name=f"Live neurons in layer {i} after convergence w/r total neurons",
-                          step=starting_neurons)  # Either total_neuron_in_layer/total_neurons
+                          step=starting_neurons)
+            exp_run.track(jax.device_get(live_in_layer/total_neuron_in_layer),
+                          name=f"Live neurons ratio in layer {i} after convergence w/r total neurons",
+                          step=starting_neurons)
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r total neurons", step=starting_neurons)
         activations_max_dist = Distribution(activations_max, bin_count=100)
