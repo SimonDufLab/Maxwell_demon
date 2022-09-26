@@ -5,6 +5,7 @@ from dataclasses import fields
 import haiku as hk
 import jax
 import jax.numpy as jnp
+import numpy
 import numpy as np
 import optax
 import tensorflow as tf
@@ -458,6 +459,15 @@ def dict_split(container, _len=2):
 ##############################
 # Dataset loading utilities
 ##############################
+def map_noisy_labels(num_classes):
+    def _map_noisy_labels(image, label):
+        sample_from = np.arange(num_classes-1)
+        rdm_choice = np.random.choice(sample_from)
+        rdm_choice = label + tf.cast((label <= rdm_choice), label.dtype)
+        return image, rdm_choice
+    return _map_noisy_labels
+
+
 def map_targets(target, indices):
   return jnp.asarray(target == indices).nonzero(size=1)
 
@@ -483,13 +493,23 @@ def interval_zero_one(image, label):
     return image/255, label
 
 
-def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
+def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int, other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
-                    cardinality: bool = False):  # -> Generator[Batch, None, None]:
+                    cardinality: bool = False, noisy_label: float = 0):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
-    ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data")
+    if noisy_label:
+        assert (noisy_label >= 0) and (noisy_label <= 1), "noisy label ratio must be between 0 and 1"
+        split1 = split + '[:' + str(int(noisy_label*100)) + '%]'
+        split2 = split + '[' + str(int(noisy_label*100)) + '%:]'
+        ds1, ds_info = tfds.load(dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True)
+        ds2 = tfds.load(dataset, split=split2, as_supervised=True, data_dir="./data")
+        num_classes = ds_info.features["label"].num_classes
+        ds1 = ds1.map(map_noisy_labels(num_classes=num_classes))
+        ds = ds1.concatenate(ds2)
+    else:
+        ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data")
     ds_size = int(ds.cardinality())
     if subset is not None:
         # assert subset < 10, "subset must be smaller than 10"
@@ -504,39 +524,52 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     if is_training:
         # if subset is not None:
         #     ds = ds.cache().repeat()
-        ds = ds.shuffle(10 * batch_size, seed=0)
+        ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=False)
         # ds = ds.take(batch_size).cache().repeat()
     ds = ds.repeat()
-    ds = ds.batch(batch_size)
-    ds = ds.prefetch(-1)
-
-    if (subset is not None) and transform:
-        return tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
-    else:
+    if other_bs:
+        ds1 = ds.batch(batch_size)
+        ds1 = ds1.prefetch(-1)
+        all_ds = [ds1]
+        for bs in other_bs:
+            ds2 = ds.batch(bs)
+            ds2 = ds2.prefetch(-1)
+            all_ds.append(ds2)
         if cardinality:
-            return ds_size, iter(tfds.as_numpy(ds))
+            return ds_size, *tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
         else:
-            return iter(tfds.as_numpy(ds))
+            return tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
+    else:
+        ds = ds.batch(batch_size)
+        ds = ds.prefetch(-1)
+
+        if (subset is not None) and transform:
+            return tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
+        else:
+            if cardinality:
+                return ds_size, iter(tfds.as_numpy(ds))
+            else:
+                return iter(tfds.as_numpy(ds))
 
 
-def load_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
-    return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size,
-                           subset=subset, transform=transform, cardinality=cardinality)
+def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False, noisy_label=0):
+    return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
+                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label)
 
 
-def load_cifar10_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
-    return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size,
-                           subset=subset, transform=transform, cardinality=cardinality)
+def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False, noisy_label=0):
+    return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
+                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label)
 
 
-def load_cifar100_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
-    return load_tf_dataset("cifar100", split=split, is_training=is_training, batch_size=batch_size,
-                           subset=subset, transform=transform, cardinality=cardinality)
+def load_cifar100_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False, noisy_label=0):
+    return load_tf_dataset("cifar100", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
+                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label)
 
 
-def load_fashion_mnist_tf(split: str, is_training, batch_size, subset=None, transform=True, cardinality=False):
-    return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size,
-                           subset=subset, transform=transform, cardinality=cardinality)
+def load_fashion_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False, noisy_label=0):
+    return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
+                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label)
 
 
 # Pytorch dataloader
