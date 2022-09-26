@@ -536,7 +536,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             ds2 = ds2.prefetch(-1)
             all_ds.append(ds2)
         if cardinality:
-            return ds_size, *tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
+            return (ds_size, ) + tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
         else:
             return tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
     else:
