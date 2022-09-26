@@ -154,7 +154,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Create network/optimizer and initialize params
     architecture = architecture_choice[exp_config.architecture]
-    architecture = architecture(exp_config.size, dataset_total_classes)  #, activation_fn=activation_fn) TODO: not supported by resnet
+    architecture = architecture(exp_config.size, dataset_total_classes, activation_fn=activation_fn)
     net = build_models(*architecture)
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
 
