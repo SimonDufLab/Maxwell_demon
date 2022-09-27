@@ -44,7 +44,7 @@ def death_check_given_model(model, with_activations=False, epsilon=0, check_tail
         assert epsilon <= 1, "for tanh activation fn, epsilon must be smaller than 1"
 
     def relu_test(arr):  # Test for relu, leaky-relu, elu, swish, etc. activation fn. Check if bigger than epsilon
-        return arr <= epsilon
+        return jnp.abs(arr) <= epsilon
 
     def tanh_test(arr):  # Test for tanh, sigmoid, etc. activation fn. Check if abs(tanh(x)) >= 1-epsilon
         return jnp.abs(arr) >= 1-epsilon  # TODO: test fn not compatible with convnets
@@ -762,3 +762,8 @@ def add_comma_in_str(string: str):
     string = string.replace("cifar100", "'cifar100'")
 
     return string
+
+
+def identity_fn(x):
+    """ Simple identity fn to use as an activation"""
+    return x

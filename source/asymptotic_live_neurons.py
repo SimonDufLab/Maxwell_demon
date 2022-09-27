@@ -68,6 +68,7 @@ class ExpConfig:
     noise_seed: int = 1
     dropout_rate: float = 0
     with_rng_seed: int = 428
+    linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
     save_wanda: bool = False  # Whether to save weights and activations value or not
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
@@ -185,7 +186,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Set training/monitoring functions
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                        classes=classes, with_dropout=with_dropout)
-        test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
+        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                             classes=classes, is_training=False, with_dropout=with_dropout)
         accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
@@ -208,9 +209,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         for step in range(exp_config.training_steps):
             if step % exp_config.record_freq == 0:
-                train_loss = test_loss(params, state, next(train_eval))
+                train_loss = test_loss_fn(params, state, next(train_eval))
                 train_accuracy = accuracy_fn(params, state, next(train_eval))
                 test_accuracy = accuracy_fn(params, state, next(test_eval))
+                test_loss = test_loss_fn(params, state, next(test_eval))
                 train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
                 # Periodically print classification accuracy on train & test sets.
                 if step % exp_config.report_freq == 0:
@@ -229,6 +231,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 exp_run.track(train_accuracy, name="Train accuracy", step=step,
                               context={"net size": utl.size_to_string(size)})
                 exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
+                              context={"net size": utl.size_to_string(size)})
+                exp_run.track(jax.device_get(test_loss), name="Test loss", step=step,
                               context={"net size": utl.size_to_string(size)})
 
             if step % exp_config.pruning_freq == 0:
@@ -262,7 +266,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                     # Clear previous cache
                     loss.clear_cache()
-                    test_loss.clear_cache()
+                    test_loss_fn.clear_cache()
                     accuracy_fn.clear_cache()
                     update_fn.clear_cache()
                     death_check_fn.clear_cache()
@@ -270,7 +274,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                    reg_param=exp_config.reg_param, classes=classes,
                                                    with_dropout=with_dropout)
-                    test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                    test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                         reg_param=exp_config.reg_param,
                                                         classes=classes,
                                                         is_training=False, with_dropout=with_dropout)
@@ -299,6 +303,28 @@ def run_exp(exp_config: ExpConfig) -> None:
                 del _
                 exp_run.track(jax.device_get(total_neurons - current_dead_neurons_count),
                               name=f"Live neurons at training step {step+1}", step=starting_neurons)
+
+            if (((step+1) % (exp_config.training_steps//2)) == 0) and exp_config.linear_switch:
+                activation_fn = activation_choice["linear"]
+                architecture = pick_architecture(with_dropout)[exp_config.architecture]
+                architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
+                net = build_models(*architecture, with_dropout=with_dropout)
+
+                # Reset training/monitoring functions
+                loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
+                                               classes=classes, with_dropout=with_dropout)
+                test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                    reg_param=exp_config.reg_param,
+                                                    classes=classes, is_training=False, with_dropout=with_dropout)
+                accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                                exp_config.noise_live_only, with_dropout=with_dropout)
+                death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+                scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+                scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+                    utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
+                final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
+                full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
             # Train step over single batch
             if with_dropout:
@@ -385,7 +411,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Making sure compiled fn cache was cleared
         loss.clear_cache()
-        test_loss.clear_cache()
+        test_loss_fn.clear_cache()
         accuracy_fn.clear_cache()
         update_fn.clear_cache()
         death_check_fn.clear_cache()
