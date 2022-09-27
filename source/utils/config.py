@@ -10,6 +10,7 @@ from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_
 from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_act_post_bn
 from models.convnet import conv_4_2_dropout
 from models.resnet import resnet18
+from utils.utils import identity_fn
 
 optimizer_choice = {
     "adam": optax.adam,
@@ -62,7 +63,8 @@ activation_choice = {
     "abs": jax.numpy.abs,  # Absolute value as the activation function
     "elu": jax.nn.elu,
     "swish": jax.nn.swish,
-    "tanh": jax.nn.tanh
+    "tanh": jax.nn.tanh,
+    "linear": identity_fn,
 }
 
 activations_pre_relu = {
