@@ -1,0 +1,85 @@
+{
+    "training_steps": 1000001,
+    "report_freq": 5000,
+    "record_freq": 500,
+    "pruning_freq": 2500,
+    "live_freq": 50000,
+    "lr": 0.001,
+    "train_batch_size": 128,
+    "eval_batch_size": 512,
+    "death_batch_size": 512,
+    "optimizer": "adam",
+    "activation": "abs",
+    "dataset": "fashion mnist",
+    "noisy_label": 0.4,
+    "architecture": "conv_4_2",
+    "sizes": [
+        [
+            2,
+            128
+        ],
+        [
+            4,
+            128
+        ],
+        [
+            6,
+            128
+        ],
+        [
+            8,
+            128
+        ],
+        [
+            10,
+            128
+        ],
+        [
+            12,
+            128
+        ],
+        [
+            16,
+            128
+        ],
+        [
+            20,
+            128
+        ],
+        [
+            24,
+            128
+        ],
+        [
+            32,
+            128
+        ],
+        [
+            40,
+            128
+        ],
+        [
+            48,
+            128
+        ]
+    ],
+    "regularizer": null,
+    "reg_param": 0.0001,
+    "epsilon_close": 0.0,
+    "init_seed": 43,
+    "dynamic_pruning": false,
+    "add_noise": false,
+    "noise_live_only": true,
+    "noise_imp": [
+        1,
+        1
+    ],
+    "noise_eta": 0.01,
+    "noise_gamma": 0.0,
+    "noise_seed": 1,
+    "dropout_rate": 0.0,
+    "with_rng_seed": 428,
+    "linear_switch": false,
+    "save_wanda": false,
+    "info": "DD_and_overfitting_regime"
+}
