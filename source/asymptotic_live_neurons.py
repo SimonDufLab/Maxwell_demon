@@ -69,6 +69,7 @@ class ExpConfig:
     dropout_rate: float = 0
     with_rng_seed: int = 428
     linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
+    measure_linear_perf: bool = False  # Measure performance over the linear networ without changing activation
     save_wanda: bool = False  # Whether to save weights and activations value or not
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
@@ -176,6 +177,12 @@ def run_exp(exp_config: ExpConfig) -> None:
         architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
         net = build_models(*architecture, with_dropout=with_dropout)
 
+        if exp_config.measure_linear_perf:
+            lin_act_fn = activation_choice["linear"]
+            lin_architecture = pick_architecture(with_dropout)[exp_config.architecture]
+            lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **drop_config)
+            lin_net = build_models(*lin_architecture, with_dropout=with_dropout)
+
         if 'noisy' in exp_config.optimizer:
             opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noise_eta,
                                                          gamma=exp_config.noise_gamma)
@@ -198,6 +205,10 @@ def run_exp(exp_config: ExpConfig) -> None:
             utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+
+        if exp_config.measure_linear_perf:
+            lin_accuracy_fn = utl.accuracy_given_model(lin_net, with_dropout=with_dropout)
+            lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
 
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         opt_state = opt.init(params)
@@ -255,6 +266,15 @@ def run_exp(exp_config: ExpConfig) -> None:
                                   name=f"Live neurons in layer {i}; whole training dataset", step=step,
                                   context={"net size": utl.size_to_string(size)})
                 del dead_per_layers
+
+                if exp_config.measure_linear_perf:
+                    # Record performance over full validation set of the NN for relu and linear activations
+                    relu_perf = jax.device_get(final_accuracy_fn(params, state, test_eval))
+                    exp_run.track(relu_perf,
+                                  name="Total accuracy for relu NN", step=step)
+                    lin_perf = jax.device_get(lin_full_accuracy_fn(params, state, test_eval))
+                    exp_run.track(lin_perf,
+                                  name="Total accuracy for linear NN", step=step)
 
                 if exp_config.dynamic_pruning:
                     # Pruning the network
