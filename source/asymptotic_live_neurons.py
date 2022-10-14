@@ -271,10 +271,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                     # Record performance over full validation set of the NN for relu and linear activations
                     relu_perf = jax.device_get(final_accuracy_fn(params, state, test_eval))
                     exp_run.track(relu_perf,
-                                  name="Total accuracy for relu NN", step=step)
+                                  name="Total accuracy for relu NN", step=step,
+                                  context={"net size": utl.size_to_string(size)})
                     lin_perf = jax.device_get(lin_full_accuracy_fn(params, state, test_eval))
                     exp_run.track(lin_perf,
-                                  name="Total accuracy for linear NN", step=step)
+                                  name="Total accuracy for linear NN", step=step,
+                                  context={"net size": utl.size_to_string(size)})
 
                 if exp_config.dynamic_pruning:
                     # Pruning the network
@@ -360,6 +362,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
+        final_train_acc = jax.device_get(full_train_acc_fn(params, state, train_eval))
         size_arr.append(starting_neurons)
 
         activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
@@ -414,6 +417,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                           step=starting_neurons)
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r total neurons", step=starting_neurons)
+        exp_run.track(final_train_acc,
+                      name="Train accuracy after convergence w/r total neurons", step=starting_neurons)
         activations_max_dist = Distribution(activations_max, bin_count=100)
         exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
                       context={"net size": utl.size_to_string(size)})
@@ -467,9 +472,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 16})
     fig1.savefig(dir_path+"effective_capacity.png")
     # aim_fig1 = Figure(fig1)
-    aim_img1 = Image(fig1)
+    # aim_img1 = Image(fig1)
     # exp_run.track(aim_fig1, name="Effective capacity", step=0)
-    exp_run.track(aim_img1, name="Effective capacity; img", step=0)
+    # exp_run.track(aim_img1, name="Effective capacity; img", step=0)
 
     fig1_5 = plt.figure(figsize=(15, 10))
     plt.errorbar(size_arr, avg_live_neurons, std_live_neurons, label="Live neurons", linewidth=4)
@@ -479,8 +484,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                + exp_config.dataset), fontweight='bold', fontsize=20)
     plt.legend(prop={'size': 16})
     fig1_5.savefig(dir_path+"avg_effective_capacity.png")
-    aim_img1_5 = Image(fig1_5)
-    exp_run.track(aim_img1_5, name="Average effective capacity; img", step=0)
+    # aim_img1_5 = Image(fig1_5)
+    # exp_run.track(aim_img1_5, name="Average effective capacity; img", step=0)
 
     fig2 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, jnp.array(live_neurons) / jnp.array(size_arr), label="alive ratio")
@@ -490,9 +495,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 16})
     fig2.savefig(dir_path+"live_neurons_ratio.png")
     # aim_fig2 = Figure(fig2)
-    aim_img2 = Image(fig2)
-    # exp_run.track(aim_fig2, name="Live neurons ratio", step=0)
-    exp_run.track(aim_img2, name="Live neurons ratio; img", step=0)
+    # aim_img2 = Image(fig2)
+    # # exp_run.track(aim_fig2, name="Live neurons ratio", step=0)
+    # exp_run.track(aim_img2, name="Live neurons ratio; img", step=0)
 
     fig3 = plt.figure(figsize=(15, 10))
     plt.plot(size_arr, f_acc, label="accuracy", linewidth=4)
@@ -502,9 +507,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     plt.legend(prop={'size': 16})
     fig3.savefig(dir_path+"performance_at_convergence.png")
     # aim_fig3 = Figure(fig3)
-    aim_img3 = Image(fig3)
-    # exp_run.track(aim_fig3, name="Performance at convergence", step=0)
-    exp_run.track(aim_img3, name="Performance at convergence; img", step=0)
+    # aim_img3 = Image(fig3)
+    # # exp_run.track(aim_fig3, name="Performance at convergence", step=0)
+    # exp_run.track(aim_img3, name="Performance at convergence; img", step=0)
 
     # Print total runtime
     print()
