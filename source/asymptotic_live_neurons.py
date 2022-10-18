@@ -73,7 +73,7 @@ class ExpConfig:
     dropout_rate: float = 0
     with_rng_seed: int = 428
     linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
-    measure_linear_perf: bool = False  # Measure performance over the linear networ without changing activation
+    measure_linear_perf: bool = False  # Measure performance over the linear network without changing activation
     save_wanda: bool = False  # Whether to save weights and activations value or not
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
