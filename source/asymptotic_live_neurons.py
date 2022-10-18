@@ -29,7 +29,8 @@ from jax.flatten_util import ravel_pytree
 
 import utils.utils as utl
 from utils.utils import build_models
-from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality, regularizer_choice, architecture_choice
+from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality
+from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice
 from utils.config import pick_architecture
 
 
@@ -46,6 +47,9 @@ class ExpConfig:
     pruning_freq: int = 2000
     live_freq: int = 20000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     lr: float = 1e-3
+    lr_schedule: str = "None"
+    final_lr: float = 1e-6
+    lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
     train_batch_size: int = 128
     eval_batch_size: int = 512
     death_batch_size: int = 512
@@ -91,12 +95,16 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     run_start_time = time.time()
 
-    assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(optimizer_choice.keys())
+    assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(
+        optimizer_choice.keys())
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
     assert exp_config.regularizer in regularizer_choice, "Currently supported regularizers: " + str(regularizer_choice)
-    assert exp_config.architecture in architecture_choice.keys(), "Current architectures available: " + str(architecture_choice.keys())
+    assert exp_config.architecture in architecture_choice.keys(), "Current architectures available: " + str(
+        architecture_choice.keys())
     assert exp_config.activation in activation_choice.keys(), "Current activation function available: " + str(
         activation_choice.keys())
+    assert exp_config.lr_schedule in lr_scheduler_choice.keys(), "Current lr scheduler function available: " + str(
+        lr_scheduler_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -187,7 +195,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noise_eta,
                                                          gamma=exp_config.noise_gamma)
         else:
-            opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
+            lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
+                                                                      exp_config.final_lr, exp_config.lr_decay_steps)
+            opt = optimizer_choice[exp_config.optimizer](lr_schedule)
         accuracies_log = []
 
         # Set training/monitoring functions
