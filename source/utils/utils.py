@@ -250,7 +250,7 @@ def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
         filtered_opt_state, empty_state = copy.copy(opt_state)
         for j, field in enumerate(field_names):
             # setattr(filtered_opt_state, field, filter_in_opt_state[j])
-            filtered_opt_state = filtered_opt_state._replace(**{field:filter_in_opt_state[j]})
+            filtered_opt_state = filtered_opt_state._replace(**{field: filter_in_opt_state[j]})
         new_opt_state = filtered_opt_state, empty_state
 
     new_sizes = [int(jnp.sum(layer)) for layer in neurons_state]
@@ -690,6 +690,23 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
     else:
         return hk.transform_with_state(primary_model)
 
+
+##############################
+# lr scheduler utilities
+##############################
+def constant_schedule(training_steps, base_lr, final_lr, decay_steps):
+    return optax.constant_schedule(base_lr)
+
+
+def piecewise_constant_schedule(training_steps, base_lr, final_lr, decay_steps):
+    scaling_factor = (final_lr/base_lr)**(1/(decay_steps-1))
+    bound_dict = {int(training_steps/decay_steps*i): scaling_factor for i in range(1, decay_steps)}
+    return optax.piecewise_constant_schedule(base_lr, bound_dict)
+
+
+def cosine_decay(training_steps, base_lr, final_lr, decay_steps):
+    alpha_val = final_lr/base_lr
+    return optax.cosine_decay_schedule(base_lr, training_steps, alpha_val)
 
 ##############################
 # Varia
