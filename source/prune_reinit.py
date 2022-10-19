@@ -58,7 +58,7 @@ class ExpConfig:
     dataset: str = "mnist"
     architecture: str = "mlp_3"
     size: Any = 50
-    regularizer: Optional[str] = "cdg_l2"
+    regularizer: Optional[str] = 'None'
     reg_param: float = 1e-4
     init_seed: int = 41
     dynamic_pruning: bool = False
@@ -89,10 +89,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
-    if type(exp_config.sizes) == str:
-        exp_config.sizes = literal_eval(exp_config.sizes)
-    if type(exp_config.noise_imp) == str:
-        exp_config.noise_imp = literal_eval(exp_config.noise_imp)
+    if type(exp_config.size) == str:
+        exp_config.size = literal_eval(exp_config.size)
 
     activation_fn = activation_choice[exp_config.activation]
 
@@ -137,13 +135,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                            classes=classes, is_training=False, with_dropout=with_dropout)
     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-    update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                    exp_config.noise_live_only, with_dropout=with_dropout)
+    update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
     scan_len = train_ds_size // death_minibatch_size
     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-    scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
-        utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
     final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
     full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
@@ -155,59 +150,74 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
+    neurons_at_init = total_neurons
 
     pruning_mask_sequence = []
 
-    def print_and_record_metrics(step, context, params, state, total_neurons, total_per_layer):
-        if step % exp_config.record_freq == 0:
-            train_loss = test_loss_fn(params, state, next(train_eval))
-            train_accuracy = accuracy_fn(params, state, next(train_eval))
-            test_accuracy = accuracy_fn(params, state, next(test_eval))
-            test_loss = test_loss_fn(params, state, next(test_eval))
-            train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
-            # Periodically print classification accuracy on train & test sets.
-            if step % exp_config.report_freq == 0:
-                print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
-                      f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
-            dead_neurons = death_check_fn(params, state, next(test_death))
-            # Record some metrics
-            dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
-            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
-                          context={"experiment phase": context})
-            exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
-                          context={"experiment phase": context})
-            exp_run.track(test_accuracy, name="Test accuracy", step=step,
-                          context={"experiment phase": context})
-            exp_run.track(train_accuracy, name="Train accuracy", step=step,
-                          context={"experiment phase": context})
-            exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
-                          context={"experiment phase": context})
-            exp_run.track(jax.device_get(test_loss), name="Test loss", step=step,
-                          context={"experiment phase": context})
-
-        if step % exp_config.full_ds_eval_freq == 0:
-            dead_neurons = scan_death_check_fn(params, state, test_death)
-            dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
-
-            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
-                          step=step,
-                          context={"experiment phase": context})
-            exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
-                          name="Live neurons; whole training dataset",
-                          step=step,
-                          context={"experiment phase": context})
-            for i, layer_dead in enumerate(dead_per_layers):
-                total_neuron_in_layer = total_per_layer[i]
-                exp_run.track(jax.device_get(layer_dead),
-                              name=f"Dead neurons in layer {i}; whole training dataset", step=step,
+    def get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
+                                     final_accuracy_fn):
+        def print_and_record_metrics(step, context, params, state, total_neurons, total_per_layer):
+            if step % exp_config.record_freq == 0:
+                train_loss = test_loss_fn(params, state, next(train_eval))
+                train_accuracy = accuracy_fn(params, state, next(train_eval))
+                test_accuracy = accuracy_fn(params, state, next(test_eval))
+                test_loss = test_loss_fn(params, state, next(test_eval))
+                train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
+                # Periodically print classification accuracy on train & test sets.
+                if step % exp_config.report_freq == 0:
+                    print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
+                          f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
+                dead_neurons = death_check_fn(params, state, next(test_death))
+                # Record some metrics
+                dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
+                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
                               context={"experiment phase": context})
-                exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
-                              name=f"Live neurons in layer {i}; whole training dataset", step=step,
+                exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
                               context={"experiment phase": context})
-            train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
-            exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
-                          step=step,
-                          context={"experiment phase": context})
+                exp_run.track(test_accuracy, name="Test accuracy", step=step,
+                              context={"experiment phase": context})
+                exp_run.track(train_accuracy, name="Train accuracy", step=step,
+                              context={"experiment phase": context})
+                exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
+                              context={"experiment phase": context})
+                exp_run.track(jax.device_get(test_loss), name="Test loss", step=step,
+                              context={"experiment phase": context})
+
+            if step % exp_config.full_ds_eval_freq == 0:
+                dead_neurons = scan_death_check_fn(params, state, test_death)
+                dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
+
+                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
+                              step=step,
+                              context={"experiment phase": context})
+                exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
+                              name="Live neurons; whole training dataset",
+                              step=step,
+                              context={"experiment phase": context})
+                exp_run.track(jax.device_get((total_neurons - dead_neurons_count)/neurons_at_init),
+                              name="Live neurons ratio; whole training dataset",
+                              step=step,
+                              context={"experiment phase": context})
+                for i, layer_dead in enumerate(dead_per_layers):
+                    total_neuron_in_layer = total_per_layer[i]
+                    exp_run.track(jax.device_get(layer_dead),
+                                  name=f"Dead neurons in layer {i}; whole training dataset", step=step,
+                                  context={"experiment phase": context})
+                    exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
+                                  name=f"Live neurons in layer {i}; whole training dataset", step=step,
+                                  context={"experiment phase": context})
+                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
+                exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
+                              step=step,
+                              context={"experiment phase": context})
+                test_acc_whole_ds = jax.device_get(final_accuracy_fn(params, state, test_eval))
+                exp_run.track(test_acc_whole_ds, name="Test accuracy; whole training dataset",
+                              step=step,
+                              context={"experiment phase": context})
+        return print_and_record_metrics
+
+    print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
+                                                            scan_death_check_fn, full_train_acc_fn, final_accuracy_fn)
 
     for step in range(exp_config.training_steps):
         # Metrics and logs:
@@ -219,13 +229,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             params, state, opt_state = update_fn(params, state, opt_state, next(train))
 
-    # Making sure compiled fn cache was cleared
-    loss.clear_cache()
-    test_loss_fn.clear_cache()
-    accuracy_fn.clear_cache()
-    update_fn.clear_cache()
-    death_check_fn.clear_cache()
-
     # Print running time
     print()
     print(f"Running time for run before pruning cycles: " + str(timedelta(seconds=time.time() - run_start_time)))
@@ -235,10 +238,11 @@ def run_exp(exp_config: ExpConfig) -> None:
     for i in range(1, exp_config.pruning_cycles):
         pruning_mask = None  # TODO: Recover pruning mask
         pruning_mask_sequence.append(pruning_mask)  # TODO: keep track of masks to be able to prune from initial weights
+        # Current idea: store the mask and reapply them sequentially needing to prune from init.
         pass
 
     # TODO: Add final pruning and comparison in low noise env -> Add variable for this setting in parser
-    for context in ['pruned/low noise', 'not pruned/low noise']:
+    for context in ['not pruned/low noise', 'pruned/low noise']:
         subtask_start_time = time.time()
         # different bs and lr
         load_data = dataset_choice[exp_config.dataset]
@@ -248,11 +252,20 @@ def run_exp(exp_config: ExpConfig) -> None:
         lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.end_lr,
                                                                   exp_config.end_final_lr, exp_config.lr_decay_steps)
         opt = optimizer_choice[exp_config.optimizer](lr_schedule)
-        if context == 'pruned/low noise':
+        if context == 'not pruned/low noise':
+            end_params = copy.deepcopy(initial_params)
+            end_state = copy.deepcopy(initial_state)
+            opt_state = opt.init(end_params)  # reinit optimizer state
+
+            update_fn.clear_cache()
+            update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+        else:
             dead_neurons = scan_death_check_fn(params, state, test_death)
             # Pruning the network
-            params, opt_state, new_sizes = utl.remove_dead_neurons_weights(initial_params, dead_neurons, opt_state)
-            opt_state = opt.init(params)  # reinit optimizer state
+            end_params, opt_state, new_sizes = utl.remove_dead_neurons_weights(initial_params, dead_neurons, opt_state)
+            end_state = initial_state
+            del dead_neurons  # Freeing memory
+            opt_state = opt.init(end_params)  # reinit optimizer state
             architecture = pick_architecture(with_dropout)[exp_config.architecture]
             architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **drop_config)
             net = build_models(*architecture)
@@ -264,6 +277,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             accuracy_fn.clear_cache()
             update_fn.clear_cache()
             death_check_fn.clear_cache()
+
             # Recompile training/monitoring functions
             loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                            reg_param=exp_config.reg_param, classes=classes,
@@ -273,14 +287,39 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                    classes=classes,
                                                    is_training=False, with_dropout=with_dropout)
             accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-            update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
-                                                            exp_config.noise_imp, exp_config.noise_live_only,
-                                                            with_dropout=with_dropout)
+            update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
             death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
             scan_len = train_ds_size // death_minibatch_size
             scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-            scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
-                utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
             final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
             full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
-            del dead_neurons  # Freeing memory
+
+            print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
+                                                                    scan_death_check_fn, full_train_acc_fn,
+                                                                    final_accuracy_fn)
+
+        for step in range(exp_config.training_steps):
+            # Metrics and logs:
+            print_and_record_metrics(step, context, end_params, end_state, total_neurons, total_per_layer)
+            # Train step over single batch
+            if with_dropout:
+                end_params, end_state, opt_state, dropout_key = update_fn(end_params, end_state, opt_state, next(train),
+                                                                  dropout_key)
+            else:
+                end_params, end_state, opt_state = update_fn(end_params, end_state, opt_state, next(train))
+
+        # Print running time
+        print()
+        print(f"Running time for ends runs with context {context}: " + str(
+            timedelta(seconds=time.time() - subtask_start_time)))
+        print("----------------------------------------------")
+        print()
+
+    # Print total runtime
+    print()
+    print("==================================")
+    print("Whole experiment completed in: " + str(timedelta(seconds=time.time() - run_start_time)))
+
+
+if __name__ == "__main__":
+    run_exp()
