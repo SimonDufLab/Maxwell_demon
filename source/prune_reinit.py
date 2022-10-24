@@ -43,6 +43,7 @@ class ExpConfig:
     record_freq: int = 100
     full_ds_eval_freq: int = 2000
     pruning_cycles: int = 1
+    cycle_tolerance: float = 0.01  # Stop pruning cycle early is variation in dead neurons is smaller than tolerance
     lr: float = 1e-3
     end_lr: float = 1e-5  # lr used during low noise evaluation
     lr_schedule: str = "None"
@@ -150,9 +151,6 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
-    neurons_at_init = total_neurons
-
-    pruning_mask_sequence = []
 
     def get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
                                      final_accuracy_fn):
@@ -194,7 +192,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name="Live neurons; whole training dataset",
                               step=step,
                               context={"experiment phase": context})
-                exp_run.track(jax.device_get((total_neurons - dead_neurons_count)/neurons_at_init),
+                exp_run.track(jax.device_get((total_neurons - dead_neurons_count)/starting_neurons),
                               name="Live neurons ratio; whole training dataset",
                               step=step,
                               context={"experiment phase": context})
@@ -235,14 +233,78 @@ def run_exp(exp_config: ExpConfig) -> None:
     print("----------------------------------------------")
     print()
 
-    for i in range(1, exp_config.pruning_cycles):
-        pruning_mask = None  # TODO: Recover pruning mask
-        pruning_mask_sequence.append(pruning_mask)  # TODO: keep track of masks to be able to prune from initial weights
-        # Current idea: store the mask and reapply them sequentially needing to prune from init.
-        pass
+    cycle_step = 1
+    tol_flag = True
+    dead_neurons = scan_death_check_fn(params, state, test_death)
+    pruned_init_params = initial_params
+    while (cycle_step < exp_config.pruning_cycles) and tol_flag:
+        subtask_start_time = time.time()
+        # prune the init params
+        pruned_init_params, opt_state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons, opt_state)
+        params = copy.deepcopy(pruned_init_params)
+        state = initial_state
+        opt_state = opt.init(params)
+        architecture = pick_architecture(with_dropout)[exp_config.architecture]
+        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **drop_config)
+        net = build_models(*architecture)
+        del dead_neurons  # Freeing memory
+
+        context = f'noisy pruning cycle {cycle_step}'
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+
+        # Clear previous cache
+        loss.clear_cache()
+        test_loss_fn.clear_cache()
+        accuracy_fn.clear_cache()
+        update_fn.clear_cache()
+        death_check_fn.clear_cache()
+
+        # Recompile training/monitoring functions
+        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                       reg_param=exp_config.reg_param, classes=classes,
+                                       with_dropout=with_dropout)
+        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                               reg_param=exp_config.reg_param,
+                                               classes=classes,
+                                               is_training=False, with_dropout=with_dropout)
+        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+        scan_len = train_ds_size // death_minibatch_size
+        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+
+        print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
+                                                                scan_death_check_fn, full_train_acc_fn,
+                                                                final_accuracy_fn)
+
+        for step in range(exp_config.training_steps):
+            # Metrics and logs:
+            print_and_record_metrics(step, context, params, state, total_neurons, total_per_layer)
+            # Train step over single batch
+            if with_dropout:
+                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
+                                                                          dropout_key)
+            else:
+                params, state, opt_state = update_fn(params, state, opt_state, next(train))
+
+        # Print running time
+        print()
+        print(f"Running time for pruning cycle {cycle_step}: " + str(
+            timedelta(seconds=time.time() - subtask_start_time)))
+        print("----------------------------------------------")
+        print()
+
+        cycle_step += 1
+        dead_neurons = scan_death_check_fn(params, state, test_death)
+        curr_dead_amount, _ = utl.count_dead_neurons(dead_neurons)
+        tol_flag = (curr_dead_amount/total_neurons) >= exp_config.cycle_tolerance
+
+    del dead_neurons  # Freeing memory
 
     # TODO: Add final pruning and comparison in low noise env -> Add variable for this setting in parser
-    for context in ['not pruned/low noise', 'pruned/low noise']:
+    for context in ['pruned/low noise', 'not pruned/low noise']:
         subtask_start_time = time.time()
         # different bs and lr
         load_data = dataset_choice[exp_config.dataset]
@@ -257,46 +319,49 @@ def run_exp(exp_config: ExpConfig) -> None:
             end_state = copy.deepcopy(initial_state)
             opt_state = opt.init(end_params)  # reinit optimizer state
 
-            update_fn.clear_cache()
-            update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+            architecture = pick_architecture(with_dropout)[exp_config.architecture]
+            architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
+            net = build_models(*architecture)
+            total_neurons, total_per_layer = starting_neurons, starting_per_layer
         else:
-            dead_neurons = scan_death_check_fn(params, state, test_death)
+            dead_neurons = scan_death_check_fn(pruned_init_params, state, test_death)
             # Pruning the network
-            end_params, opt_state, new_sizes = utl.remove_dead_neurons_weights(initial_params, dead_neurons, opt_state)
+            end_params, opt_state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons, opt_state)
             end_state = initial_state
             del dead_neurons  # Freeing memory
             opt_state = opt.init(end_params)  # reinit optimizer state
+
             architecture = pick_architecture(with_dropout)[exp_config.architecture]
             architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **drop_config)
             net = build_models(*architecture)
             total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
-            # Clear previous cache
-            loss.clear_cache()
-            test_loss_fn.clear_cache()
-            accuracy_fn.clear_cache()
-            update_fn.clear_cache()
-            death_check_fn.clear_cache()
+        # Clear previous cache
+        loss.clear_cache()
+        test_loss_fn.clear_cache()
+        accuracy_fn.clear_cache()
+        update_fn.clear_cache()
+        death_check_fn.clear_cache()
 
-            # Recompile training/monitoring functions
-            loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                           reg_param=exp_config.reg_param, classes=classes,
-                                           with_dropout=with_dropout)
-            test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                                   reg_param=exp_config.reg_param,
-                                                   classes=classes,
-                                                   is_training=False, with_dropout=with_dropout)
-            accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-            update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
-            death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-            scan_len = train_ds_size // death_minibatch_size
-            scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-            final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-            full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+        # Recompile training/monitoring functions
+        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                       reg_param=exp_config.reg_param, classes=classes,
+                                       with_dropout=with_dropout)
+        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                               reg_param=exp_config.reg_param,
+                                               classes=classes,
+                                               is_training=False, with_dropout=with_dropout)
+        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+        scan_len = train_ds_size // death_minibatch_size
+        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
-            print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
-                                                                    scan_death_check_fn, full_train_acc_fn,
-                                                                    final_accuracy_fn)
+        print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
+                                                                scan_death_check_fn, full_train_acc_fn,
+                                                                final_accuracy_fn)
 
         for step in range(exp_config.training_steps):
             # Metrics and logs:
