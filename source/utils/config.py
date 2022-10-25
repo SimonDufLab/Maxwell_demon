@@ -1,6 +1,8 @@
 """Optax optimizers configured to work with logger"""
 import jax
 import optax
+from jax.tree_util import Partial
+
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule
@@ -17,6 +19,10 @@ optimizer_choice = {
     "adam": optax.adam,
     "sgd": optax.sgd,
     "noisy_sgd": optax.noisy_sgd,
+    "momentum9": Partial(optax.sgd, momentum=0.9),
+    "nesterov9": Partial(optax.sgd, momentum=0.9, nesterov=True),
+    "momentum7": Partial(optax.sgd, momentum=0.7),
+    "nesterov7": Partial(optax.sgd, momentum=0.7, nesterov=True)
 }
 
 dataset_choice = {
