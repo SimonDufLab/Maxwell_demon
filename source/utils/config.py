@@ -55,12 +55,12 @@ architecture_choice = {
     "conv_3_2": conv_3_2,
     "conv_4_2": conv_4_2,
     "conv_6_2": conv_6_2,
-    "resnet18": resnet18,
+    "resnet18": Partial(resnet18, with_bn=False),
 }
 
 architecture_choice_dropout = {
     "mlp_3": mlp_3_dropout,
-    "conv_4_2": conv_4_2_dropout
+    "conv_4_2": conv_4_2_dropout,
 }
 
 bn_architecture_choice = {
@@ -68,6 +68,7 @@ bn_architecture_choice = {
     "conv_3_2": conv_3_2_bn,
     "conv_4_2": conv_4_2_bn,
     "conv_6_2": conv_6_2_bn,
+    "resnet18": resnet18,
 }
 
 activation_choice = {
@@ -98,8 +99,11 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
 }
 
 
-def pick_architecture(with_dropout=False):
+def pick_architecture(with_dropout=False, with_bn=False):
+    assert not (with_dropout and with_bn), "No implementation with both bn and dropout currently"
     if with_dropout:
         return architecture_choice_dropout
+    elif with_bn:
+        return bn_architecture_choice
     else:
         return architecture_choice
