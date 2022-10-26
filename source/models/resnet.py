@@ -68,12 +68,14 @@ class ResnetBlock(ResNet.BlockV1):
             use_projection: bool,
             bottleneck: bool,
             is_training: bool,
+            with_bn: bool,
             name: Optional[str] = None,
     ):
         super().__init__(channels=channels, stride=stride, use_projection=use_projection, bn_config=bn_config,
                          bottleneck=bottleneck, name=name)
         self.is_training = is_training
         self.activation_fn = activation_fn
+        self.with_bn = with_bn
 
     def __call__(self, inputs):
         out = shortcut = inputs
@@ -81,11 +83,13 @@ class ResnetBlock(ResNet.BlockV1):
 
         if self.use_projection:
             shortcut = self.proj_conv(shortcut)
-            shortcut = self.proj_batchnorm(shortcut, self.is_training)
+            if self.with_bn:
+                shortcut = self.proj_batchnorm(shortcut, self.is_training)
 
         for i, (conv_i, bn_i) in enumerate(self.layers):
             out = conv_i(out)
-            out = bn_i(out, self.is_training)
+            if self.with_bn:
+                out = bn_i(out, self.is_training)
             if i < len(self.layers) - 1:  # Don't apply act right away on last layer
                 out = self.activation_fn(out)
                 activations.append(out)
@@ -104,21 +108,24 @@ class ResnetInit(hk.Module):
             activation_fn: Callable,
             conv_config: Optional[Mapping[str, FloatStrOrBool]],
             bn_config: Optional[Mapping[str, FloatStrOrBool]],
+            with_bn: bool,
             name: Optional[str] = None):
         super().__init__(name=name)
         self.is_training = is_training
         self.bn = hk.BatchNorm(name="init_bn", **bn_config)
         self.conv = hk.Conv2D(**conv_config)
         self.activation_fn = activation_fn
+        self.with_bn = with_bn
 
     def __call__(self, inputs):
         x = self.conv(inputs)
-        x = self.bn(x, is_training=self.is_training)
+        if self.with_bn:
+            x = self.bn(x, is_training=self.is_training)
         return self.activation_fn(x)
 
 
 def block_group(channels: int, num_blocks: int, stride: Union[int, Sequence[int]], activation_fn: Callable, bottleneck: bool,
-                use_projection: bool):
+                use_projection: bool, with_bn: bool):
     """Adapted from: https://github.com/deepmind/dm-haiku/blob/d6e3c2085253735c3179018be495ebabf1e6b17c/
     haiku/_src/nets/resnet.py#L200"""
 
@@ -132,6 +139,7 @@ def block_group(channels: int, num_blocks: int, stride: Union[int, Sequence[int]
                      activation_fn=activation_fn,
                      use_projection=(i == 0 and use_projection),
                      bottleneck=bottleneck,
+                     with_bn=with_bn,
                      is_training=True,)])
                      # name=f"block_{i}")])
         test_layers.append(
@@ -140,6 +148,7 @@ def block_group(channels: int, num_blocks: int, stride: Union[int, Sequence[int]
                      activation_fn=activation_fn,
                      use_projection=(i == 0 and use_projection),
                      bottleneck=bottleneck,
+                     with_bn=with_bn,
                      is_training=False,)])
                      # name=f"block_{i}")])
 
@@ -153,6 +162,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                  channels_per_group: Sequence[int] = (256, 512, 1024, 2048),
                  use_projection: Sequence[bool] = (True, True, True, True),
                  logits_config: Optional[Mapping[str, Any]] = None,
+                 with_bn: bool = True,
                  name: Optional[str] = None,
                  initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
                  strides: Sequence[int] = (1, 2, 2, 2),):
@@ -164,8 +174,8 @@ def resnet_model(blocks_per_group: Sequence[int],
     # def act():
     #     return jax.nn.relu
 
-    train_layers = [[Partial(ResnetInit, is_training=True, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config)]]
-    test_layers = [[Partial(ResnetInit, is_training=False, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config)]]
+    train_layers = [[Partial(ResnetInit, is_training=True, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn)]]
+    test_layers = [[Partial(ResnetInit, is_training=False, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn)]]
 
     # train_layers.append([Partial(hk.Conv2D, **initial_conv_config),
     #                      Partial(Partial(hk.BatchNorm, name="initial_batchnorm", **bn_config), is_training=True), act])
@@ -178,7 +188,8 @@ def resnet_model(blocks_per_group: Sequence[int],
                                                             stride=stride,
                                                             activation_fn=activation_fn,
                                                             bottleneck=bottleneck,
-                                                            use_projection=use_projection[i])
+                                                            use_projection=use_projection[i],
+                                                            with_bn=with_bn)
         if i == 0:
             max_pool = Partial(hk.MaxPool, window_shape=(1, 3, 3, 1), strides=(1, 2, 2, 1), padding="SAME")
             block_train_layers[0] = [max_pool] + block_train_layers[0]
@@ -211,7 +222,8 @@ def resnet18(size: Union[int, Sequence[int]],
              activation_fn: Callable = relu,
              logits_config: Optional[Mapping[str, Any]] = default_logits_config,
              initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = default_initial_conv_config,
-             strides: Sequence[int] = (1, 2, 2, 2)):
+             strides: Sequence[int] = (1, 2, 2, 2),
+             with_bn: bool = True):
 
     resnet_config = {
                     "blocks_per_group": (2, 2, 2, 2),
@@ -226,4 +238,5 @@ def resnet18(size: Union[int, Sequence[int]],
                         initial_conv_config=initial_conv_config,
                         strides=strides,
                         logits_config=logits_config,
+                        with_bn=with_bn,
                         **resnet_config)
