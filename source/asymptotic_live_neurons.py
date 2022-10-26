@@ -58,6 +58,8 @@ class ExpConfig:
     dataset: str = "mnist"
     noisy_label: float = 0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     architecture: str = "mlp_3"
+    with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
+    with_bn: bool = False  # Add bathnorm layers or not in the models
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "cdg_l2"
     reg_param: float = 1e-4
@@ -136,11 +138,19 @@ def run_exp(exp_config: ExpConfig) -> None:
     if with_dropout:
         dropout_key = jax.random.PRNGKey(exp_config.with_rng_seed)
         assert exp_config.architecture in pick_architecture(
-            True).keys(), "Current architectures available with dropout: " + str(
-            pick_architecture(True).keys())
-        drop_config = {"dropout_rate": exp_config.dropout_rate}
+            with_dropout=True).keys(), "Current architectures available with dropout: " + str(
+            pick_architecture(with_dropout=True).keys())
+        net_config = {"dropout_rate": exp_config.dropout_rate}
     else:
-        drop_config = {}
+        net_config = {}
+
+    if not exp_config.with_bias:
+        net_config['with_bias'] = exp_config.with_bias
+
+    if exp_config.with_bn:
+        assert exp_config.architecture in pick_architecture(
+            with_bn=True).keys(), "Current architectures available with batchnorm: " + str(
+            pick_architecture(with_bn=True).keys())
 
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
@@ -180,15 +190,15 @@ def run_exp(exp_config: ExpConfig) -> None:
         subrun_start_time = time.time()
 
         # Make the network and optimiser
-        architecture = pick_architecture(with_dropout)[exp_config.architecture]
+        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
         classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
-        architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
+        architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
         net = build_models(*architecture, with_dropout=with_dropout)
 
         if exp_config.measure_linear_perf:
             lin_act_fn = activation_choice["linear"]
-            lin_architecture = pick_architecture(with_dropout)[exp_config.architecture]
-            lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **drop_config)
+            lin_architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+            lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **net_config)
             lin_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
         if 'noisy' in exp_config.optimizer:
@@ -291,8 +301,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if exp_config.dynamic_pruning:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
-                    architecture = pick_architecture(with_dropout)[exp_config.architecture]
-                    architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **drop_config)
+                    architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+                    architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
@@ -338,8 +348,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             if (((step+1) % (exp_config.training_steps//2)) == 0) and exp_config.linear_switch:
                 activation_fn = activation_choice["linear"]
-                architecture = pick_architecture(with_dropout)[exp_config.architecture]
-                architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
+                architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+                architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
                 net = build_models(*architecture, with_dropout=with_dropout)
 
                 # Reset training/monitoring functions
@@ -470,56 +480,56 @@ def run_exp(exp_config: ExpConfig) -> None:
         print("----------------------------------------------")
         print()
 
-    # Plots
-    dir_path = "./logs/plots/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
-    os.makedirs(dir_path)
-
-    fig1 = plt.figure(figsize=(15, 10))
-    plt.plot(size_arr, live_neurons, label="Live neurons", linewidth=4)
-    plt.xlabel("Number of neurons in NN", fontsize=16)
-    plt.ylabel("Live neurons at end of training", fontsize=16)
-    plt.title("Effective capacity, "+exp_config.architecture+" on "+exp_config.dataset, fontweight='bold', fontsize=20)
-    plt.legend(prop={'size': 16})
-    fig1.savefig(dir_path+"effective_capacity.png")
-    # aim_fig1 = Figure(fig1)
-    # aim_img1 = Image(fig1)
-    # exp_run.track(aim_fig1, name="Effective capacity", step=0)
-    # exp_run.track(aim_img1, name="Effective capacity; img", step=0)
-
-    fig1_5 = plt.figure(figsize=(15, 10))
-    plt.errorbar(size_arr, avg_live_neurons, std_live_neurons, label="Live neurons", linewidth=4)
-    plt.xlabel("Number of neurons in NN", fontsize=16)
-    plt.ylabel("Average live neurons at end of training", fontsize=16)
-    plt.title((f"Effective capacity averaged on minibatch of size={death_minibatch_size}, "+exp_config.architecture+" on "
-               + exp_config.dataset), fontweight='bold', fontsize=20)
-    plt.legend(prop={'size': 16})
-    fig1_5.savefig(dir_path+"avg_effective_capacity.png")
-    # aim_img1_5 = Image(fig1_5)
-    # exp_run.track(aim_img1_5, name="Average effective capacity; img", step=0)
-
-    fig2 = plt.figure(figsize=(15, 10))
-    plt.plot(size_arr, jnp.array(live_neurons) / jnp.array(size_arr), label="alive ratio")
-    plt.xlabel("Number of neurons in NN", fontsize=16)
-    plt.ylabel("Ratio of live neurons at end of training", fontsize=16)
-    plt.title(exp_config.architecture+" effective capacity on "+exp_config.dataset, fontweight='bold', fontsize=20)
-    plt.legend(prop={'size': 16})
-    fig2.savefig(dir_path+"live_neurons_ratio.png")
-    # aim_fig2 = Figure(fig2)
-    # aim_img2 = Image(fig2)
-    # # exp_run.track(aim_fig2, name="Live neurons ratio", step=0)
-    # exp_run.track(aim_img2, name="Live neurons ratio; img", step=0)
-
-    fig3 = plt.figure(figsize=(15, 10))
-    plt.plot(size_arr, f_acc, label="accuracy", linewidth=4)
-    plt.xlabel("Number of neurons in NN", fontsize=16)
-    plt.ylabel("Final accuracy", fontsize=16)
-    plt.title("Performance at convergence, "+exp_config.architecture+" on "+exp_config.dataset, fontweight='bold', fontsize=20)
-    plt.legend(prop={'size': 16})
-    fig3.savefig(dir_path+"performance_at_convergence.png")
-    # aim_fig3 = Figure(fig3)
-    # aim_img3 = Image(fig3)
-    # # exp_run.track(aim_fig3, name="Performance at convergence", step=0)
-    # exp_run.track(aim_img3, name="Performance at convergence; img", step=0)
+    # # Plots
+    # dir_path = "./logs/plots/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+    # os.makedirs(dir_path)
+    #
+    # fig1 = plt.figure(figsize=(15, 10))
+    # plt.plot(size_arr, live_neurons, label="Live neurons", linewidth=4)
+    # plt.xlabel("Number of neurons in NN", fontsize=16)
+    # plt.ylabel("Live neurons at end of training", fontsize=16)
+    # plt.title("Effective capacity, "+exp_config.architecture+" on "+exp_config.dataset, fontweight='bold', fontsize=20)
+    # plt.legend(prop={'size': 16})
+    # fig1.savefig(dir_path+"effective_capacity.png")
+    # # aim_fig1 = Figure(fig1)
+    # # aim_img1 = Image(fig1)
+    # # exp_run.track(aim_fig1, name="Effective capacity", step=0)
+    # # exp_run.track(aim_img1, name="Effective capacity; img", step=0)
+    #
+    # fig1_5 = plt.figure(figsize=(15, 10))
+    # plt.errorbar(size_arr, avg_live_neurons, std_live_neurons, label="Live neurons", linewidth=4)
+    # plt.xlabel("Number of neurons in NN", fontsize=16)
+    # plt.ylabel("Average live neurons at end of training", fontsize=16)
+    # plt.title((f"Effective capacity averaged on minibatch of size={death_minibatch_size}, "+exp_config.architecture+" on "
+    #            + exp_config.dataset), fontweight='bold', fontsize=20)
+    # plt.legend(prop={'size': 16})
+    # fig1_5.savefig(dir_path+"avg_effective_capacity.png")
+    # # aim_img1_5 = Image(fig1_5)
+    # # exp_run.track(aim_img1_5, name="Average effective capacity; img", step=0)
+    #
+    # fig2 = plt.figure(figsize=(15, 10))
+    # plt.plot(size_arr, jnp.array(live_neurons) / jnp.array(size_arr), label="alive ratio")
+    # plt.xlabel("Number of neurons in NN", fontsize=16)
+    # plt.ylabel("Ratio of live neurons at end of training", fontsize=16)
+    # plt.title(exp_config.architecture+" effective capacity on "+exp_config.dataset, fontweight='bold', fontsize=20)
+    # plt.legend(prop={'size': 16})
+    # fig2.savefig(dir_path+"live_neurons_ratio.png")
+    # # aim_fig2 = Figure(fig2)
+    # # aim_img2 = Image(fig2)
+    # # # exp_run.track(aim_fig2, name="Live neurons ratio", step=0)
+    # # exp_run.track(aim_img2, name="Live neurons ratio; img", step=0)
+    #
+    # fig3 = plt.figure(figsize=(15, 10))
+    # plt.plot(size_arr, f_acc, label="accuracy", linewidth=4)
+    # plt.xlabel("Number of neurons in NN", fontsize=16)
+    # plt.ylabel("Final accuracy", fontsize=16)
+    # plt.title("Performance at convergence, "+exp_config.architecture+" on "+exp_config.dataset, fontweight='bold', fontsize=20)
+    # plt.legend(prop={'size': 16})
+    # fig3.savefig(dir_path+"performance_at_convergence.png")
+    # # aim_fig3 = Figure(fig3)
+    # # aim_img3 = Image(fig3)
+    # # # exp_run.track(aim_fig3, name="Performance at convergence", step=0)
+    # # exp_run.track(aim_img3, name="Performance at convergence; img", step=0)
 
     # Print total runtime
     print()

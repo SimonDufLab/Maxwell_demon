@@ -1,6 +1,8 @@
 """Optax optimizers configured to work with logger"""
 import jax
 import optax
+from jax.tree_util import Partial
+
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule
@@ -17,6 +19,10 @@ optimizer_choice = {
     "adam": optax.adam,
     "sgd": optax.sgd,
     "noisy_sgd": optax.noisy_sgd,
+    "momentum9": Partial(optax.sgd, momentum=0.9),
+    "nesterov9": Partial(optax.sgd, momentum=0.9, nesterov=True),
+    "momentum7": Partial(optax.sgd, momentum=0.7),
+    "nesterov7": Partial(optax.sgd, momentum=0.7, nesterov=True)
 }
 
 dataset_choice = {
@@ -49,12 +55,12 @@ architecture_choice = {
     "conv_3_2": conv_3_2,
     "conv_4_2": conv_4_2,
     "conv_6_2": conv_6_2,
-    "resnet18": resnet18,
+    "resnet18": Partial(resnet18, with_bn=False),
 }
 
 architecture_choice_dropout = {
     "mlp_3": mlp_3_dropout,
-    "conv_4_2": conv_4_2_dropout
+    "conv_4_2": conv_4_2_dropout,
 }
 
 bn_architecture_choice = {
@@ -62,6 +68,7 @@ bn_architecture_choice = {
     "conv_3_2": conv_3_2_bn,
     "conv_4_2": conv_4_2_bn,
     "conv_6_2": conv_6_2_bn,
+    "resnet18": resnet18,
 }
 
 activation_choice = {
@@ -92,8 +99,11 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
 }
 
 
-def pick_architecture(with_dropout=False):
+def pick_architecture(with_dropout=False, with_bn=False):
+    assert not (with_dropout and with_bn), "No implementation with both bn and dropout currently"
     if with_dropout:
         return architecture_choice_dropout
+    elif with_bn:
+        return bn_architecture_choice
     else:
         return architecture_choice

@@ -29,11 +29,12 @@ class Linear_BN(hk.Module):
             self,
             is_training: bool,
             output_size: int,
+            with_bias: bool = True,
             name: Optional[str] = None):
         super().__init__(name=name)
         self.is_training = is_training
         self.bn = hk.BatchNorm(**bn_config)
-        self.linear = hk.Linear(output_size)
+        self.linear = hk.Linear(output_size, with_bias=with_bias)
 
     def __call__(self, inputs):
         x = self.linear(inputs)
@@ -47,11 +48,12 @@ class Conv_BN(hk.Module):
             self,
             is_training: bool,
             output_channels: int,
+            with_bias: bool = True,
             name: Optional[str] = None):
         super().__init__(name=name)
         self.is_training = is_training
         self.bn = hk.BatchNorm(**bn_config)
-        self.conv = hk.Conv2D(output_channels, 3)
+        self.conv = hk.Conv2D(output_channels, 3, with_bias=with_bias)
 
     def __call__(self, inputs):
         x = self.conv(inputs)
