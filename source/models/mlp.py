@@ -7,7 +7,7 @@ from models.bn_base_unit import Linear_BN, Base_BN
 from models.dropout_units import Base_Dropout
 
 
-def mlp_3(sizes, number_classes, activation_fn=relu):
+def mlp_3(sizes, number_classes, activation_fn=relu, with_bias=True):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units"""
     def act():
         return activation_fn
@@ -15,14 +15,14 @@ def mlp_3(sizes, number_classes, activation_fn=relu):
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), act]
-    layer_2 = [Partial(hk.Linear, sizes[1]), act]
-    layer_3 = [Partial(hk.Linear, number_classes)]
+    layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), act]
+    layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), act]
+    layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
 
     return [layer_1, layer_2, layer_3],
 
 
-def mlp_3_dropout(sizes, number_classes, activation_fn=relu, dropout_rate=0):
+def mlp_3_dropout(sizes, number_classes, activation_fn=relu, dropout_rate=0, with_bias=True):
     """ Dropout version of mlp_3 model"""
     def act():
         return activation_fn
@@ -30,17 +30,17 @@ def mlp_3_dropout(sizes, number_classes, activation_fn=relu, dropout_rate=0):
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    train_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), act, Partial(Base_Dropout, dropout_rate)]
-    train_layer_2 = [Partial(hk.Linear, sizes[1]), act, Partial(Base_Dropout, dropout_rate)]
-    layer_3 = [Partial(hk.Linear, number_classes)]
+    train_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), act, Partial(Base_Dropout, dropout_rate)]
+    train_layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), act, Partial(Base_Dropout, dropout_rate)]
+    layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
 
-    test_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), act, Partial(Base_Dropout, 0)]  # dropout is zero at eval
-    test_layer_2 = [Partial(hk.Linear, sizes[1]), act, Partial(Base_Dropout, 0)]
+    test_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), act, Partial(Base_Dropout, 0)]  # dropout is zero at eval
+    test_layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), act, Partial(Base_Dropout, 0)]
 
     return [train_layer_1, train_layer_2, layer_3], [test_layer_1, test_layer_2, layer_3]
 
 
-def mlp_3_bn(sizes, number_classes, activation_fn=relu):
+def mlp_3_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units,
     , with BN added after every layer apart from the final one"""
     def act():
@@ -49,12 +49,12 @@ def mlp_3_bn(sizes, number_classes, activation_fn=relu):
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    train_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), Partial(Base_BN, True), act]
-    train_layer_2 = [Partial(hk.Linear, sizes[1]), Partial(Base_BN, True), act]
-    layer_3 = [Partial(hk.Linear, number_classes)]
+    train_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), Partial(Base_BN, True), act]
+    train_layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), Partial(Base_BN, True), act]
+    layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
 
-    test_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), Partial(Base_BN, False), act]
-    test_layer_2 = [Partial(hk.Linear, sizes[1]), Partial(Base_BN, False), act]
+    test_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), Partial(Base_BN, False), act]
+    test_layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), Partial(Base_BN, False), act]
 
     return [train_layer_1, train_layer_2, layer_3], [test_layer_1, test_layer_2, layer_3]
 

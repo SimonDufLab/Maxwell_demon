@@ -58,6 +58,7 @@ class ExpConfig:
     dataset: str = "mnist"
     noisy_label: float = 0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     architecture: str = "mlp_3"
+    with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "cdg_l2"
     reg_param: float = 1e-4
@@ -138,9 +139,12 @@ def run_exp(exp_config: ExpConfig) -> None:
         assert exp_config.architecture in pick_architecture(
             True).keys(), "Current architectures available with dropout: " + str(
             pick_architecture(True).keys())
-        drop_config = {"dropout_rate": exp_config.dropout_rate}
+        net_config = {"dropout_rate": exp_config.dropout_rate}
     else:
-        drop_config = {}
+        net_config = {}
+
+    if not exp_config.with_bias:
+        net_config['with_bias'] = exp_config.with_bias
 
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
@@ -182,13 +186,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout)[exp_config.architecture]
         classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
-        architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
+        architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
         net = build_models(*architecture, with_dropout=with_dropout)
 
         if exp_config.measure_linear_perf:
             lin_act_fn = activation_choice["linear"]
             lin_architecture = pick_architecture(with_dropout)[exp_config.architecture]
-            lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **drop_config)
+            lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **net_config)
             lin_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
         if 'noisy' in exp_config.optimizer:
@@ -292,7 +296,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
                     architecture = pick_architecture(with_dropout)[exp_config.architecture]
-                    architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **drop_config)
+                    architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
@@ -339,7 +343,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             if (((step+1) % (exp_config.training_steps//2)) == 0) and exp_config.linear_switch:
                 activation_fn = activation_choice["linear"]
                 architecture = pick_architecture(with_dropout)[exp_config.architecture]
-                architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
+                architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
                 net = build_models(*architecture, with_dropout=with_dropout)
 
                 # Reset training/monitoring functions
