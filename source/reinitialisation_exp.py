@@ -39,6 +39,7 @@ class ExpConfig:
     compare_to_reset: bool = True  # Include comparison with a partial reset of the parameters
     compare_full_reset: bool = True  # Include the comparison with a complete reset of the parameters
     architecture: str = "mlp_3"
+    with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
     size: Any = 100  # Number of hidden units in the different layers
     lr: float = 1e-3
     train_batch_size: int = 128
@@ -85,6 +86,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
+    net_config = {}
+    if not exp_config.with_bias:
+        net_config['with_bias'] = exp_config.with_bias
+
     # Retrieve total number of neurons in the model
     total_neurons, _ = utl.get_total_neurons(exp_config.architecture, exp_config.size)
 
@@ -108,7 +113,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Create network/optimizer and initialize params
     architecture = architecture_choice[exp_config.architecture]
-    architecture = architecture(exp_config.size, exp_config.kept_classes, activation_fn=activation_fn)
+    architecture = architecture(exp_config.size, exp_config.kept_classes, activation_fn=activation_fn, **net_config)
     net = build_models(*architecture)
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
 
