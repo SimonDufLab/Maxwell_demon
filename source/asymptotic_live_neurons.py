@@ -5,6 +5,7 @@ For a given dataset and a given architecture, vary the width (to increase capaci
 neurons after reaching the overfitting regime and the plateau. Empirical observation: Even with increased capacity, the
 number of live neurons at the end eventually also reaches a plateau."""
 
+import copy
 import jax
 import jax.numpy as jnp
 import haiku as hk
@@ -245,6 +246,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
 
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+        initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
         opt_state = opt.init(params)
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
@@ -453,6 +455,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                       name="Accuracy after convergence w/r total neurons", step=starting_neurons)
         exp_run.track(final_train_acc,
                       name="Train accuracy after convergence w/r total neurons", step=starting_neurons)
+        params_vec, _ = ravel_pytree(params)
+        initial_params_vec, _ = ravel_pytree(initial_params)
+        exp_run.track(
+            jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
+            name="Relative change in norm of weights from init after convergence w/r total neurons",
+            step=starting_neurons)
         activations_max_dist = Distribution(activations_max, bin_count=100)
         exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
                       context={"net size": utl.size_to_string(size)})
