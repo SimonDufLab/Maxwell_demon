@@ -56,6 +56,7 @@ class ExpConfig:
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
+    kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
     noisy_label: float = 0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     architecture: str = "mlp_3"
     with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
@@ -126,12 +127,13 @@ def run_exp(exp_config: ExpConfig) -> None:
     exp_run = Run(repo="./logs", experiment=exp_name_)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
-    # Create pickle directory
-    pickle_dir_path = "./logs/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
-    os.makedirs(pickle_dir_path)
-    # Dump config file in it as well
-    with open(pickle_dir_path+'config.json', 'w') as fp:
-        json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
+    if exp_config.save_wanda:
+        # Create pickle directory
+        pickle_dir_path = "./logs/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+        os.makedirs(pickle_dir_path)
+        # Dump config file in it as well
+        with open(pickle_dir_path+'config.json', 'w') as fp:
+            json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
 
     # Experiments with dropout
     with_dropout = exp_config.dropout_rate > 0
@@ -153,15 +155,24 @@ def run_exp(exp_config: ExpConfig) -> None:
             pick_architecture(with_bn=True).keys())
 
     # Load the different dataset
+    if exp_config.kept_classes:
+        assert exp_config.kept_classes <= dataset_target_cardinality[
+            exp_config.dataset], "subset must be smaller or equal to total number of classes in ds"
+        kept_indices = np.random.choice(dataset_target_cardinality[exp_config.dataset], exp_config.kept_classes,
+                                        replace=False)
+    else:
+        kept_indices = None
     load_data = dataset_choice[exp_config.dataset]
     eval_size = exp_config.eval_batch_size
     death_minibatch_size = exp_config.death_batch_size
     train_ds_size, train, train_eval, test_death = load_data(split="train", is_training=True,
                                                              batch_size=exp_config.train_batch_size,
                                                              other_bs=[eval_size, death_minibatch_size],
+                                                             subset=kept_indices,
                                                              cardinality=True,
                                                              noisy_label=exp_config.noisy_label)
-    test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, cardinality=True)
+    test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
+                                     cardinality=True)
 
     # Recording over all widths
     live_neurons = []
@@ -191,7 +202,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
-        classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
+        if not exp_config.kept_classes:
+            classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
+        else:
+            classes = exp_config.kept_classes
         architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
         net = build_models(*architecture, with_dropout=with_dropout)
 
