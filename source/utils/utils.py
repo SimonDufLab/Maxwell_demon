@@ -535,16 +535,25 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             ds2 = ds.batch(bs)
             ds2 = ds2.prefetch(-1)
             all_ds.append(ds2)
-        if cardinality:
-            return (ds_size, ) + tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
+
+        if (subset is not None) and transform:
+            tf_iterators = tuple([tf_compatibility_iterator(iter(tfds.as_numpy(_ds)), subset) for _ds in all_ds])
         else:
-            return tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
+            tf_iterators = tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
+        if cardinality:
+            return (ds_size, ) + tf_iterators
+        else:
+            return tf_iterators
     else:
         ds = ds.batch(batch_size)
         ds = ds.prefetch(-1)
 
         if (subset is not None) and transform:
-            return tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
+            tf_iterator = tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
+            if cardinality:
+                return ds_size, tf_iterator
+            else:
+                return tf_iterator
         else:
             if cardinality:
                 return ds_size, iter(tfds.as_numpy(ds))
