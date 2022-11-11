@@ -313,7 +313,8 @@ def create_full_accuracy_fn(accuracy_fn, scan_len):
     return full_accuracy_fn
 
 
-def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False):
+def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False,
+                            mask_head=False):
     """ Build the cross-entropy loss given the model"""
     if not classes:
         classes = 10
@@ -340,7 +341,11 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             logits, state = model.apply(params, state, rng, batch, return_activations=False, is_training=is_training)
             labels = jax.nn.one_hot(batch[1], classes)
 
-            softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
+            if mask_head:
+                # softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits, where=(logits+labels) > 0, initial=0))
+                softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits, where=jnp.sum(labels, axis=0) > 0, initial=0))
+            else:
+                softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
             softmax_xent /= labels.shape[0]
 
             loss = softmax_xent + reg_param * reg_fn(params)
@@ -359,7 +364,12 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             logits, state = model_apply_fn(params, state, x=batch, return_activations=False, is_training=is_training)
             labels = jax.nn.one_hot(batch[1], classes)
 
-            softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
+            if mask_head:
+                # softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits, where=(logits+labels) > 0, initial=0))
+                softmax_xent = -jnp.sum(
+                    labels * jax.nn.log_softmax(logits, where=jnp.sum(labels, axis=0) > 0, initial=0))
+            else:
+                softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
             softmax_xent /= labels.shape[0]
 
             loss = softmax_xent + reg_param * reg_fn(params)
@@ -717,6 +727,7 @@ def cosine_decay(training_steps, base_lr, final_lr, decay_steps):
     alpha_val = final_lr/base_lr
     return optax.cosine_decay_schedule(base_lr, training_steps, alpha_val)
 
+
 ##############################
 # Varia
 ##############################
@@ -727,7 +738,7 @@ def get_total_neurons(architecture, sizes):
     elif architecture == 'conv_3_2':
         if len(sizes) == 2:  # Size can be specified with 2 args
             sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], sizes[1]]
-    elif architecture == 'conv_4_2':
+    elif (architecture == 'conv_4_2') or (architecture == 'conv_4_2_ln'):
         if len(sizes) == 2:  # Size can be specified with 2 args
             sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
     elif architecture == 'conv_6_2':
@@ -745,6 +756,8 @@ def get_total_neurons(architecture, sizes):
                      8 * sizes, 8 * sizes,
                      8 * sizes, 8 * sizes,
                      ]
+    else:
+        raise NotImplementedError("get_size not implemented for current architecture")
 
     return sum(sizes), tuple(sizes)
 
@@ -793,3 +806,8 @@ def add_comma_in_str(string: str):
 def identity_fn(x):
     """ Simple identity fn to use as an activation"""
     return x
+
+
+def threlu(x):
+    """Tanh activation followed by a ReLu. Intended to be used with LayerNorm"""
+    return jax.nn.relu(jax.nn.tanh(x))

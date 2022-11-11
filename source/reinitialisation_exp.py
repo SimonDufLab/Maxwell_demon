@@ -9,12 +9,15 @@ import matplotlib.pyplot as plt
 from aim import Run, Figure, Image
 import os
 import time
+import copy
 from dataclasses import dataclass
 from typing import Any, Optional
 from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
+
+from jax.flatten_util import ravel_pytree
 
 import utils.utils as utl
 from utils.utils import build_models
@@ -36,6 +39,8 @@ class ExpConfig:
     reset_period: int = 500  # After reset_period steps, reinitialize the parameters
     reset_horizon: float = 1.0  # Set to lower than one if you want to stop resetting before final steps
     kept_classes: int = 3  # Number of classes in the randomly selected subset
+    reduce_head: bool = True  # Reduce the head size of NN to kept_classes, or keep to full cardinality of training ds
+    mask_head: bool = False  # Mask the inactive classes head during training
     compare_to_reset: bool = True  # Include comparison with a partial reset of the parameters
     compare_full_reset: bool = True  # Include the comparison with a complete reset of the parameters
     architecture: str = "mlp_3"
@@ -105,15 +110,24 @@ def run_exp(exp_config: ExpConfig) -> None:
     load_data = dataset_choice[exp_config.dataset]
     total_classes = dataset_target_cardinality[exp_config.dataset]
     assert exp_config.kept_classes <= total_classes, "subset must be smaller or equal to total number of classes in ds"
+    if not exp_config.reduce_head:
+        load_data = Partial(load_data, transform=False)
+        classes = total_classes
+    else:
+        classes = exp_config.kept_classes
     indices = np.random.choice(total_classes, exp_config.kept_classes, replace=False)
     train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size, subset=indices)
     train_eval = load_data(split="train", is_training=False, batch_size=exp_config.eval_batch_size, subset=indices)
-    test_eval = load_data(split="test", is_training=False, batch_size=exp_config.eval_batch_size, subset=indices)
     test_death = load_data(split="train", is_training=False, batch_size=exp_config.death_batch_size, subset=indices)
+
+    if not exp_config.reduce_head:  # Evaluate test on full ds when keeping full head
+        test_eval = load_data(split="test", is_training=False, batch_size=exp_config.eval_batch_size, subset=None)
+    else:
+        test_eval = load_data(split="test", is_training=False, batch_size=exp_config.eval_batch_size, subset=indices)
 
     # Create network/optimizer and initialize params
     architecture = architecture_choice[exp_config.architecture]
-    architecture = architecture(exp_config.size, exp_config.kept_classes, activation_fn=activation_fn, **net_config)
+    architecture = architecture(exp_config.size, classes, activation_fn=activation_fn, **net_config)
     net = build_models(*architecture)
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
 
@@ -121,6 +135,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     key = jax.random.PRNGKey(exp_config.init_seed)
 
     params, state = net.init(key, next(train))
+    initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
     opt_state = opt.init(params)
     if exp_config.compare_to_reset:
         params_partial_reinit = deepcopy(params)
@@ -133,9 +148,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Set training/monitoring functions
     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                   classes=exp_config.kept_classes)
+                                   classes=classes, mask_head=exp_config.mask_head)
     test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                        classes=exp_config.kept_classes, is_training=False)
+                                        classes=classes, is_training=False, mask_head=exp_config.mask_head)
     accuracy_fn = utl.accuracy_given_model(net)
     update_fn = utl.update_given_loss_and_optimizer(loss, opt, norm_grad=exp_config.norm_grad)
     if exp_config.activation in ['tanh']:  # Extend list if needed
@@ -170,10 +185,15 @@ def run_exp(exp_config: ExpConfig) -> None:
             train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size, subset=indices)
             train_eval = load_data(split="train", is_training=False, batch_size=exp_config.eval_batch_size,
                                    subset=indices)
-            test_eval = load_data(split="test", is_training=False, batch_size=exp_config.eval_batch_size,
-                                  subset=indices)
             test_death = load_data(split="train", is_training=False, batch_size=exp_config.death_batch_size,
                                    subset=indices)
+
+            if not exp_config.reduce_head:  # Evaluate test on full ds when keeping full head
+                test_eval = load_data(split="test", is_training=False, batch_size=exp_config.eval_batch_size,
+                                      subset=None)
+            else:
+                test_eval = load_data(split="test", is_training=False, batch_size=exp_config.eval_batch_size,
+                                      subset=indices)
 
             # reinitialize optimizers state
             opt_state = opt.init(params)
@@ -213,6 +233,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                           name="Dead neurons", step=step, context={"reinitialisation": 'None'})
             exp_run.track(np.array(no_reinit_dead_neurons[-1]/total_neurons),
                           name="Dead neurons ratio", step=step, context={"reinitialisation": 'None'})
+            params_vec, _ = ravel_pytree(params)
+            initial_params_vec, _ = ravel_pytree(initial_params)
+            exp_run.track(
+                jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
+                name="Relative change in norm of weights from init after convergence w/r total neurons",
+                step=step, context={"reinitialisation": 'None'})
             if exp_config.compare_to_reset:
                 test_accuracy_partial_reinit = accuracy_fn(params_partial_reinit, state_partial_reinit, test_batch)
                 partial_reinit_perf.append(test_accuracy_partial_reinit)
@@ -269,9 +295,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             state, state_partial_reinit = utl.dict_split(all_states)
             opt_state, opt_partial_reinit_state = utl.dict_split(all_opt_states)
         else:
-            params = jax.tree_map(jnp.squeeze, all_params)
-            state = jax.tree_map(jnp.squeeze, all_states)
-            opt_state = jax.tree_map(jnp.squeeze, all_opt_states)
+            params = jax.tree_map(Partial(jnp.squeeze, axis=0), all_params)
+            state = jax.tree_map(Partial(jnp.squeeze, axis=0), all_states)
+            opt_state = jax.tree_map(Partial(jnp.squeeze, axis=0), all_opt_states)
 
         # Train sequentially the networks instead than in parallel
         # params, opt_state = update_fn(params, opt_state, train_batch)
