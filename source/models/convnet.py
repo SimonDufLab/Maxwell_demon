@@ -1,5 +1,6 @@
 """ Models definition for convolutional nets architecture. Defined fitting requirements of repo"""
 import haiku as hk
+import jax.nn
 from jax.tree_util import Partial
 from jax.nn import relu
 
@@ -161,6 +162,43 @@ def conv_4_2_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
 
     return [train_layer_1, train_layer_2, train_layer_3, train_layer_4, train_layer_5, layer_6], \
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, test_layer_5, layer_6]
+
+
+def conv_4_2_ln(sizes, number_classes, activation_fn=relu, with_bias=True):
+    """ Convnet with 4 convolutional layers followed by 2 fully-connected, with LayerNorm layers
+    added after activation functions
+    """
+
+    def act():
+        return activation_fn
+
+    def tanh():
+        return jax.nn.tanh
+
+    def hard_offset():
+        def _apply_hard_offset(x):
+            return x-1.5
+        return _apply_hard_offset
+
+    conv_fn = hk.Conv2D
+
+    conv_ln = Partial(hk.LayerNorm, axis=[-1, -2, -3], create_scale=False, create_offset=False, param_axis=-1)
+    mlp_ln = Partial(hk.LayerNorm, axis=-1, create_scale=False, create_offset=False, param_axis=-1)
+
+    if len(sizes) == 2:  # Size can be specified with 2 args
+        sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
+
+    max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
+    bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
+
+    layer_1 = [Partial(conv_fn, sizes[0], 3, with_bias=with_bias), conv_ln, hard_offset, act]
+    layer_2 = [max_pool, Partial(conv_fn, sizes[1], 3, with_bias=with_bias), conv_ln, hard_offset, act]
+    layer_3 = [max_pool, Partial(conv_fn, sizes[2], 3, with_bias=with_bias), conv_ln, hard_offset, act]
+    layer_4 = [max_pool, Partial(conv_fn, sizes[3], 3, with_bias=with_bias), conv_ln, hard_offset, act]
+    layer_5 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[4], with_bias=with_bias), mlp_ln, hard_offset, act]
+    layer_6 = [Partial(hk.Linear, number_classes, with_bias=with_bias), mlp_ln]  #, act]
+
+    return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6],
 
 
 def conv_6_2(sizes, number_classes, dim=2, activation_fn=relu, with_bias=True):
