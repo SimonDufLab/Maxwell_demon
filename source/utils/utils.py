@@ -478,6 +478,40 @@ def map_noisy_labels(num_classes):
     return _map_noisy_labels
 
 
+def map_permuted_img(image, label):
+    """ Map each image in the given dataset to a random permutation of its pixel"""
+    _shape = image.shape
+    image = tf.reshape(image, (-1, _shape[-1]))
+    image = tf.random.shuffle(image)
+    image = tf.reshape(image, _shape)
+    return image, label
+
+
+def map_gaussian_img(ds):
+    """Map each image to a random guassian image sharing mean and variance of the original ds"""
+    # get mean and variance
+    init_state = np.float32(0), np.float32(0), np.float32(0)
+
+    def running_mean(state, input):
+        current_mean, sumsq, counter = state
+        image, label = input
+        sum_img = tf.cast(tf.math.reduce_mean(image, [0, 1]), tf.float32)
+        current_mean = (counter * current_mean + sum_img) / (counter+1)
+        sumsq += sum_img**2
+        return current_mean, sumsq, counter+1
+
+    avg, sumsq, n = ds.reduce(init_state, running_mean)
+    var = sumsq/n - avg**2
+    print(avg.dtype)
+    print(var.dtype)
+
+    def _map_gaussian_img(image, label):
+        image = tf.random.normal(image.shape, avg, var)
+        return tf.cast(image, tf.uint8), label
+
+    return _map_gaussian_img
+
+
 def map_targets(target, indices):
   return jnp.asarray(target == indices).nonzero(size=1)
 
@@ -503,20 +537,30 @@ def interval_zero_one(image, label):
     return image/255, label
 
 
-def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int, other_bs: Optional[Iterable] = None,
+def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
+                    other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
-                    cardinality: bool = False, noisy_label: float = 0):  # -> Generator[Batch, None, None]:
+                    cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
+                    gaussian_img_ratio: float = 0):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
-    if noisy_label:
+    if noisy_label or permuted_img_ratio or gaussian_img_ratio:
         assert (noisy_label >= 0) and (noisy_label <= 1), "noisy label ratio must be between 0 and 1"
-        split1 = split + '[:' + str(int(noisy_label*100)) + '%]'
-        split2 = split + '[' + str(int(noisy_label*100)) + '%:]'
+        assert (permuted_img_ratio >= 0) and (permuted_img_ratio <= 1), "permuted_img ratio must be between 0 and 1"
+        assert (gaussian_img_ratio >= 0) and (gaussian_img_ratio <= 1), "gaussian_img ratio must be between 0 and 1"
+        noisy_ratio = max(noisy_label, permuted_img_ratio, gaussian_img_ratio)
+        split1 = split + '[:' + str(int(noisy_ratio*100)) + '%]'
+        split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
         ds1, ds_info = tfds.load(dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True)
         ds2 = tfds.load(dataset, split=split2, as_supervised=True, data_dir="./data")
         num_classes = ds_info.features["label"].num_classes
-        ds1 = ds1.map(map_noisy_labels(num_classes=num_classes))
+        if noisy_label:
+            ds1 = ds1.map(map_noisy_labels(num_classes=num_classes))
+        elif permuted_img_ratio:  # TODO: Do not make randomized ds mutually exclusive?
+            ds1 = ds1.map(map_permuted_img)
+        elif gaussian_img_ratio:
+            ds1 = ds1.map(map_gaussian_img(ds1))
         ds = ds1.concatenate(ds2)
     else:
         ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data")
@@ -571,24 +615,33 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
                 return iter(tfds.as_numpy(ds))
 
 
-def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False, noisy_label=0):
-    return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
-                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label)
+def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
+                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0):
+    return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size,
+                           other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
+                           noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
+                           gaussian_img_ratio=gaussian_img_ratio)
 
 
-def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False, noisy_label=0):
+def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
+                    noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0):
     return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
-                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label)
+                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
+                           permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio)
 
 
-def load_cifar100_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False, noisy_label=0):
+def load_cifar100_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
+                     noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0):
     return load_tf_dataset("cifar100", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
-                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label)
+                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
+                           permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio)
 
 
-def load_fashion_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False, noisy_label=0):
+def load_fashion_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True,
+                          cardinality=False, noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0):
     return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
-                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label)
+                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
+                           permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio)
 
 
 # Pytorch dataloader
