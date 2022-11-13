@@ -59,6 +59,8 @@ class ExpConfig:
     dataset: str = "mnist"
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
     noisy_label: float = 0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
+    permuted_img_ratio: float = 0  # ratio ([0,1]) of training image in training ds to randomly permute their pixels
+    gaussian_img_ratio: float = 0  # ratio ([0,1]) of img to replace by gaussian noise; same mean and variance as ds
     architecture: str = "mlp_3"
     with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
     with_bn: bool = False  # Add bathnorm layers or not in the models
@@ -171,7 +173,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                              other_bs=[eval_size, death_minibatch_size],
                                                              subset=kept_indices,
                                                              cardinality=True,
-                                                             noisy_label=exp_config.noisy_label)
+                                                             noisy_label=exp_config.noisy_label,
+                                                             permuted_img_ratio=exp_config.permuted_img_ratio,
+                                                             gaussian_img_ratio=exp_config.gaussian_img_ratio)
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
                                      cardinality=True)
 
