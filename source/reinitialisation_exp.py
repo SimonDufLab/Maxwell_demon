@@ -36,13 +36,15 @@ class ExpConfig:
     report_freq: int = 500
     record_freq: int = 10
     switching_period: int = 2000  # Switch dataset periodically
+    freeze_and_reinit: bool = False  # Use reinit and freeze strategy in CL; experimental
     reset_period: int = 500  # After reset_period steps, reinitialize the parameters
     reset_horizon: float = 1.0  # Set to lower than one if you want to stop resetting before final steps
     kept_classes: int = 3  # Number of classes in the randomly selected subset
+    sequential_classes: bool = False  # Instead of randomly sampling kept_classes, cycle sequentially through classes
     reduce_head: bool = True  # Reduce the head size of NN to kept_classes, or keep to full cardinality of training ds
     mask_head: bool = False  # Mask the inactive classes head during training
-    compare_to_reset: bool = True  # Include comparison with a partial reset of the parameters
-    compare_full_reset: bool = True  # Include the comparison with a complete reset of the parameters
+    compare_to_reset: bool = False  # Include comparison with a partial reset of the parameters
+    compare_full_reset: bool = False  # Include the comparison with a complete reset of the parameters
     architecture: str = "mlp_3"
     with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
     size: Any = 100  # Number of hidden units in the different layers
@@ -115,7 +117,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         classes = total_classes
     else:
         classes = exp_config.kept_classes
-    indices = np.random.choice(total_classes, exp_config.kept_classes, replace=False)
+    if exp_config.sequential_classes:
+        indices_iterator = utl.sequential_ds(total_classes, exp_config.kept_classes)
+        indices = next(indices_iterator)
+    else:
+        indices = np.random.choice(total_classes, exp_config.kept_classes, replace=False)
     train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size, subset=indices)
     train_eval = load_data(split="train", is_training=False, batch_size=exp_config.eval_batch_size, subset=indices)
     test_death = load_data(split="train", is_training=False, batch_size=exp_config.death_batch_size, subset=indices)
@@ -153,6 +159,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                         classes=classes, is_training=False, mask_head=exp_config.mask_head)
     accuracy_fn = utl.accuracy_given_model(net)
     update_fn = utl.update_given_loss_and_optimizer(loss, opt, norm_grad=exp_config.norm_grad)
+    if exp_config.freeze_and_reinit:
+        update_fn = utl.get_mask_update_fn(loss, opt)
     if exp_config.activation in ['tanh']:  # Extend list if needed
         death_check_fn = utl.death_check_given_model(net, epsilon=0.005, check_tail=True)
     else:
@@ -168,6 +176,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             hard_reinit_perf = []
             hard_reinit_dead_neurons = []
 
+    # Initialize a gradient mask
+    gradient_mask = death_check_fn(params, state, next(test_death))
+    gradient_mask = jax.tree_map(lambda v: v*0, gradient_mask)  # Every neuron state to false: no masking initially
+    zero_grad = jax.tree_map(lambda v: v*0, params)
+
     for step in range(exp_config.total_steps):
         if step % exp_config.report_freq == 0:
             # Periodically evaluate classification accuracy on train & test sets.
@@ -179,9 +192,14 @@ def run_exp(exp_config: ExpConfig) -> None:
                   f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
 
         if (step % exp_config.switching_period == 0) and \
-                (step < exp_config.total_steps-exp_config.switching_period-1):  # switch task
+                (step <= exp_config.total_steps-exp_config.switching_period-1) and (step > 0):  # switch task
+            dead_neurons = death_check_fn(params, state, next(test_death))
+            current_live = jax.tree_map(jnp.logical_not, dead_neurons)
             # new datasets
-            indices = np.random.choice(total_classes, exp_config.kept_classes, replace=False)
+            if exp_config.sequential_classes:
+                indices = next(indices_iterator)
+            else:
+                indices = np.random.choice(total_classes, exp_config.kept_classes, replace=False)
             train = load_data(split="train", is_training=True, batch_size=exp_config.train_batch_size, subset=indices)
             train_eval = load_data(split="train", is_training=False, batch_size=exp_config.eval_batch_size,
                                    subset=indices)
@@ -202,19 +220,30 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if exp_config.compare_full_reset:
                     opt_hard_reinit_state = opt.init(params_hard_reinit)
 
+            # prune dead neurons and freeze live ones
+            if exp_config.freeze_and_reinit:
+                # Updating the mask for frozen weights (live neurons)
+                gradient_mask = jax.tree_map(jnp.logical_or, gradient_mask, current_live)
+                # reinitialize the dead neurons
+                key, _key = jax.random.split(key)
+                new_params, new_state = net.init(_key, next(train))
+                params = utl.reinitialize_dead_neurons(dead_neurons, params, new_params)
+                state = new_state
+                opt_state = opt.init(params)
+
         if (step % exp_config.reset_period == 0) and (step < exp_config.reset_horizon*exp_config.total_steps):
             if exp_config.compare_to_reset:
                 # reinitialize dead neurons
-                _, key = jax.random.split(key)
-                new_params, new_state = net.init(key, next(train))
+                key, _key = jax.random.split(key)
+                new_params, new_state = net.init(_key, next(train))
                 dead_neurons = death_check_fn(params_partial_reinit, state_partial_reinit, next(test_death))
                 params_partial_reinit = utl.reinitialize_dead_neurons(dead_neurons, params_partial_reinit, new_params)
                 state_partial_reinit = new_state
                 opt_partial_reinit_state = opt.init(params_partial_reinit)
 
                 if exp_config.compare_full_reset:
-                    _, key = jax.random.split(key)
-                    params_hard_reinit, state_hard_reinit = net.init(key, next(train))
+                    key, _key = jax.random.split(key)
+                    params_hard_reinit, state_hard_reinit = net.init(_key, next(train))
                     opt_hard_reinit_state = opt.init(params_hard_reinit)
 
         if step % exp_config.record_freq == 0:
@@ -224,6 +253,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             no_reinit_perf.append(test_accuracy)
             exp_run.track(np.array(no_reinit_perf[-1]),
                           name="Test accuracy", step=step, context={"reinitialisation": 'None'})
+            # and train loss
+            train_batch = next(train_eval)
+            train_loss = test_loss(params, state, train_batch)
+            exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
+                          context={"reinitialisation": 'None'})
 
             # Record dead neurons
             death_test_batch = next(test_death)
@@ -244,6 +278,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                 partial_reinit_perf.append(test_accuracy_partial_reinit)
                 exp_run.track(np.array(partial_reinit_perf[-1]),
                               name="Test accuracy", step=step, context={"reinitialisation": 'Partial'})
+                train_loss = test_loss(params_partial_reinit, state_partial_reinit, train_batch)
+                exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
+                              context={"reinitialisation": 'Partial'})
                 partial_reinit_dead_neurons.append(utl.count_dead_neurons(
                     death_check_fn(params_partial_reinit, state_partial_reinit, death_test_batch))[0])
                 exp_run.track(np.array(partial_reinit_dead_neurons[-1]),
@@ -255,6 +292,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                     hard_reinit_perf.append(test_accuracy_hard_reinit)
                     exp_run.track(np.array(hard_reinit_perf[-1]),
                                   name="Test accuracy", step=step, context={"reinitialisation": 'Complete'})
+                    train_loss = test_loss(params_hard_reinit, state_hard_reinit, train_batch)
+                    exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
+                                  context={"reinitialisation": 'Complete'})
                     hard_reinit_dead_neurons.append(utl.count_dead_neurons(
                         death_check_fn(params_hard_reinit, state_hard_reinit, death_test_batch))[0])
                     exp_run.track(np.array(hard_reinit_dead_neurons[-1]),
@@ -278,13 +318,24 @@ def run_exp(exp_config: ExpConfig) -> None:
             all_states = jax.tree_map(Partial(jnp.expand_dims, axis=0), state)
             all_opt_states = jax.tree_map(Partial(jnp.expand_dims, axis=0), opt_state)
 
-        all_params, all_states, all_opt_states = jax.vmap(update_fn, in_axes=(
-        utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
-        utl.vmap_axes_mapping(opt_state), None))(
-            all_params,
-            all_states,
-            all_opt_states,
-            train_batch)
+        if exp_config.freeze_and_reinit:
+            all_params, all_states, all_opt_states = jax.vmap(update_fn, in_axes=(
+                utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
+                utl.vmap_axes_mapping(opt_state), None, None, None))(
+                    all_params,
+                    all_states,
+                    all_opt_states,
+                    gradient_mask,
+                    zero_grad,
+                    train_batch)
+        else:
+            all_params, all_states, all_opt_states = jax.vmap(update_fn, in_axes=(
+                utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
+                utl.vmap_axes_mapping(opt_state), None))(
+                    all_params,
+                    all_states,
+                    all_opt_states,
+                    train_batch)
 
         if exp_config.compare_full_reset:
             params, params_partial_reinit, params_hard_reinit = utl.dict_split(all_params)
@@ -307,50 +358,50 @@ def run_exp(exp_config: ExpConfig) -> None:
         #     params_hard_reinit, opt_hard_reinit_state = update_fn(params_hard_reinit,
         #                                                           opt_hard_reinit_state, train_batch)
 
-    # Plots
-    dir_path = "./logs/plots/"+exp_name+time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
-    os.makedirs(dir_path)
-
-    x = list(range(0, exp_config.total_steps, exp_config.record_freq))
-    fig1 = plt.figure(figsize=(15, 10))
-    plt.plot(x, no_reinit_perf, color='red', label="accuracy, no reinitialisation")
-    plt.plot(x, np.array(no_reinit_dead_neurons) / total_neurons, color='red', linewidth=3, linestyle=':',
-             label="dead neurons, no reinitialisation")
-    if exp_config.compare_to_reset:
-        plt.plot(x, partial_reinit_perf, color='green', label="accuracy, with partial reinitialisation")
-        plt.plot(x, np.array(partial_reinit_dead_neurons) / total_neurons, color='green', linewidth=3, linestyle=':',
-                 label="dead neurons, with partial reinitialisation")
-        if exp_config.compare_full_reset:
-            plt.plot(x, hard_reinit_perf, color='cyan', label="accuracy, complete reset")
-            plt.plot(x, np.array(hard_reinit_dead_neurons) / total_neurons, color='cyan', linewidth=3, linestyle=':',
-                     label="dead neurons, complete reset")
-
-    plt.xlabel("Iterations", fontsize=16)
-    plt.ylabel("Inactive neurons (ratio)/accuracy", fontsize=16)
-    plt.title(f"Performance vs dead neurons, switching between {exp_config.kept_classes}"
-              f" classes on {exp_config.dataset}", fontweight='bold', fontsize=20)
-    plt.legend(prop={'size': 12})
-    fig1.savefig(dir_path+"perf_vs_dead_neurons.png")
-    aim_fig1 = Figure(fig1)
-    aim_img1 = Image(fig1)
-    exp_run.track(aim_fig1, name="Switching task performance w/r to dead neurons", step=0)
-    exp_run.track(aim_img1, name="Switching task performance w/r to dead neurons; img", step=0)
-
-    fig2 = plt.figure(figsize=(15, 10))
-    plt.plot(no_reinit_dead_neurons, label="without reinitialisation")
-    if exp_config.compare_to_reset:
-        plt.plot(partial_reinit_dead_neurons, label="partial reinitialisation")
-        if exp_config.compare_full_reset:
-            plt.plot(hard_reinit_dead_neurons, label="complete reinitialisation")
-    plt.title("Dead neurons during training", fontweight='bold', fontsize=20)
-    plt.xlabel("Iterations", fontsize=16)
-    plt.ylabel("Inactive neurons", fontsize=16)
-    plt.legend(prop={'size': 12})
-    fig2.savefig(dir_path+"dead_neurons.png")
-    aim_fig2 = Figure(fig2)
-    aim_img2 = Image(fig2)
-    exp_run.track(aim_fig2, name="Dead neurons over training time", step=0)
-    exp_run.track(aim_img2, name="Dead neurons over training time; img", step=0)
+    # # Plots
+    # dir_path = "./logs/plots/"+exp_name+time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+    # os.makedirs(dir_path)
+    #
+    # x = list(range(0, exp_config.total_steps, exp_config.record_freq))
+    # fig1 = plt.figure(figsize=(15, 10))
+    # plt.plot(x, no_reinit_perf, color='red', label="accuracy, no reinitialisation")
+    # plt.plot(x, np.array(no_reinit_dead_neurons) / total_neurons, color='red', linewidth=3, linestyle=':',
+    #          label="dead neurons, no reinitialisation")
+    # if exp_config.compare_to_reset:
+    #     plt.plot(x, partial_reinit_perf, color='green', label="accuracy, with partial reinitialisation")
+    #     plt.plot(x, np.array(partial_reinit_dead_neurons) / total_neurons, color='green', linewidth=3, linestyle=':',
+    #              label="dead neurons, with partial reinitialisation")
+    #     if exp_config.compare_full_reset:
+    #         plt.plot(x, hard_reinit_perf, color='cyan', label="accuracy, complete reset")
+    #         plt.plot(x, np.array(hard_reinit_dead_neurons) / total_neurons, color='cyan', linewidth=3, linestyle=':',
+    #                  label="dead neurons, complete reset")
+    #
+    # plt.xlabel("Iterations", fontsize=16)
+    # plt.ylabel("Inactive neurons (ratio)/accuracy", fontsize=16)
+    # plt.title(f"Performance vs dead neurons, switching between {exp_config.kept_classes}"
+    #           f" classes on {exp_config.dataset}", fontweight='bold', fontsize=20)
+    # plt.legend(prop={'size': 12})
+    # fig1.savefig(dir_path+"perf_vs_dead_neurons.png")
+    # aim_fig1 = Figure(fig1)
+    # aim_img1 = Image(fig1)
+    # exp_run.track(aim_fig1, name="Switching task performance w/r to dead neurons", step=0)
+    # exp_run.track(aim_img1, name="Switching task performance w/r to dead neurons; img", step=0)
+    #
+    # fig2 = plt.figure(figsize=(15, 10))
+    # plt.plot(no_reinit_dead_neurons, label="without reinitialisation")
+    # if exp_config.compare_to_reset:
+    #     plt.plot(partial_reinit_dead_neurons, label="partial reinitialisation")
+    #     if exp_config.compare_full_reset:
+    #         plt.plot(hard_reinit_dead_neurons, label="complete reinitialisation")
+    # plt.title("Dead neurons during training", fontweight='bold', fontsize=20)
+    # plt.xlabel("Iterations", fontsize=16)
+    # plt.ylabel("Inactive neurons", fontsize=16)
+    # plt.legend(prop={'size': 12})
+    # fig2.savefig(dir_path+"dead_neurons.png")
+    # aim_fig2 = Figure(fig2)
+    # aim_img2 = Image(fig2)
+    # exp_run.track(aim_fig2, name="Dead neurons over training time", step=0)
+    # exp_run.track(aim_img2, name="Dead neurons over training time; img", step=0)
 
 
 if __name__ == "__main__":
