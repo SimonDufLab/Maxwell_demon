@@ -18,6 +18,7 @@ from typing import Union, Tuple
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
 from collections.abc import Iterable
+from itertools import cycle
 
 import psutil
 import sys
@@ -187,6 +188,7 @@ def reinitialize_dead_neurons(neuron_states, old_params, new_params):
       old_params: current parameters value
       new_params: new parameters' dict to pick from weights being reinitialized"""
     neuron_states = [jnp.logical_not(state) for state in neuron_states]
+    # neuron_states = jax.tree_map(jnp.logical_not, neuron_states)
     layers = list(old_params.keys())
     for i in range(len(neuron_states)):
         for weight_type in list(old_params[layers[i]].keys()):  # Usually, 'w' and 'b'
@@ -269,7 +271,7 @@ def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
 
 
 def neuron_state_from_params_magnitude(params, eps):
-    """ Return neuron state (to detect 'quais-dead') according to the mean size of
+    """ Return neuron state (to detect 'quasi-dead') according to the mean size of
     the parameters of a neuron"""
     neuron_state = []
     for key in list(params.keys())[:-1]:
@@ -387,10 +389,13 @@ def grad_normalisation_per_layer(param_leaf):
     return param_leaf/jnp.sqrt(var+1)
 
 
-def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only=False, norm_grad=False, with_dropout=False):
+def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only=False,
+                                    norm_grad=False, with_dropout=False, return_grad=False):
     """Learning rule (stochastic gradient descent)."""
 
     if with_dropout:
+        assert not return_grad, 'return_grad option not coded yet with dropout'
+
         @jax.jit
         def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _drop_key) -> Tuple[
             hk.Params, Any, OptState, jax.random.PRNGKeyArray]:
@@ -403,16 +408,30 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
 
     else:
         if not noise:
-            @jax.jit
-            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
-                grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
-                if norm_grad:
-                    grads = jax.tree_map(grad_normalisation_per_layer, grads)
-                updates, _opt_state = optimizer.update(grads, _opt_state)
-                new_params = optax.apply_updates(_params, updates)
-                return new_params, new_state, _opt_state
+            if return_grad:
+                @jax.jit
+                def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                            _batch: Batch) -> Tuple[dict, hk.Params, Any, OptState]:
+                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                    if norm_grad:
+                        grads = jax.tree_map(grad_normalisation_per_layer, grads)
+                    updates, _opt_state = optimizer.update(grads, _opt_state)
+                    new_params = optax.apply_updates(_params, updates)
+                    return grads, new_params, new_state, _opt_state
+
+            else:
+                @jax.jit
+                def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                            _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
+                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                    if norm_grad:
+                        grads = jax.tree_map(grad_normalisation_per_layer, grads)
+                    updates, _opt_state = optimizer.update(grads, _opt_state)
+                    new_params = optax.apply_updates(_params, updates)
+                    return new_params, new_state, _opt_state
         else:
             a, b = noise_imp
+            assert not return_grad, 'return_grad option not coded yet with noisy grad'
             if noise_live_only:
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
@@ -440,6 +459,21 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     noisy_updates = unravel_fn(a*flat_updates + b*added_noise)
                     new_params = optax.apply_updates(_params, noisy_updates)
                     return new_params, new_state, _opt_state, next_key
+
+    return _update
+
+
+def get_mask_update_fn(loss, optimizer):
+    """ Return the update function, but taking into account a mask for neurons that we want to freeze the weights"""
+
+    @jax.jit
+    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, grad_mask: hk.Params, zero_grad: hk.Params,
+                _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
+        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+        grads = reinitialize_dead_neurons(grad_mask, grads, zero_grad)
+        updates, _opt_state = optimizer.update(grads, _opt_state)
+        new_params = optax.apply_updates(_params, updates)
+        return new_params, new_state, _opt_state
 
     return _update
 
@@ -864,3 +898,39 @@ def identity_fn(x):
 def threlu(x):
     """Tanh activation followed by a ReLu. Intended to be used with LayerNorm"""
     return jax.nn.relu(jax.nn.tanh(x))
+
+
+# @jax.jit  # Call once, no need to jit
+def mean_var_over_pytree_list(pytree_list):
+    """ Takes a list of pytree sharing the same structure and return their average stored in the same pytree"""
+
+    _, unflatten_fn = ravel_pytree(pytree_list[0])
+    tree_ = [ravel_pytree(tree)[0] for tree in pytree_list]
+    tree_ = jnp.stack(tree_)
+    tree_avg = jnp.mean(tree_, axis=0)
+    tree_var = jnp.var(tree_, axis=0)
+
+    return unflatten_fn(tree_avg), unflatten_fn(tree_var)
+
+
+def concatenate_bias_to_weights(params_pytree):
+    layers = list(params_pytree.keys())
+    neurons_vec_dict = {}
+    for layer in layers:
+        # weight_type = tuple(params_pytree[layer].keys())  # Usually, 'w' and 'b'
+        # print([params_pytree[layer][w_b].shape for w_b in weight_type])
+        neurons_vectors = jnp.vstack([params_pytree[layer][w_b] for w_b in ('w', 'b')])#, axis=0)
+        neurons_vec_dict[layer] = [neurons_vectors[:, i] for i in range(neurons_vectors.shape[1])]
+
+    return neurons_vec_dict
+
+
+def sequential_ds(classes, kept_classes):
+    """ Build an iterator that sequentially splits the total number of classes."""
+    indices_sequence = np.arange(classes)
+    np.random.shuffle(indices_sequence)
+
+    split = np.arange(kept_classes, classes, kept_classes)
+    indices_sequence = np.split(indices_sequence, split)
+
+    return cycle(indices_sequence)
