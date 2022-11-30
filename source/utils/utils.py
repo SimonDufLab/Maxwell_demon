@@ -18,6 +18,7 @@ from typing import Union, Tuple
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
 from collections.abc import Iterable
+from itertools import cycle
 
 import psutil
 import sys
@@ -187,6 +188,7 @@ def reinitialize_dead_neurons(neuron_states, old_params, new_params):
       old_params: current parameters value
       new_params: new parameters' dict to pick from weights being reinitialized"""
     neuron_states = [jnp.logical_not(state) for state in neuron_states]
+    # neuron_states = jax.tree_map(jnp.logical_not, neuron_states)
     layers = list(old_params.keys())
     for i in range(len(neuron_states)):
         for weight_type in list(old_params[layers[i]].keys()):  # Usually, 'w' and 'b'
@@ -457,6 +459,21 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     noisy_updates = unravel_fn(a*flat_updates + b*added_noise)
                     new_params = optax.apply_updates(_params, noisy_updates)
                     return new_params, new_state, _opt_state, next_key
+
+    return _update
+
+
+def get_mask_update_fn(loss, optimizer):
+    """ Return the update function, but taking into account a mask for neurons that we want to freeze the weights"""
+
+    @jax.jit
+    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, grad_mask: hk.Params, zero_grad: hk.Params,
+                _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
+        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+        grads = reinitialize_dead_neurons(grad_mask, grads, zero_grad)
+        updates, _opt_state = optimizer.update(grads, _opt_state)
+        new_params = optax.apply_updates(_params, updates)
+        return new_params, new_state, _opt_state
 
     return _update
 
@@ -906,3 +923,14 @@ def concatenate_bias_to_weights(params_pytree):
         neurons_vec_dict[layer] = [neurons_vectors[:, i] for i in range(neurons_vectors.shape[1])]
 
     return neurons_vec_dict
+
+
+def sequential_ds(classes, kept_classes):
+    """ Build an iterator that sequentially splits the total number of classes."""
+    indices_sequence = np.arange(classes)
+    np.random.shuffle(indices_sequence)
+
+    split = np.arange(kept_classes, classes, kept_classes)
+    indices_sequence = np.split(indices_sequence, split)
+
+    return cycle(indices_sequence)
