@@ -251,8 +251,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # reinitialize the dead neurons
                 key, _key = jax.random.split(key)
                 new_params, new_state = net.init(_key, next(train))
+                dead_neurons = jax.tree_map(jnp.logical_and, dead_neurons, jax.tree_map(jnp.logical_not, gradient_mask[:-1]))
+                params = utl.prune_outgoing_from_dead_neurons(dead_neurons, params)  # Must be done before vv
                 dead_neurons.append(jnp.logical_not(gradient_mask[-1]))
-                params = utl.reinitialize_excluding_head(dead_neurons, params, new_params)
+                params = utl.reinitialize_excluding_head(dead_neurons, params, new_params)  # This step!
                 state = new_state
                 opt_state = opt.init(params)
             if exp_config.reg_param_decay_cycles > 1:
