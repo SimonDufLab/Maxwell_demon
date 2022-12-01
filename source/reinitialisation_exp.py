@@ -57,6 +57,7 @@ class ExpConfig:
     activation: str = "relu"  # Activation function used throughout the model
     regularizer: Optional[str] = "None"
     reg_param: float = 1e-4
+    reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     init_seed: int = 41
     norm_grad: bool = False
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
@@ -179,9 +180,28 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Initialize a gradient mask
     gradient_mask = death_check_fn(params, state, next(test_death))
     gradient_mask = jax.tree_map(lambda v: v*0, gradient_mask)  # Every neuron state to false: no masking initially
+    gradient_mask.append(jnp.zeros(total_classes))
     zero_grad = jax.tree_map(lambda v: v*0, params)
 
+    decaying_reg_param = exp_config.reg_param
+    reg_param_decay_period = exp_config.switching_period//exp_config.reg_param_decay_cycles
+
     for step in range(exp_config.total_steps):
+        if (exp_config.reg_param_decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
+                (not (step % exp_config.switching_period == 0)):
+            decaying_reg_param = decaying_reg_param/10
+            loss.clear_cache()
+            test_loss.clear_cache()
+            update_fn.clear_cache()
+            loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+                                           classes=classes, mask_head=exp_config.mask_head)
+            test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+                                                classes=classes, is_training=False, mask_head=exp_config.mask_head)
+            if exp_config.freeze_and_reinit:
+                update_fn = utl.get_mask_update_fn(loss, opt)
+            else:
+                update_fn = utl.update_given_loss_and_optimizer(loss, opt, norm_grad=exp_config.norm_grad)
+
         if step % exp_config.report_freq == 0:
             # Periodically evaluate classification accuracy on train & test sets.
             train_loss = test_loss(params, state, next(train_eval))
@@ -195,6 +215,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                 (step <= exp_config.total_steps-exp_config.switching_period-1) and (step > 0):  # switch task
             dead_neurons = death_check_fn(params, state, next(test_death))
             current_live = jax.tree_map(jnp.logical_not, dead_neurons)
+            new_frozen = np.zeros(total_classes)
+            new_frozen[indices] = 1
+            current_live.append(jnp.array(new_frozen))
+
             # new datasets
             if exp_config.sequential_classes:
                 indices = next(indices_iterator)
@@ -227,9 +251,24 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # reinitialize the dead neurons
                 key, _key = jax.random.split(key)
                 new_params, new_state = net.init(_key, next(train))
-                params = utl.reinitialize_dead_neurons(dead_neurons, params, new_params)
+                dead_neurons.append(jnp.logical_not(gradient_mask[-1]))
+                params = utl.reinitialize_excluding_head(dead_neurons, params, new_params)
                 state = new_state
                 opt_state = opt.init(params)
+            if exp_config.reg_param_decay_cycles > 1:
+                loss.clear_cache()
+                test_loss.clear_cache()
+                update_fn.clear_cache()
+                loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
+                                               classes=classes, mask_head=exp_config.mask_head)
+                test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                    reg_param=exp_config.reg_param,
+                                                    classes=classes, is_training=False, mask_head=exp_config.mask_head)
+                if exp_config.freeze_and_reinit:
+                    update_fn = utl.get_mask_update_fn(loss, opt)
+                else:
+                    update_fn = utl.update_given_loss_and_optimizer(loss, opt, norm_grad=exp_config.norm_grad)
+                decaying_reg_param = exp_config.reg_param
 
         if (step % exp_config.reset_period == 0) and (step < exp_config.reset_horizon*exp_config.total_steps):
             if exp_config.compare_to_reset:

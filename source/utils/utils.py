@@ -194,7 +194,29 @@ def reinitialize_dead_neurons(neuron_states, old_params, new_params):
         for weight_type in list(old_params[layers[i]].keys()):  # Usually, 'w' and 'b'
             old_params[layers[i]][weight_type] = old_params[layers[i]][weight_type] * neuron_states[i]
         kernel_param = 'w'
-        old_params[layers[i+1]][kernel_param] = old_params[layers[i+1]][kernel_param] * neuron_states[i].reshape(-1, 1)
+        old_params[layers[i + 1]][kernel_param] = old_params[layers[i + 1]][kernel_param] * neuron_states[
+            i].reshape(-1, 1)
+    reinitialized_params = jax.tree_util.tree_map(map_decision, old_params, new_params)
+
+    return reinitialized_params
+
+
+@jax.jit
+def reinitialize_excluding_head(neuron_states, old_params, new_params):
+    """ Given the activations value for the whole training set, build a mask that is used for reinitialization
+      neurons_state: neuron states (either 0 or 1) post-activation. Will be 1 if y <=  0
+      old_params: current parameters value
+      new_params: new parameters' dict to pick from weights being reinitialized"""
+    neuron_states = [jnp.logical_not(state) for state in neuron_states]
+    # neuron_states = jax.tree_map(jnp.logical_not, neuron_states)
+    layers = list(old_params.keys())
+    for i in range(len(neuron_states)):
+        for weight_type in list(old_params[layers[i]].keys()):  # Usually, 'w' and 'b'
+            old_params[layers[i]][weight_type] = old_params[layers[i]][weight_type] * neuron_states[i]
+        # kernel_param = 'w'
+        # if i+2 < len(list(old_params.keys())):
+        #     old_params[layers[i + 1]][kernel_param] = old_params[layers[i + 1]][kernel_param] * neuron_states[
+        #         i].reshape(-1, 1)
     reinitialized_params = jax.tree_util.tree_map(map_decision, old_params, new_params)
 
     return reinitialized_params
@@ -470,7 +492,7 @@ def get_mask_update_fn(loss, optimizer):
     def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, grad_mask: hk.Params, zero_grad: hk.Params,
                 _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
         grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
-        grads = reinitialize_dead_neurons(grad_mask, grads, zero_grad)
+        grads = reinitialize_excluding_head(grad_mask, grads, zero_grad)
         updates, _opt_state = optimizer.update(grads, _opt_state)
         new_params = optax.apply_updates(_params, updates)
         return new_params, new_state, _opt_state
