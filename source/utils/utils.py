@@ -182,6 +182,11 @@ def map_decision(current_leaf, potential_leaf):
 
 
 @jax.jit
+def map_decision_with_bool_array(decision, current_leaf, potential_leaf):
+    return jnp.where(decision, current_leaf, potential_leaf)
+
+
+@jax.jit
 def reinitialize_dead_neurons(neuron_states, old_params, new_params):
     """ Given the activations value for the whole training set, build a mask that is used for reinitialization
       neurons_state: neuron states (either 0 or 1) post-activation. Will be 1 if y <=  0
@@ -208,18 +213,33 @@ def reinitialize_excluding_head(neuron_states, old_params, new_params):
       old_params: current parameters value
       new_params: new parameters' dict to pick from weights being reinitialized"""
     neuron_states = [jnp.logical_not(state) for state in neuron_states]
+    bool_params = jax.tree_map(jnp.isfinite, old_params)
     # neuron_states = jax.tree_map(jnp.logical_not, neuron_states)
     layers = list(old_params.keys())
     for i in range(len(neuron_states)):
         for weight_type in list(old_params[layers[i]].keys()):  # Usually, 'w' and 'b'
-            old_params[layers[i]][weight_type] = old_params[layers[i]][weight_type] * neuron_states[i]
+            bool_params[layers[i]][weight_type] = jnp.logical_and(bool_params[layers[i]][weight_type], neuron_states[i])
         # kernel_param = 'w'
         # if i+2 < len(list(old_params.keys())):
         #     old_params[layers[i + 1]][kernel_param] = old_params[layers[i + 1]][kernel_param] * neuron_states[
         #         i].reshape(-1, 1)
-    reinitialized_params = jax.tree_util.tree_map(map_decision, old_params, new_params)
+    reinitialized_params = jax.tree_util.tree_map(map_decision_with_bool_array, bool_params, old_params, new_params)
 
     return reinitialized_params
+
+
+@ jax.jit
+def prune_outgoing_from_dead_neurons(neuron_states, params):
+    """ To use when some neurons are frozen. This will remove (mask) the connection between reinitialized
+    dead neurons and the frozen ones, preserving the representation"""
+    neuron_states = [jnp.logical_not(state) for state in neuron_states]
+    layers = list(params.keys())
+    for i in range(len(neuron_states)):
+        kernel_param = 'w'
+        params[layers[i + 1]][kernel_param] = params[layers[i + 1]][kernel_param] * neuron_states[
+            i].reshape(-1, 1)
+
+    return jax.tree_map(map_decision, params, jax.tree_map(lambda v: v*0, params))
 
 
 ##############################
