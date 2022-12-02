@@ -41,8 +41,10 @@ class ExpConfig:
     reset_horizon: float = 1.0  # Set to lower than one if you want to stop resetting before final steps
     kept_classes: int = 3  # Number of classes in the randomly selected subset
     sequential_classes: bool = False  # Instead of randomly sampling kept_classes, cycle sequentially through classes
+    reduce_head_gap: bool = False  # Apply a penalty on the difference of logits; useful for incremental learning
     reduce_head: bool = True  # Reduce the head size of NN to kept_classes, or keep to full cardinality of training ds
     mask_head: bool = False  # Mask the inactive classes head during training
+    tanh_head: bool = False  # Add a tanh before softmax in last layer (to bound head pre-activation)
     compare_to_reset: bool = False  # Include comparison with a partial reset of the parameters
     compare_full_reset: bool = False  # Include the comparison with a complete reset of the parameters
     architecture: str = "mlp_3"
@@ -97,6 +99,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     net_config = {}
     if not exp_config.with_bias:
         net_config['with_bias'] = exp_config.with_bias
+    if exp_config.tanh_head:  # TODO: Add option to all model and remove if
+        net_config['tanh_head'] = exp_config.tanh_head
 
     # Retrieve total number of neurons in the model
     total_neurons, _ = utl.get_total_neurons(exp_config.architecture, exp_config.size)
@@ -142,7 +146,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     key = jax.random.PRNGKey(exp_config.init_seed)
 
     params, state = net.init(key, next(train))
-    initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
+    # initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
     opt_state = opt.init(params)
     if exp_config.compare_to_reset:
         params_partial_reinit = deepcopy(params)
@@ -155,9 +159,11 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Set training/monitoring functions
     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                   classes=classes, mask_head=exp_config.mask_head)
+                                   classes=classes, mask_head=exp_config.mask_head,
+                                   reduce_head_gap=exp_config.reduce_head_gap)
     test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                        classes=classes, is_training=False, mask_head=exp_config.mask_head)
+                                        classes=classes, is_training=False, mask_head=exp_config.mask_head,
+                                        reduce_head_gap=exp_config.reduce_head_gap)
     accuracy_fn = utl.accuracy_given_model(net)
     update_fn = utl.update_given_loss_and_optimizer(loss, opt, norm_grad=exp_config.norm_grad)
     if exp_config.freeze_and_reinit:
@@ -194,9 +200,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             test_loss.clear_cache()
             update_fn.clear_cache()
             loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                           classes=classes, mask_head=exp_config.mask_head)
+                                           classes=classes, mask_head=exp_config.mask_head,
+                                           reduce_head_gap=exp_config.reduce_head_gap)
             test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                                classes=classes, is_training=False, mask_head=exp_config.mask_head)
+                                                classes=classes, is_training=False, mask_head=exp_config.mask_head,
+                                                reduce_head_gap=exp_config.reduce_head_gap)
             if exp_config.freeze_and_reinit:
                 update_fn = utl.get_mask_update_fn(loss, opt)
             else:
@@ -262,10 +270,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 test_loss.clear_cache()
                 update_fn.clear_cache()
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                               classes=classes, mask_head=exp_config.mask_head)
+                                               classes=classes, mask_head=exp_config.mask_head,
+                                               reduce_head_gap=exp_config.reduce_head_gap)
                 test_loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                     reg_param=exp_config.reg_param,
-                                                    classes=classes, is_training=False, mask_head=exp_config.mask_head)
+                                                    classes=classes, is_training=False, mask_head=exp_config.mask_head,
+                                                    reduce_head_gap=exp_config.reduce_head_gap)
                 if exp_config.freeze_and_reinit:
                     update_fn = utl.get_mask_update_fn(loss, opt)
                 else:
@@ -309,10 +319,10 @@ def run_exp(exp_config: ExpConfig) -> None:
             exp_run.track(np.array(no_reinit_dead_neurons[-1]/total_neurons),
                           name="Dead neurons ratio", step=step, context={"reinitialisation": 'None'})
             params_vec, _ = ravel_pytree(params)
-            initial_params_vec, _ = ravel_pytree(initial_params)
+            # initial_params_vec, _ = ravel_pytree(initial_params)
             exp_run.track(
-                jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
-                name="Relative change in norm of weights from init after convergence w/r total neurons",
+                jax.device_get(jnp.linalg.norm(params_vec)),
+                name="Euclidean norm of the weights",
                 step=step, context={"reinitialisation": 'None'})
             if exp_config.compare_to_reset:
                 test_accuracy_partial_reinit = accuracy_fn(params_partial_reinit, state_partial_reinit, test_batch)
