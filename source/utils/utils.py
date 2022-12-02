@@ -396,7 +396,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
                 gap = jnp.max(logits, axis=0, where=jnp.sum(labels, axis=0) > 0, initial=0) - jnp.max(logits, axis=0)
                 gap = jnp.sum(jnp.abs(gap)) / labels.shape[0]
             else:
-                return 0
+                gap = 0
 
             loss = softmax_xent + reg_param * reg_fn(params) + gap
 
@@ -426,7 +426,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
                 gap = jnp.max(logits, axis=0, where=jnp.sum(labels, axis=0) > 0, initial=0) - jnp.max(logits, axis=0)
                 gap = jnp.sum(jnp.abs(gap)) / labels.shape[0]
             else:
-                return 0
+                gap = 0
 
             loss = softmax_xent + reg_param * reg_fn(params) + gap
 
