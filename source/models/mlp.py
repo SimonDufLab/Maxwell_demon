@@ -1,23 +1,29 @@
 """ Models definition for MLP lie architecture. Defined fitting requirements of repo"""
 import haiku as hk
 from jax.tree_util import Partial
-from jax.nn import relu
+from jax.nn import relu, tanh
 
 from models.bn_base_unit import Linear_BN, Base_BN
 from models.dropout_units import Base_Dropout
 
 
-def mlp_3(sizes, number_classes, activation_fn=relu, with_bias=True):
+def mlp_3(sizes, number_classes, activation_fn=relu, with_bias=True, tanh_head=False):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units"""
     def act():
         return activation_fn
+
+    def _tanh():
+        return lambda x: tanh(2*x)
 
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
     layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), act]
     layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), act]
-    layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
+    if tanh_head:
+        layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias), _tanh]
+    else:
+        layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
 
     return [layer_1, layer_2, layer_3],
 

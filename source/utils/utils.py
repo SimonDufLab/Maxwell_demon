@@ -358,7 +358,7 @@ def create_full_accuracy_fn(accuracy_fn, scan_len):
 
 
 def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False,
-                            mask_head=False):
+                            mask_head=False, reduce_head_gap=False):
     """ Build the cross-entropy loss given the model"""
     if not classes:
         classes = 10
@@ -392,7 +392,13 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
                 softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
             softmax_xent /= labels.shape[0]
 
-            loss = softmax_xent + reg_param * reg_fn(params)
+            if reduce_head_gap:
+                gap = jnp.max(logits, axis=0, where=jnp.sum(labels, axis=0) > 0, initial=0) - jnp.max(logits, axis=0)
+                gap = jnp.sum(jnp.abs(gap)) / labels.shape[0]
+            else:
+                return 0
+
+            loss = softmax_xent + reg_param * reg_fn(params) + gap
 
             return loss, (state, next_dropout_key)
 
@@ -416,7 +422,13 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
                 softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits))
             softmax_xent /= labels.shape[0]
 
-            loss = softmax_xent + reg_param * reg_fn(params)
+            if reduce_head_gap:
+                gap = jnp.max(logits, axis=0, where=jnp.sum(labels, axis=0) > 0, initial=0) - jnp.max(logits, axis=0)
+                gap = jnp.sum(jnp.abs(gap)) / labels.shape[0]
+            else:
+                return 0
+
+            loss = softmax_xent + reg_param * reg_fn(params) + gap
 
             if is_training:
                 return loss, state
