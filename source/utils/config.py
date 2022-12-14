@@ -39,7 +39,9 @@ regularizer_choice = (
     "None",
     "cdg_l2",
     "cdg_lasso",
-    "l2"
+    "l2",
+    "cdg_l2_act",  # l2 regularization applied on the activations, not the weights! (funky, funky ...)
+    "cdg_lasso_act"  # lasso regularization applied on the activations
 )
 
 lr_scheduler_choice = {
