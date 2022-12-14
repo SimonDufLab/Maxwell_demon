@@ -364,25 +364,31 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         classes = 10
 
     if regularizer:
-        assert regularizer in ["cdg_l2", "cdg_lasso", "l2"]
+        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
-            def reg_fn(params):
+            def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
         if regularizer == "cdg_l2":
-            def reg_fn(params):
+            def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
         if regularizer == "cdg_lasso":
-            def reg_fn(params):
+            def reg_fn(params, activations=None):
                 return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_leaves(params))
+        if regularizer == "cdg_l2_act":
+            def reg_fn(params, activations):
+                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(activations))
+        if regularizer == "cdg_lasso_act":
+            def reg_fn(params, activations):
+                return 0.5 * sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(activations))
     else:
-        def reg_fn(params):
+        def reg_fn(params, activations=None):
             return 0
 
     if is_training and with_dropout:
         @jax.jit
         def _loss(params: hk.Params, state: hk.State, batch: Batch, dropout_key: Any) -> Union[jnp.ndarray, Any]:
             next_dropout_key, rng = jax.random.split(dropout_key)
-            logits, state = model.apply(params, state, rng, batch, return_activations=False, is_training=is_training)
+            (logits, activations), state = model.apply(params, state, rng, batch, return_activations=True, is_training=is_training)
             labels = jax.nn.one_hot(batch[1], classes)
 
             if mask_head:
@@ -398,7 +404,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             else:
                 gap = 0
 
-            loss = softmax_xent + reg_param * reg_fn(params) + gap
+            loss = softmax_xent + reg_param * reg_fn(params, activations) + gap
 
             return loss, (state, next_dropout_key)
 
@@ -411,7 +417,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
 
         @jax.jit
         def _loss(params: hk.Params, state: hk.State, batch: Batch) -> Union[jnp.ndarray, Any]:
-            logits, state = model_apply_fn(params, state, x=batch, return_activations=False, is_training=is_training)
+            (logits, activations), state = model_apply_fn(params, state, x=batch, return_activations=True, is_training=is_training)
             labels = jax.nn.one_hot(batch[1], classes)
 
             if mask_head:
@@ -428,7 +434,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             else:
                 gap = 0
 
-            loss = softmax_xent + reg_param * reg_fn(params) + gap
+            loss = softmax_xent + reg_param * reg_fn(params, activations) + gap
 
             if is_training:
                 return loss, state
