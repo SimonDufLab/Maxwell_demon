@@ -108,7 +108,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         net_config['tanh_head'] = exp_config.tanh_head
 
     # Retrieve total number of neurons in the model
-    total_neurons, _ = utl.get_total_neurons(exp_config.architecture, exp_config.size)
+    total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
 
     # Help function to stack parameters
     if exp_config.compare_full_reset:
@@ -319,12 +319,20 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             # Record dead neurons
             death_test_batch = next(test_death)
-            no_reinit_dead_neurons.append(utl.count_dead_neurons(
-                death_check_fn(params, state, death_test_batch))[0])
+            curr_no_reinit_dead_neurons_count, curr_no_reinit_dead_per_layers = utl.count_dead_neurons(
+                death_check_fn(params, state, death_test_batch))
+            no_reinit_dead_neurons.append(curr_no_reinit_dead_neurons_count)
             exp_run.track(np.array(no_reinit_dead_neurons[-1]),
                           name="Dead neurons", step=step, context={"reinitialisation": 'None'})
             exp_run.track(np.array(no_reinit_dead_neurons[-1]/total_neurons),
                           name="Dead neurons ratio", step=step, context={"reinitialisation": 'None'})
+            for i, layer_dead in enumerate(curr_no_reinit_dead_per_layers):
+                total_neuron_in_layer = total_per_layer[i]
+                exp_run.track(jax.device_get(layer_dead/total_neuron_in_layer),
+                              name=f"Dead neurons ratio in layer {i}", step=step,
+                              context={"reinitialisation": 'None'})
+            del curr_no_reinit_dead_per_layers
+
             params_vec, _ = ravel_pytree(params)
             # initial_params_vec, _ = ravel_pytree(initial_params)
             exp_run.track(
