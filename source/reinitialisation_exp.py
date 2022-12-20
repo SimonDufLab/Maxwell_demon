@@ -22,7 +22,7 @@ from jax.flatten_util import ravel_pytree
 import utils.utils as utl
 from utils.utils import build_models
 from utils.config import activation_choice, architecture_choice, dataset_choice, dataset_target_cardinality,\
-    optimizer_choice, regularizer_choice
+    optimizer_choice, regularizer_choice, lr_scheduler_choice
 from copy import deepcopy
 
 # Experience name -> for aim logger
@@ -51,6 +51,9 @@ class ExpConfig:
     with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
     size: Any = 100  # Number of hidden units in the different layers
     lr: float = 1e-3
+    lr_schedule: str = "None"  # Available schedules are in config file
+    final_lr: float = 1e-6
+    lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
     train_batch_size: int = 128
     eval_batch_size: int = 512
     death_batch_size: int = 512
@@ -81,6 +84,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         architecture_choice.keys())
     assert exp_config.activation in activation_choice.keys(), "Current activation function available: " + str(
         activation_choice.keys())
+    assert exp_config.lr_schedule in lr_scheduler_choice.keys(), "Current lr scheduler function available: " + str(
+        lr_scheduler_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -140,7 +145,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     architecture = architecture_choice[exp_config.architecture]
     architecture = architecture(exp_config.size, classes, activation_fn=activation_fn, **net_config)
     net = build_models(*architecture)
-    opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
+    lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.switching_period+1, exp_config.lr,
+                                                              exp_config.final_lr, exp_config.lr_decay_steps)
+    opt = optimizer_choice[exp_config.optimizer](lr_schedule)
 
     # First prng key
     key = jax.random.PRNGKey(exp_config.init_seed)
