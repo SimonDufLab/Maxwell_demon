@@ -441,6 +441,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         exp_run.track(jax.device_get(avg_final_live_neurons),
                       name="On average, live neurons after convergence w/r total neurons", step=starting_neurons)
+        exp_run.track(jax.device_get(avg_final_live_neurons / total_neurons),
+                      name="Average live neurons ratio after convergence w/r total neurons", step=starting_neurons)
         total_live_neurons = total_neurons - final_dead_neurons_count
         exp_run.track(jax.device_get(total_live_neurons),
                       name="Live neurons after convergence w/r total neurons", step=starting_neurons)
