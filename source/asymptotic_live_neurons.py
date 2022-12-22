@@ -68,6 +68,7 @@ class ExpConfig:
     regularizer: Optional[str] = "None"
     reg_param: float = 1e-4
     epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
+    avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
     dynamic_pruning: bool = False
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
@@ -238,7 +239,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                         exp_config.noise_live_only, with_dropout=with_dropout)
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-        eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout, epsilon=exp_config.epsilon_close)
+        eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                                                         epsilon=exp_config.epsilon_close, avg=exp_config.avg_for_eps)
         scan_len = train_ds_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
         eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
@@ -370,7 +372,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                     with_dropout=with_dropout)
                     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                     eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
-                                                                     epsilon=exp_config.epsilon_close)
+                                                                     epsilon=exp_config.epsilon_close,
+                                                                     avg=exp_config.avg_for_eps)
                     scan_len = train_ds_size // death_minibatch_size
                     eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
@@ -409,7 +412,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout)
                 death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-                eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout, epsilon=exp_config.epsilon_close)
+                eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                                                                 epsilon=exp_config.epsilon_close,
+                                                                 avg=exp_config.avg_for_eps)
                 scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                 eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                 scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
