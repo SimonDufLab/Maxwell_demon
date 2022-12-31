@@ -38,6 +38,13 @@ def sum_across_filter(filters):
         return filters
 
 
+def mean_across_filter(filters):
+    if filters.ndim > 1:
+        return jnp.mean(filters, axis=tuple(range(filters.ndim - 1)))
+    else:
+        return filters
+
+
 def death_check_given_model(model, with_activations=False, epsilon=0, check_tail=False, with_dropout=False, avg=False):
     """Return a boolean array per layer; with True values for dead neurons"""
     assert epsilon >= 0, "epsilon value must be positive"
@@ -64,10 +71,13 @@ def death_check_given_model(model, with_activations=False, epsilon=0, check_tail
     @jax.jit
     def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
         (_, activations), _ = model_apply_fn(_params, _state, x=_batch, return_activations=True, is_training=False)
-        activations = jax.tree_map(jax.vmap(sum_across_filter), activations)  # Sum across the filter first if conv layer; do nothing if fully connected
         if avg:
+            activations = jax.tree_map(jax.vmap(mean_across_filter),
+                                       activations)  # mean across the filter first only if convnets
             sum_activations = jax.tree_map(Partial(jnp.mean, axis=0), activations)
         else:
+            activations = jax.tree_map(jax.vmap(sum_across_filter),
+                                       activations)  # Sum across the filter first only if convnets
             sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
             return activations, jax.tree_map(test_fn, sum_activations)
