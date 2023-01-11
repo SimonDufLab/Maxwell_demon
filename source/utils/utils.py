@@ -45,22 +45,22 @@ def mean_across_filter(filters):
         return filters
 
 
-def death_check_given_model(model, with_activations=False, epsilon=0, check_tail=False, with_dropout=False, avg=False):
+def death_check_given_model(model, with_activations=False, check_tail=False, with_dropout=False, avg=False):
     """Return a boolean array per layer; with True values for dead neurons"""
-    assert epsilon >= 0, "epsilon value must be positive"
-    if check_tail:
-        assert epsilon <= 1, "for tanh activation fn, epsilon must be smaller than 1"
+    # assert epsilon >= 0, "epsilon value must be positive"
+    # if check_tail:
+    #     assert epsilon <= 1, "for tanh activation fn, epsilon must be smaller than 1"
 
-    def relu_test(arr):  # Test for relu, leaky-relu, elu, swish, etc. activation fn. Check if bigger than epsilon
+    def relu_test(epsilon, arr):  # Test for relu, leaky-relu, elu, swish, etc. activation fn. Check if bigger than epsilon
         return jnp.abs(arr) <= epsilon
 
-    def tanh_test(arr):  # Test for tanh, sigmoid, etc. activation fn. Check if abs(tanh(x)) >= 1-epsilon
+    def tanh_test(epsilon, arr):  # Test for tanh, sigmoid, etc. activation fn. Check if abs(tanh(x)) >= 1-epsilon
         return jnp.abs(arr) >= 1-epsilon  # TODO: test fn not compatible with convnets
 
     if check_tail:
-        test_fn = tanh_test
+        _test_fn = tanh_test
     else:
-        test_fn = relu_test
+        _test_fn = relu_test
 
     if with_dropout:
         dropout_key = jax.random.PRNGKey(0)  # dropout rate is zero during death eval
@@ -69,7 +69,9 @@ def death_check_given_model(model, with_activations=False, epsilon=0, check_tail
         model_apply_fn = model.apply
 
     @jax.jit
-    def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch) -> Union[jnp.ndarray, Tuple[jnp.array, jnp.array]]:
+    def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch, epsilon: float = 0) -> Union[
+                        jnp.ndarray, Tuple[jnp.array, jnp.array]]:
+        test_fn = Partial(_test_fn, epsilon)
         (_, activations), _ = model_apply_fn(_params, _state, x=_batch, return_activations=True, is_training=False)
         if avg:
             activations = jax.tree_map(jax.vmap(mean_across_filter),
@@ -93,7 +95,7 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
         return jnp.logical_and(leaf1.astype(bool), leaf2.astype(bool))
 
     if with_activations_data:
-        def scan_death_check(params, state, batch_it):
+        def scan_death_check(params, state, batch_it, epsilon=0):
             # def scan_dead_neurons_over_whole_ds(previous_dead, __):
             #     batched_activations, dead_neurons = death_check_fn(
             #         params, next(batch_it))
@@ -104,14 +106,14 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
             #                                                  scan_len)
             # return batched_activations, dead_neurons
 
-            activations, previous_dead = death_check_fn(params, state, next(batch_it))
+            activations, previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
             # batched_activations = [activations]
             running_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
             running_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
             running_count = count_activations_occurrence(activations)
             N = 1
             for i in range(scan_len-1):
-                activations, dead_neurons = death_check_fn(params, state, next(batch_it))
+                activations, dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
                 # batched_activations.append(activations)
                 running_max = update_running_max(activations, running_max)
                 running_mean = update_running_mean(activations, running_mean)
@@ -124,7 +126,7 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
 
         return scan_death_check
     else:
-        def scan_death_check(params, state, batch_it):
+        def scan_death_check(params, state, batch_it, epsilon=0):
             # def scan_dead_neurons_over_whole_ds(previous_dead, __):
             #     dead_neurons = death_check_fn(params, next(batch_it))
             #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), None
@@ -134,9 +136,9 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
             #                                scan_len)
             # return dead_neurons
 
-            previous_dead = death_check_fn(params, state, next(batch_it))
+            previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
             for i in range(scan_len-1):
-                dead_neurons = death_check_fn(params, state, next(batch_it))
+                dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
                 previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
 
             return previous_dead
@@ -147,6 +149,7 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
 @jax.jit
 def count_dead_neurons(death_check):
     dead_per_layer = [jnp.sum(layer) for layer in death_check]
+    # return jnp.sum(ravel_pytree(dead_per_layer)[0]), tuple(dead_per_layer)
     return sum(dead_per_layer), tuple(dead_per_layer)
 
 
