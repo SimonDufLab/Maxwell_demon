@@ -67,7 +67,7 @@ class ExpConfig:
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "None"
     reg_param: float = 1e-4
-    epsilon_close: float = 0.0  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
+    epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
     dynamic_pruning: bool = False
@@ -119,6 +119,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.sizes = literal_eval(exp_config.sizes)
     if type(exp_config.noise_imp) == str:
         exp_config.noise_imp = literal_eval(exp_config.noise_imp)
+    if type(exp_config.epsilon_close) == str:
+        exp_config.epsilon_close = literal_eval(exp_config.epsilon_close)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
@@ -239,11 +241,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                         exp_config.noise_live_only, with_dropout=with_dropout)
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-        eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
-                                                         epsilon=exp_config.epsilon_close, avg=exp_config.avg_for_eps)
+        # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+        #                                                  epsilon=exp_config.epsilon_close, avg=exp_config.avg_for_eps)
         scan_len = train_ds_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-        eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+        # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
         scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
             utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
@@ -282,15 +284,16 @@ def run_exp(exp_config: ExpConfig) -> None:
                               context={"net size": utl.size_to_string(size)})
                 exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
                               context={"net size": utl.size_to_string(size)})
-                if exp_config.epsilon_close > 0:
-                    eps_dead_neurons = eps_death_check_fn(params, state, test_death_batch)
-                    eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
-                    exp_run.track(jax.device_get(eps_dead_neurons_count),
-                                  name="Quasi-dead neurons", step=step,
-                                  context={"net size": utl.size_to_string(size)})
-                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
-                                  name="Quasi-live neurons", step=step,
-                                  context={"net size": utl.size_to_string(size)})
+                if exp_config.epsilon_close:
+                    for eps in exp_config.epsilon_close:
+                        eps_dead_neurons = death_check_fn(params, state, test_death_batch, eps)
+                        eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
+                        exp_run.track(jax.device_get(eps_dead_neurons_count),
+                                      name="Quasi-dead neurons", step=step,
+                                      context={"net size": utl.size_to_string(size), "epsilon": eps})
+                        exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
+                                      name="Quasi-live neurons", step=step,
+                                      context={"net size": utl.size_to_string(size), "epsilon": eps})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
                               context={"net size": utl.size_to_string(size)})
                 exp_run.track(train_accuracy, name="Train accuracy", step=step,
@@ -310,16 +313,18 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name="Live neurons; whole training dataset",
                               step=step,
                               context={"net size": utl.size_to_string(size)})
-                if exp_config.epsilon_close > 0:
-                    eps_dead_neurons = eps_scan_death_check_fn(params, state, test_death)
-                    eps_dead_neurons_count, dead_per_layers = utl.count_dead_neurons(eps_dead_neurons)
-                    exp_run.track(jax.device_get(eps_dead_neurons_count), name="Quasi-dead neurons; whole training dataset",
-                                  step=step,
-                                  context={"net size": utl.size_to_string(size)})
-                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
-                                  name="Quasi-live neurons; whole training dataset",
-                                  step=step,
-                                  context={"net size": utl.size_to_string(size)})
+                if exp_config.epsilon_close:
+                    for eps in exp_config.epsilon_close:
+                        eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
+                        eps_dead_neurons_count, eps_dead_per_layers = utl.count_dead_neurons(eps_dead_neurons)
+                        exp_run.track(jax.device_get(eps_dead_neurons_count),
+                                      name="Quasi-dead neurons; whole training dataset",
+                                      step=step,
+                                      context={"net size": utl.size_to_string(size), "epsilon": eps})
+                        exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
+                                      name="Quasi-live neurons; whole training dataset",
+                                      step=step,
+                                      context={"net size": utl.size_to_string(size), "epsilon": eps})
                 for i, layer_dead in enumerate(dead_per_layers):
                     total_neuron_in_layer = total_per_layer[i]
                     exp_run.track(jax.device_get(layer_dead),
@@ -371,11 +376,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                     exp_config.noise_imp, exp_config.noise_live_only,
                                                                     with_dropout=with_dropout)
                     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-                    eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
-                                                                     epsilon=exp_config.epsilon_close,
-                                                                     avg=exp_config.avg_for_eps)
+                    # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                    #                                                  epsilon=exp_config.epsilon_close,
+                    #                                                  avg=exp_config.avg_for_eps)
                     scan_len = train_ds_size // death_minibatch_size
-                    eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+                    # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                     scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
                         utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
@@ -412,11 +417,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout)
                 death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-                eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
-                                                                 epsilon=exp_config.epsilon_close,
-                                                                 avg=exp_config.avg_for_eps)
+                # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                #                                                  epsilon=exp_config.epsilon_close,
+                #                                                  avg=exp_config.avg_for_eps)
                 scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-                eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+                # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                 scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
                     utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
                 final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
@@ -482,27 +487,32 @@ def run_exp(exp_config: ExpConfig) -> None:
                       name="Live neurons after convergence w/r total neurons", step=starting_neurons)
         exp_run.track(jax.device_get(total_live_neurons/total_neurons),
                       name="Live neurons ratio after convergence w/r total neurons", step=starting_neurons)
-        if exp_config.epsilon_close > 0:
-            eps_final_dead_neurons = eps_scan_death_check_fn(params, state, test_death)
-            eps_final_dead_neurons_count, _ = utl.count_dead_neurons(eps_final_dead_neurons)
-            del eps_final_dead_neurons
-            eps_batch_dead_neurons = eps_death_check_fn(params, state, next(test_death))
-            eps_batches_final_live_neurons = [total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0]]
-            for i in range(scan_len - 1):
-                eps_batch_dead_neurons = eps_death_check_fn(params, state, next(test_death))
-                eps_batches_final_live_neurons.append(total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0])
-            eps_batches_final_live_neurons = jnp.stack(eps_batches_final_live_neurons)
-            eps_avg_final_live_neurons = jnp.mean(eps_batches_final_live_neurons, axis=0)
+        if exp_config.epsilon_close:
+            for eps in exp_config.epsilon_close:
+                eps_final_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
+                eps_final_dead_neurons_count, _ = utl.count_dead_neurons(eps_final_dead_neurons)
+                del eps_final_dead_neurons
+                eps_batch_dead_neurons = death_check_fn(params, state, next(test_death), eps)
+                eps_batches_final_live_neurons = [total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0]]
+                for i in range(scan_len - 1):
+                    eps_batch_dead_neurons = death_check_fn(params, state, next(test_death), eps)
+                    eps_batches_final_live_neurons.append(total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0])
+                eps_batches_final_live_neurons = jnp.stack(eps_batches_final_live_neurons)
+                eps_avg_final_live_neurons = jnp.mean(eps_batches_final_live_neurons, axis=0)
 
-            exp_run.track(jax.device_get(eps_avg_final_live_neurons),
-                          name="On average, quasi-live neurons after convergence w/r total neurons", step=starting_neurons)
-            exp_run.track(jax.device_get(eps_avg_final_live_neurons / total_neurons),
-                          name="Average quasi-live neurons ratio after convergence w/r total neurons", step=starting_neurons)
-            eps_total_live_neurons = total_neurons - eps_final_dead_neurons_count
-            exp_run.track(jax.device_get(eps_total_live_neurons),
-                          name="Quasi-live neurons after convergence w/r total neurons", step=starting_neurons)
-            exp_run.track(jax.device_get(eps_total_live_neurons / total_neurons),
-                          name="Quasi-live neurons ratio after convergence w/r total neurons", step=starting_neurons)
+                exp_run.track(jax.device_get(eps_avg_final_live_neurons),
+                              name="On average, quasi-live neurons after convergence w/r total neurons",
+                              step=starting_neurons, context={"epsilon": eps})
+                exp_run.track(jax.device_get(eps_avg_final_live_neurons / total_neurons),
+                              name="Average quasi-live neurons ratio after convergence w/r total neurons",
+                              step=starting_neurons, context={"epsilon": eps})
+                eps_total_live_neurons = total_neurons - eps_final_dead_neurons_count
+                exp_run.track(jax.device_get(eps_total_live_neurons),
+                              name="Quasi-live neurons after convergence w/r total neurons", step=starting_neurons,
+                              context={"epsilon": eps})
+                exp_run.track(jax.device_get(eps_total_live_neurons / total_neurons),
+                              name="Quasi-live neurons ratio after convergence w/r total neurons",
+                              step=starting_neurons, context={"epsilon": eps})
 
         for i, layer_dead in enumerate(final_dead_per_layer):
             total_neuron_in_layer = total_per_layer[i]
@@ -544,7 +554,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         accuracy_fn.clear_cache()
         update_fn.clear_cache()
         death_check_fn.clear_cache()
-        eps_death_check_fn.clear_cache()
+        # eps_death_check_fn.clear_cache()
         # scan_death_check_fn._clear_cache()  # No more cache
         # scan_death_check_fn_with_activations._clear_cache()  # No more cache
         # final_accuracy_fn._clear_cache()  # No more cache
