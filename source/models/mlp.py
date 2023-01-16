@@ -46,7 +46,7 @@ def mlp_3_dropout(sizes, number_classes, activation_fn=relu, dropout_rate=0, wit
     return [train_layer_1, train_layer_2, layer_3], [test_layer_1, test_layer_2, layer_3]
 
 
-def mlp_3_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
+def mlp_3_bn(sizes, number_classes, bn_config, activation_fn=relu, with_bias=True):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units,
     , with BN added after every layer apart from the final one"""
     def act():
@@ -55,12 +55,12 @@ def mlp_3_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    train_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), Partial(Base_BN, True), act]
-    train_layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), Partial(Base_BN, True), act]
+    train_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
+    train_layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
     layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
 
-    test_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), Partial(Base_BN, False), act]
-    test_layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), Partial(Base_BN, False), act]
+    test_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
+    test_layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
 
     return [train_layer_1, train_layer_2, layer_3], [test_layer_1, test_layer_2, layer_3]
 
@@ -87,7 +87,7 @@ def mlp_3_act_pre_relu(sizes, number_classes, activation_fn=relu):
     return [layer_1, layer_2, layer_3],
 
 
-def mlp_3_act_pre_bn(sizes, number_classes, activation_fn=relu):
+def mlp_3_act_pre_bn(sizes, number_classes, bn_config, activation_fn=relu):
     """ MLP with 2 hidden units used only to retrieve activations value pre-bacthnorm"""
     def act():
         return activation_fn
@@ -96,16 +96,16 @@ def mlp_3_act_pre_bn(sizes, number_classes, activation_fn=relu):
         sizes = [sizes, sizes*3]
 
     layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0])]
-    train_layer_2 = [Partial(Base_BN, True), act, Partial(hk.Linear, sizes[1])]
-    train_layer_3 = [Partial(Base_BN, True), act, Partial(hk.Linear, number_classes)]
+    train_layer_2 = [Partial(Base_BN, True, bn_config), act, Partial(hk.Linear, sizes[1])]
+    train_layer_3 = [Partial(Base_BN, True, bn_config), act, Partial(hk.Linear, number_classes)]
 
-    test_layer_2 = [Partial(Base_BN, False), act, Partial(hk.Linear, sizes[1])]
-    test_layer_3 = [Partial(Base_BN, False), act, Partial(hk.Linear, number_classes)]
+    test_layer_2 = [Partial(Base_BN, False, bn_config), act, Partial(hk.Linear, sizes[1])]
+    test_layer_3 = [Partial(Base_BN, False, bn_config), act, Partial(hk.Linear, number_classes)]
 
     return [layer_1, train_layer_2, train_layer_3], [layer_1, test_layer_2, test_layer_3]
 
 
-def mlp_3_act_post_bn(sizes, number_classes, activation_fn=relu):
+def mlp_3_act_post_bn(sizes, number_classes, bn_config, activation_fn=relu):
     """ MLP with 2 hidden units used only to retrieve activations value post-bacthnorm"""
     def act():
         return activation_fn
@@ -113,11 +113,11 @@ def mlp_3_act_post_bn(sizes, number_classes, activation_fn=relu):
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    train_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), Partial(Base_BN, True)]
-    train_layer_2 = [act, Partial(hk.Linear, sizes[1]), Partial(Base_BN, True)]
+    train_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), Partial(Base_BN, True, bn_config)]
+    train_layer_2 = [act, Partial(hk.Linear, sizes[1]), Partial(Base_BN, True, bn_config)]
     layer_3 = [act, Partial(hk.Linear, number_classes)]
 
-    test_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), Partial(Base_BN, False)]
-    test_layer_2 = [act, Partial(hk.Linear, sizes[1]), Partial(Base_BN, False)]
+    test_layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0]), Partial(Base_BN, False, bn_config)]
+    test_layer_2 = [act, Partial(hk.Linear, sizes[1]), Partial(Base_BN, False, bn_config)]
 
     return [train_layer_1, train_layer_2, layer_3], [test_layer_1, test_layer_2, layer_3]

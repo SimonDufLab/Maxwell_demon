@@ -5,7 +5,7 @@ import jax
 from typing import Optional
 
 # global batch normalization configuration
-bn_config = {"create_scale": True, "create_offset": True, "decay_rate": 0.999}
+base_bn_config = {"create_scale": True, "create_offset": True, "decay_rate": 0.999}
 
 
 class Base_BN(hk.Module):
@@ -13,6 +13,7 @@ class Base_BN(hk.Module):
     def __init__(
             self,
             is_training: bool,
+            bn_config: dict = base_bn_config,
             name: Optional[str] = None):
         super().__init__(name=name)
         self.is_training = is_training
@@ -30,6 +31,7 @@ class Linear_BN(hk.Module):
             is_training: bool,
             output_size: int,
             with_bias: bool = True,
+            bn_config: dict = base_bn_config,
             name: Optional[str] = None):
         super().__init__(name=name)
         self.is_training = is_training
@@ -48,12 +50,14 @@ class Conv_BN(hk.Module):
             self,
             is_training: bool,
             output_channels: int,
+            kernel_size: int,
             with_bias: bool = True,
+            bn_config: dict = base_bn_config,
             name: Optional[str] = None):
         super().__init__(name=name)
         self.is_training = is_training
         self.bn = hk.BatchNorm(**bn_config)
-        self.conv = hk.Conv2D(output_channels, 3, with_bias=with_bias)
+        self.conv = hk.Conv2D(output_channels, kernel_size, with_bias=with_bias)
 
     def __call__(self, inputs):
         x = self.conv(inputs)
