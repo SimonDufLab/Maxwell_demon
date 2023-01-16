@@ -31,7 +31,7 @@ from jax.flatten_util import ravel_pytree
 import utils.utils as utl
 from utils.utils import build_models
 from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality
-from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice
+from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice, bn_config_choice
 from utils.config import pick_architecture
 
 
@@ -63,7 +63,8 @@ class ExpConfig:
     gaussian_img_ratio: float = 0  # ratio ([0,1]) of img to replace by gaussian noise; same mean and variance as ds
     architecture: str = "mlp_3"
     with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
-    with_bn: bool = False  # Add bathnorm layers or not in the models
+    with_bn: bool = False  # Add batchnorm layers or not in the models
+    bn_config: str = "default"  # Different configs for bn; default have offset and scale trainable params
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "None"
     reg_param: float = 1e-4
@@ -112,6 +113,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         activation_choice.keys())
     assert exp_config.lr_schedule in lr_scheduler_choice.keys(), "Current lr scheduler function available: " + str(
         lr_scheduler_choice.keys())
+    assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
+        bn_config_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -159,6 +162,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         assert exp_config.architecture in pick_architecture(
             with_bn=True).keys(), "Current architectures available with batchnorm: " + str(
             pick_architecture(with_bn=True).keys())
+        net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
 
     # Load the different dataset
     if exp_config.kept_classes:

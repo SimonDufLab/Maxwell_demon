@@ -44,7 +44,7 @@ def conv_3_2(sizes, number_classes, dim=2, activation_fn=relu, with_bias=True, t
     return [layer_1, layer_2, layer_3, layer_4, layer_5],
 
 
-def conv_3_2_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
+def conv_3_2_bn(sizes, number_classes, bn_config, activation_fn=relu, with_bias=True):
     """ Convnet with 3 convolutional layers followed by 2 fully-connected, with BN added after
     every layer apart from the final one.
     """
@@ -58,16 +58,16 @@ def conv_3_2_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
     max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
     bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
 
-    train_layer_1 = [Partial(Conv_BN, True, sizes[0], 3, with_bias=with_bias), act]
-    train_layer_2 = [max_pool, Partial(Conv_BN, True, sizes[1], 3, with_bias=with_bias), act]
-    train_layer_3 = [max_pool, Partial(Conv_BN, True, sizes[2], 3, with_bias=with_bias), act]
-    train_layer_4 = [bigger_max_pool, hk.Flatten, Partial(Linear_BN, True, sizes[3], with_bias=with_bias), act]
+    train_layer_1 = [Partial(hk.Conv2D, sizes[0], 3, with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
+    train_layer_2 = [max_pool, Partial(hk.Conv2D, sizes[1], 3, with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
+    train_layer_3 = [max_pool, Partial(hk.Conv2D, sizes[2], 3, with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
+    train_layer_4 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[3], with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
     layer_5 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
 
-    test_layer_1 = [Partial(Conv_BN, False, sizes[0], 3, with_bias=with_bias), act]
-    test_layer_2 = [max_pool, Partial(Conv_BN, False, sizes[1], 3, with_bias=with_bias), act]
-    test_layer_3 = [max_pool, Partial(Conv_BN, False, sizes[2], 3, with_bias=with_bias), act]
-    test_layer_4 = [bigger_max_pool, hk.Flatten, Partial(Linear_BN, False, sizes[3], with_bias=with_bias), act]
+    test_layer_1 = [Partial(hk.Conv2D, sizes[0], 3, with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
+    test_layer_2 = [max_pool, Partial(hk.Conv2D, sizes[1], 3, with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
+    test_layer_3 = [max_pool, Partial(hk.Conv2D, sizes[2], 3, with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
+    test_layer_4 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[3], with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
 
     return [train_layer_1, train_layer_2, train_layer_3, train_layer_4, layer_5], \
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, layer_5]
@@ -143,7 +143,7 @@ def conv_4_2_dropout(sizes, number_classes, dim=2, activation_fn=relu, dropout_r
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, test_layer_5, layer_6]
 
 
-def conv_4_2_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
+def conv_4_2_bn(sizes, number_classes, bn_config, activation_fn=relu, with_bias=True):
     """ Convnet with 4 convolutional layers followed by 2 fully-connected, with BN added after
     every layer apart from the final one.
     """
@@ -157,18 +157,18 @@ def conv_4_2_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
     max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
     bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
 
-    train_layer_1 = [Partial(hk.Conv2D, sizes[0], 3, with_bias=with_bias), Partial(Base_BN, True), act]
-    train_layer_2 = [max_pool, Partial(hk.Conv2D, sizes[1], 3, with_bias=with_bias), Partial(Base_BN, True), act]
-    train_layer_3 = [max_pool, Partial(hk.Conv2D, sizes[2], 3, with_bias=with_bias), Partial(Base_BN, True), act]
-    train_layer_4 = [max_pool, Partial(hk.Conv2D, sizes[3], 3, with_bias=with_bias), Partial(Base_BN, True), act]
-    train_layer_5 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[4], with_bias=with_bias), Partial(Base_BN, True), act]
+    train_layer_1 = [Partial(hk.Conv2D, sizes[0], 3, with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
+    train_layer_2 = [max_pool, Partial(hk.Conv2D, sizes[1], 3, with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
+    train_layer_3 = [max_pool, Partial(hk.Conv2D, sizes[2], 3, with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
+    train_layer_4 = [max_pool, Partial(hk.Conv2D, sizes[3], 3, with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
+    train_layer_5 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[4], with_bias=with_bias), Partial(Base_BN, True, bn_config), act]
     layer_6 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
 
-    test_layer_1 = [Partial(hk.Conv2D, sizes[0], 3, with_bias=with_bias), Partial(Base_BN, False), act]
-    test_layer_2 = [max_pool, Partial(hk.Conv2D, sizes[1], 3, with_bias=with_bias), Partial(Base_BN, False), act]
-    test_layer_3 = [max_pool, Partial(hk.Conv2D, sizes[2], 3, with_bias=with_bias), Partial(Base_BN, False), act]
-    test_layer_4 = [max_pool, Partial(hk.Conv2D, sizes[3], 3, with_bias=with_bias), Partial(Base_BN, False), act]
-    test_layer_5 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[4], with_bias=with_bias), Partial(Base_BN, False), act]
+    test_layer_1 = [Partial(hk.Conv2D, sizes[0], 3, with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
+    test_layer_2 = [max_pool, Partial(hk.Conv2D, sizes[1], 3, with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
+    test_layer_3 = [max_pool, Partial(hk.Conv2D, sizes[2], 3, with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
+    test_layer_4 = [max_pool, Partial(hk.Conv2D, sizes[3], 3, with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
+    test_layer_5 = [bigger_max_pool, hk.Flatten, Partial(hk.Linear, sizes[4], with_bias=with_bias), Partial(Base_BN, False, bn_config), act]
 
     return [train_layer_1, train_layer_2, train_layer_3, train_layer_4, train_layer_5, layer_6], \
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, test_layer_5, layer_6]
@@ -243,7 +243,7 @@ def conv_6_2(sizes, number_classes, dim=2, activation_fn=relu, with_bias=True):
     return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6, layer_7, layer_8],
 
 
-def conv_6_2_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
+def conv_6_2_bn(sizes, number_classes, bn_config, activation_fn=relu, with_bias=True):
     """ Convnet with 6 convolutional layers followed by 2 fully-connected, with BN added after
     every layer apart from the final one.
     """
@@ -257,22 +257,22 @@ def conv_6_2_bn(sizes, number_classes, activation_fn=relu, with_bias=True):
     max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
     bigger_max_pool = Partial(hk.MaxPool, window_shape=4, strides=4, padding="VALID")
 
-    train_layer_1 = [Partial(Conv_BN, True, sizes[0], 3, with_bias=with_bias), act]
-    train_layer_2 = [Partial(Conv_BN, True, sizes[1], 3, with_bias=with_bias), act]
-    train_layer_3 = [max_pool, Partial(Conv_BN, True, sizes[2], 3, with_bias=with_bias), act]
-    train_layer_4 = [Partial(Conv_BN, True, sizes[3], 3, with_bias=with_bias), act]
-    train_layer_5 = [max_pool, Partial(Conv_BN, True, sizes[4], 3, with_bias=with_bias), act]
-    train_layer_6 = [max_pool, Partial(Conv_BN, True, sizes[5], 3, with_bias=with_bias), act]
-    train_layer_7 = [bigger_max_pool, hk.Flatten, Partial(Linear_BN, True, sizes[6], with_bias=with_bias), act]
+    train_layer_1 = [Partial(Conv_BN, True, sizes[0], 3, bn_config, with_bias=with_bias), act]
+    train_layer_2 = [Partial(Conv_BN, True, sizes[1], 3, bn_config, with_bias=with_bias), act]
+    train_layer_3 = [max_pool, Partial(Conv_BN, True, sizes[2], 3, bn_config, with_bias=with_bias), act]
+    train_layer_4 = [Partial(Conv_BN, True, sizes[3], 3, bn_config, with_bias=with_bias), act]
+    train_layer_5 = [max_pool, Partial(Conv_BN, True, sizes[4], 3, bn_config, with_bias=with_bias), act]
+    train_layer_6 = [max_pool, Partial(Conv_BN, True, sizes[5], 3, bn_config, with_bias=with_bias), act]
+    train_layer_7 = [bigger_max_pool, hk.Flatten, Partial(Linear_BN, True, sizes[6], bn_config, with_bias=with_bias), act]
     layer_8 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
 
-    test_layer_1 = [Partial(Conv_BN, False, sizes[0], 3, with_bias=with_bias), act]
-    test_layer_2 = [Partial(Conv_BN, False, sizes[1], 3, with_bias=with_bias), act]
-    test_layer_3 = [max_pool, Partial(Conv_BN, False, sizes[2], 3, with_bias=with_bias), act]
-    test_layer_4 = [Partial(Conv_BN, False, sizes[3], 3, with_bias=with_bias), act]
-    test_layer_5 = [max_pool, Partial(Conv_BN, False, sizes[4], 3, with_bias=with_bias), act]
-    test_layer_6 = [max_pool, Partial(Conv_BN, False, sizes[5], 3, with_bias=with_bias), act]
-    test_layer_7 = [bigger_max_pool, hk.Flatten, Partial(Linear_BN, False, sizes[6], with_bias=with_bias), act]
+    test_layer_1 = [Partial(Conv_BN, False, sizes[0], 3, bn_config, with_bias=with_bias), act]
+    test_layer_2 = [Partial(Conv_BN, False, sizes[1], 3, bn_config, with_bias=with_bias), act]
+    test_layer_3 = [max_pool, Partial(Conv_BN, False, sizes[2], 3, bn_config, with_bias=with_bias), act]
+    test_layer_4 = [Partial(Conv_BN, False, sizes[3], 3, bn_config, with_bias=with_bias), act]
+    test_layer_5 = [max_pool, Partial(Conv_BN, False, sizes[4], 3, bn_config, with_bias=with_bias), act]
+    test_layer_6 = [max_pool, Partial(Conv_BN, False, sizes[5], 3, bn_config, with_bias=with_bias), act]
+    test_layer_7 = [bigger_max_pool, hk.Flatten, Partial(Linear_BN, False, sizes[6], bn_config, with_bias=with_bias), act]
 
     return [train_layer_1, train_layer_2, train_layer_3, train_layer_4, train_layer_5, train_layer_6, train_layer_7, layer_8], \
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, test_layer_5, test_layer_6, test_layer_7, layer_8],

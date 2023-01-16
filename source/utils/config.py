@@ -74,6 +74,11 @@ bn_architecture_choice = {
     "resnet18": resnet18,
 }
 
+bn_config_choice = {
+    "default": {"create_scale": True, "create_offset": True, "decay_rate": 0.999},
+    "no_scale_and_offset": {"create_scale": False, "create_offset": False, "decay_rate": 0.999}
+}
+
 activation_choice = {
     "relu": jax.nn.relu,
     "leaky_relu": jax.nn.leaky_relu,
