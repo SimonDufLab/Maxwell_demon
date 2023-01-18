@@ -579,11 +579,12 @@ def dict_split(container, _len=2):
 ##############################
 # Dataset loading utilities
 ##############################
-def map_noisy_labels(num_classes):
+def map_noisy_labels(sample_from):
     def _map_noisy_labels(image, label):
-        sample_from = np.arange(num_classes-1)
+        # sample_from = np.arange(num_classes-1)
         rdm_choice = np.random.choice(sample_from)
-        rdm_choice = label + tf.cast((label <= rdm_choice), label.dtype)
+        # rdm_choice = label + tf.cast((label <= rdm_choice), label.dtype)
+        rdm_choice = tf.cast(rdm_choice, label.dtype)
         return image, rdm_choice
     return _map_noisy_labels
 
@@ -655,6 +656,9 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
+    def filter_fn(image, label):
+        return tf.reduce_any(subset == int(label))
+
     if noisy_label or permuted_img_ratio or gaussian_img_ratio:
         assert (noisy_label >= 0) and (noisy_label <= 1), "noisy label ratio must be between 0 and 1"
         assert (permuted_img_ratio >= 0) and (permuted_img_ratio <= 1), "permuted_img ratio must be between 0 and 1"
@@ -664,9 +668,14 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
         ds1, ds_info = tfds.load(dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True)
         ds2 = tfds.load(dataset, split=split2, as_supervised=True, data_dir="./data")
-        num_classes = ds_info.features["label"].num_classes
+        sample_from = np.arange(ds_info.features["label"].num_classes - 1)
+        if subset is not None:
+            ds1 = ds1.filter(filter_fn)  # Only take the randomly selected subset
+            ds2 = ds2.filter(filter_fn)  # Only take the randomly selected subset
+            sample_from = subset
+
         if noisy_label:
-            ds1 = ds1.map(map_noisy_labels(num_classes=num_classes))
+            ds1 = ds1.map(map_noisy_labels(sample_from=sample_from))
         elif permuted_img_ratio:  # TODO: Do not make randomized ds mutually exclusive?
             ds1 = ds1.map(map_permuted_img)
         elif gaussian_img_ratio:
@@ -674,14 +683,14 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         ds = ds1.concatenate(ds2)
     else:
         ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data")
+        if subset is not None:
+            ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
-    if subset is not None:
-        # assert subset < 10, "subset must be smaller than 10"
-        # indices = np.random.choice(10, subset, replace=False)
-
-        def filter_fn(image, label):
-          return tf.reduce_any(subset == int(label))
-        ds = ds.filter(filter_fn)  # Only take the randomly selected subset
+    # if subset is not None:
+    #     # assert subset < 10, "subset must be smaller than 10"
+    #     # indices = np.random.choice(10, subset, replace=False)
+    #
+    #     ds = ds.filter(filter_fn)  # Only take the randomly selected subset
 
     ds = ds.map(interval_zero_one)
     # ds = ds.cache().repeat()
