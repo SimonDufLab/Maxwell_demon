@@ -499,10 +499,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
         std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
 
-        if reg_param == 0:
-            log_step = 10
-        else:
-            log_step = int(np.abs(np.log10(reg_param)))
+        log_step = reg_param*1000
 
         exp_run.track(jax.device_get(avg_final_live_neurons),
                       name="On average, live neurons after convergence w/r reg param", step=log_step)
@@ -597,7 +594,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Print running time
         print()
-        print(f"Running time for size {size}: " + str(timedelta(seconds=time.time()-subrun_start_time)))
+        print(f"Running time for reg_param {reg_param}: " + str(timedelta(seconds=time.time()-subrun_start_time)))
         print("----------------------------------------------")
         print()
 
