@@ -579,6 +579,14 @@ def dict_split(container, _len=2):
 ##############################
 # Dataset loading utilities
 ##############################
+# Prefixed data augmentation when desired
+augment_tf_dataset = tf.keras.Sequential([
+    tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+    tf.keras.layers.ZeroPadding2D(4, data_format="channels_last"),
+    tf.keras.layers.RandomCrop(32, 32)
+])
+
+
 def map_noisy_labels(sample_from):
     def _map_noisy_labels(image, label):
         # sample_from = np.arange(num_classes-1)
@@ -652,7 +660,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
                     other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
-                    gaussian_img_ratio: float = 0):  # -> Generator[Batch, None, None]:
+                    gaussian_img_ratio: float = 0, data_augmentation: bool = False):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
@@ -694,14 +702,22 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
 
     ds = ds.map(interval_zero_one)
     # ds = ds.cache().repeat()
-    if is_training:
-        # if subset is not None:
-        #     ds = ds.cache().repeat()
-        ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=False)
-        # ds = ds.take(batch_size).cache().repeat()
+    # if is_training:
+    #     # if subset is not None:
+    #     #     ds = ds.cache().repeat()
+    #     ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=False)
+    #     if data_augmentation:
+    #         ds = ds.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+    #     # ds = ds.take(batch_size).cache().repeat()
     ds = ds.repeat()
     if other_bs:
-        ds1 = ds.batch(batch_size)
+        if is_training:  # Only ds1 takes into account 'is_training' flag
+            ds1 = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
+            ds1 = ds1.batch(batch_size)
+            if data_augmentation:
+                ds1 = ds1.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+        else:
+            ds1 = ds.batch(batch_size)
         ds1 = ds1.prefetch(-1)
         all_ds = [ds1]
         for bs in other_bs:
@@ -718,7 +734,13 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         else:
             return tf_iterators
     else:
-        ds = ds.batch(batch_size)
+        if is_training:
+            ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
+            ds = ds.batch(batch_size)
+            if data_augmentation:
+                ds = ds.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+        else:
+            ds = ds.batch(batch_size)
         ds = ds.prefetch(-1)
 
         if (subset is not None) and transform:
@@ -735,35 +757,39 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
 
 
 def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0):
+                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False):
     return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size,
                            other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
                            noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
-                           gaussian_img_ratio=gaussian_img_ratio)
+                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset)
 
 
 def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                    noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0):
+                    noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False):
     return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
                            subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
-                           permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio)
+                           permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio,
+                           data_augmentation=augment_dataset)
 
 
 def load_cifar100_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                     noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0):
+                     noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False):
     return load_tf_dataset("cifar100", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
                            subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
-                           permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio)
+                           permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio,
+                           data_augmentation=augment_dataset)
 
 
 def load_fashion_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True,
-                          cardinality=False, noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0):
-    return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
-                           subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
-                           permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio)
+                          cardinality=False, noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0,
+                          augment_dataset=False):
+    return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size,
+                           other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
+                           noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
+                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset)
 
 
-# Pytorch dataloader
+# Pytorch dataloader # TODO: deprecated; should remove!!
 # @jax.jit
 def transform_batch_pytorch(targets, indices):
     # transformed_targets = jax.vmap(map_targets, in_axes=(0, None))(targets, indices)
