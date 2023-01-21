@@ -57,6 +57,7 @@ class ExpConfig:
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
+    augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
     noisy_label: float = 0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     permuted_img_ratio: float = 0  # ratio ([0,1]) of training image in training ds to randomly permute their pixels
@@ -182,7 +183,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                              cardinality=True,
                                                              noisy_label=exp_config.noisy_label,
                                                              permuted_img_ratio=exp_config.permuted_img_ratio,
-                                                             gaussian_img_ratio=exp_config.gaussian_img_ratio)
+                                                             gaussian_img_ratio=exp_config.gaussian_img_ratio,
+                                                             augment_dataset=exp_config.augment_dataset)
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
                                      cardinality=True)
 
