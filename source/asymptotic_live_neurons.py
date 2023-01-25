@@ -185,6 +185,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                              permuted_img_ratio=exp_config.permuted_img_ratio,
                                                              gaussian_img_ratio=exp_config.gaussian_img_ratio,
                                                              augment_dataset=exp_config.augment_dataset)
+    # train_eval = train
+    # test_death = train
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
                                      cardinality=True)
 
