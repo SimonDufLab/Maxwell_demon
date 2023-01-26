@@ -460,6 +460,49 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
     return _loss
 
 
+def mse_loss_given_model(model, regularizer=None, reg_param=1e-4, is_training=True):
+    """ Build mean squared error loss given the model"""
+
+    if regularizer:
+        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "cdg_l2_act", "cdg_lasso_act"]
+        if regularizer == "l2":
+            def reg_fn(params, activations=None):
+                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
+        if regularizer == "cdg_l2":
+            def reg_fn(params, activations=None):
+                return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
+        if regularizer == "cdg_lasso":
+            def reg_fn(params, activations=None):
+                return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_leaves(params))
+        if regularizer == "cdg_l2_act":
+            def reg_fn(params, activations):
+                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(activations))
+        if regularizer == "cdg_lasso_act":
+            def reg_fn(params, activations):
+                return 0.5 * sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(activations))
+    else:
+        def reg_fn(params, activations=None):
+            return 0
+
+    @jax.jit
+    def _loss(params: hk.Params, state: hk.State, batch: Batch) -> Union[jnp.ndarray, Any]:
+        (outputs, activations), state = model.apply(params, state, x=batch, return_activations=True,
+                                                   is_training=is_training)
+        targets = batch[1]
+
+        # calculate mse across the batch
+        mse = jnp.mean(jnp.square(outputs-targets))
+
+        loss = mse + reg_param * reg_fn(params, activations)
+
+        if is_training:
+            return loss, state
+        else:
+            return loss
+
+    return _loss
+
+
 def grad_normalisation_per_layer(param_leaf):
     var = jnp.var(param_leaf)
     return param_leaf/jnp.sqrt(var+1)

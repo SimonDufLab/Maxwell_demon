@@ -121,3 +121,22 @@ def mlp_3_act_post_bn(sizes, number_classes, bn_config, activation_fn=relu):
     test_layer_2 = [act, Partial(hk.Linear, sizes[1]), Partial(Base_BN, False, bn_config)]
 
     return [train_layer_1, train_layer_2, layer_3], [test_layer_1, test_layer_2, layer_3]
+
+
+##############################
+# Architecture for regression (scalar outputs)
+##############################
+def mlp_3_reg(sizes, activation_fn=relu, with_bias=True):
+    """ Build a MLP with 2 hidden layers similar to popular LeNet
+    Designed for regression tasks: 1 output"""
+    def act():
+        return activation_fn
+
+    if type(sizes) == int:  # Size can be specified with 1 arg, an int
+        sizes = [sizes, sizes*3]
+
+    layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), act]
+    layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), act]
+    layer_3 = [Partial(hk.Linear, 1, with_bias=with_bias)]
+
+    return [layer_1, layer_2, layer_3],
