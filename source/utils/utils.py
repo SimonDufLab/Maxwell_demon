@@ -975,7 +975,7 @@ def cosine_decay(training_steps, base_lr, final_lr, decay_steps):
 # Varia
 ##############################
 def get_total_neurons(architecture, sizes):
-    if architecture == 'mlp_3':
+    if 'mlp_3' in architecture:
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes, sizes * 3]
     elif architecture == 'conv_3_2':

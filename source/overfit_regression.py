@@ -43,13 +43,16 @@ exp_name = "asymptotic_live_neurons"
 class ExpConfig:
     training_steps: int = 120001
     report_freq: int = 3000
+    record_freq: int = 100
+    pruning_freq: int = 2000
     lr: float = 1e-3
-    train_batch_size: int = 128
-    eval_batch_size: int = 512
-    death_batch_size: int = 512
+    train_batch_size: int = 12
+    eval_batch_size: int = 120
+    death_batch_size: int = 12
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     dataset_size: int = 12  # We want to keep it small to allow overfitting
+    eval_dataset_size: int = 120  # Evaluate on more points
     dataset_seed: int = 1234  # Random seed to vary the training samples picked
     noise_std: float = 1.0  # std deviation of the normal distribution (mean=0) added to training data
     architecture: str = "mlp_3_reg"
@@ -97,6 +100,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     activation_fn = activation_choice[exp_config.activation]
 
+    exp_config.train_batch_size = min(exp_config.train_batch_size, exp_config.dataset_size)  # Train bs can't be bigger than dataset size
+    exp_config.death_batch_size = min(exp_config.death_batch_size, exp_config.dataset_size)  # same as above
+
     # Logger config
     exp_run = Run(repo="./logs", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
@@ -113,18 +119,21 @@ def run_exp(exp_config: ExpConfig) -> None:
         net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
 
     # Create the dataset, by sampling from a sine wave that span [0,10]
-    full_span = jnp.linspace(0, 10, jnp.maximum(1e4, exp_config.dataset_size*10))
+    full_span = jnp.linspace(0, 10, jnp.maximum(1e4, exp_config.dataset_size*10).astype(int))
     train_key, test_key = jax.random.split(jax.random.PRNGKey(exp_config.dataset_seed))
-    train_x = jax.random.choice(train_key, full_span, (exp_config.dataset_size,), replace=False)
+    train_x = jax.random.choice(train_key, full_span, (exp_config.dataset_size, 1), replace=False)
     train_y = jnp.sin(train_x)
 
-    test_x = jax.random.choice(test_key, full_span, (exp_config.dataset_size,), replace=False)
+    test_x = jax.random.choice(test_key, full_span, (exp_config.eval_dataset_size, 1), replace=False)
     test_y = jnp.sin(test_x)
 
     # Make a data iterator
-    class sine_data_iter():
+    class sine_data_iter:
         def __init__(self, features, targets, batch_size, noise_std, noise_seed):
-            self.dataset = [(features[i], targets[i]) for i in range(features.size)]
+            # self.dataset = [(features[i], targets[i]) for i in range(features.size)]
+            self.features = features
+            self.targets = targets
+            self.len = self.features.size
             self.counter = 0
             self.b = batch_size
             self.noise_std = noise_std
@@ -133,27 +142,34 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         def __iter__(self):
             # shuffle dataset:
-            random.shuffle(self.dataset)
+            self.key, next_key = jax.random.split(self.key)
+            self.features = jax.random.permutation(next_key, self.features)
+            self.targets = jax.random.permutation(next_key, self.targets)  # Same key, same permutation
             # counter to 0
             self.counter = 0
             return self
 
         def __next__(self):
-            try:
-                selection = self.dataset[self.counter:self.counter+self.b]
-            except IndexError:
+            if self.counter + self.b <= self.len:
+                selected_features = self.features[self.counter:self.counter+self.b]
+                selected_targets = self.targets[self.counter:self.counter+self.b]
+            else:
                 self.__iter__()
-                selection = self.dataset[self.counter:self.counter + self.b]
+                selected_features = self.features[self.counter:self.counter + self.b]
+                selected_targets = self.targets[self.counter:self.counter + self.b]
             self.counter += self.b
             # Apply gaussian noise
             self.key, next_key = jax.random.split(self.key)
-            gauss_noise = jax.random.normal(next_key, (self.b,))
+            gauss_noise = jax.random.normal(next_key, (self.b, 1))
             gauss_noise *= self.noise_std
-            selection = [(selection[i][0]+gauss_noise[i], selection[i][1]) for i in range(self.b)]
-            return selection
+            # selection = [(selection[i][0]+gauss_noise[i], selection[i][1]) for i in range(self.b)]
+            # print(selected_features)
+            # print(self.counter)
+            selected_features = selected_features + gauss_noise
+            return jnp.stack(selected_features), jnp.stack(selected_targets)  # Create the batched array
 
     train = sine_data_iter(train_x, train_y, exp_config.train_batch_size, exp_config.noise_std, exp_config.dataset_seed)
-    train_eval = sine_data_iter(train_x, train_y, exp_config.eval_batch_size, 0, 0)
+    train_eval = sine_data_iter(train_x, train_y, exp_config.train_batch_size, 0, 0)
     test_death = sine_data_iter(train_x, train_y, exp_config.death_batch_size, 0, 0)
     test_eval = sine_data_iter(test_x, test_y, exp_config.eval_batch_size, 0, 0)
 
@@ -163,3 +179,113 @@ def run_exp(exp_config: ExpConfig) -> None:
     net = build_models(*architecture)
 
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
+
+# Set training/monitoring functions
+    loss = utl.mse_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
+    test_loss_fn = utl.mse_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
+                                        is_training=False)
+    # accuracy_fn = utl.accuracy_given_model(net)
+    update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+    death_check_fn = utl.death_check_given_model(net)
+    scan_len = exp_config.dataset_size // exp_config.death_batch_size
+    scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+    scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+        utl.death_check_given_model(net, with_activations=True), scan_len, True)
+
+    params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+    initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
+    opt_state = opt.init(params)
+
+    starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
+    total_neurons, total_per_layer = starting_neurons, starting_per_layer
+
+    for step in range(exp_config.training_steps):
+        if step % exp_config.record_freq == 0:
+            train_loss = test_loss_fn(params, state, next(train_eval))
+            # train_accuracy = accuracy_fn(params, state, next(train_eval))
+            # test_accuracy = accuracy_fn(params, state, next(test_eval))
+            test_loss = test_loss_fn(params, state, next(test_eval))
+            # train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
+            # Periodically print classification accuracy on train & test sets.
+            if step % exp_config.report_freq == 0:
+                # print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
+                #       f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
+                print(f"[Step {step}] Train / Test Loss: {train_loss:.3f} / {test_loss:.3f}")
+            test_death_batch = next(test_death)
+            dead_neurons = death_check_fn(params, state, test_death_batch)
+            # Record some metrics
+            dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
+            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step)
+            exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step)
+            if exp_config.epsilon_close:
+                for eps in exp_config.epsilon_close:
+                    eps_dead_neurons = death_check_fn(params, state, test_death_batch, eps)
+                    eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
+                    exp_run.track(jax.device_get(eps_dead_neurons_count),
+                                  name="Quasi-dead neurons", step=step,
+                                  context={"epsilon": eps})
+                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
+                                  name="Quasi-live neurons", step=step,
+                                  context={"epsilon": eps})
+            # exp_run.track(test_accuracy, name="Test accuracy", step=step)
+            # exp_run.track(train_accuracy, name="Train accuracy", step=step)
+            exp_run.track(jax.device_get(train_loss), name="Train loss", step=step)
+            exp_run.track(jax.device_get(test_loss), name="Test loss", step=step)
+
+        if step % exp_config.pruning_freq == 0:
+            dead_neurons = scan_death_check_fn(params, state, test_death)
+            dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
+            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
+                          step=step)
+            exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
+                          name="Live neurons; whole training dataset",
+                          step=step)
+            if exp_config.epsilon_close:
+                for eps in exp_config.epsilon_close:
+                    eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
+                    eps_dead_neurons_count, eps_dead_per_layers = utl.count_dead_neurons(eps_dead_neurons)
+                    exp_run.track(jax.device_get(eps_dead_neurons_count),
+                                  name="Quasi-dead neurons; whole training dataset",
+                                  step=step,
+                                  context={"epsilon": eps})
+                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
+                                  name="Quasi-live neurons; whole training dataset",
+                                  step=step,
+                                  context={"epsilon": eps})
+            for i, layer_dead in enumerate(dead_per_layers):
+                total_neuron_in_layer = total_per_layer[i]
+                exp_run.track(jax.device_get(layer_dead),
+                              name=f"Dead neurons in layer {i}; whole training dataset", step=step)
+                exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
+                              name=f"Live neurons in layer {i}; whole training dataset", step=step)
+            del dead_per_layers
+
+        # Train step over single batch
+        params, state, opt_state = update_fn(params, state, opt_state, next(train))
+
+    activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
+    activations_max, activations_mean, activations_count = activations_data
+    activations_max, _ = ravel_pytree(activations_max)
+    activations_max = jax.device_get(activations_max)
+    activations_mean, _ = ravel_pytree(activations_mean)
+    activations_mean = jax.device_get(activations_mean)
+    activations_count, _ = ravel_pytree(activations_count)
+    activations_count = jax.device_get(activations_count)
+    activations_max_dist = Distribution(activations_max, bin_count=100)
+    exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0)
+    activations_mean_dist = Distribution(activations_mean, bin_count=100)
+    exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0)
+    activations_count_dist = Distribution(activations_count, bin_count=50)
+    exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0)
+
+    # Record a plot of the learned function to expose overfiting
+    # TODO
+
+    # Print total runtime
+    print()
+    print("==================================")
+    print("Whole experiment completed in: " + str(timedelta(seconds=time.time() - run_start_time)))
+
+
+if __name__ == "__main__":
+    run_exp()
