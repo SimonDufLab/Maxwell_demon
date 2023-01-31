@@ -45,14 +45,18 @@ class ExpConfig:
     report_freq: int = 3000
     record_freq: int = 100
     pruning_freq: int = 2000
+    drawing_freq: int = 20000
     lr: float = 1e-3
-    train_batch_size: int = 12
-    eval_batch_size: int = 120
-    death_batch_size: int = 12
+    lr_schedule: str = "None"
+    final_lr: float = 1e-6
+    lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    train_batch_size: int = 7
+    eval_batch_size: int = 100
+    death_batch_size: int = 7
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
-    dataset_size: int = 12  # We want to keep it small to allow overfitting
-    eval_dataset_size: int = 120  # Evaluate on more points
+    dataset_size: int = 7  # We want to keep it small to allow overfitting
+    eval_dataset_size: int = 100  # Evaluate on more points
     dataset_seed: int = 1234  # Random seed to vary the training samples picked
     noise_std: float = 1.0  # std deviation of the normal distribution (mean=0) added to training data
     architecture: str = "mlp_3_reg"
@@ -88,6 +92,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         architecture_choice.keys())
     assert exp_config.activation in activation_choice.keys(), "Current activation function available: " + str(
         activation_choice.keys())
+    assert exp_config.lr_schedule in lr_scheduler_choice.keys(), "Current lr scheduler function available: " + str(
+        lr_scheduler_choice.keys())
     assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
         bn_config_choice.keys())
 
@@ -121,11 +127,16 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Create the dataset, by sampling from a sine wave that span [0,10]
     full_span = jnp.linspace(0, 10, jnp.maximum(1e4, exp_config.dataset_size*10).astype(int))
     train_key, test_key = jax.random.split(jax.random.PRNGKey(exp_config.dataset_seed))
-    train_x = jax.random.choice(train_key, full_span, (exp_config.dataset_size, 1), replace=False)
+    # train_x = jax.random.choice(train_key, full_span, (exp_config.dataset_size, 1),
+    #                             replace=False)  # Randomly drawn train_x
+    train_x = jnp.linspace(0, 10, exp_config.dataset_size).astype(int).reshape((-1, 1))  # Evenly spaced train_x
     train_y = jnp.sin(train_x)
 
     test_x = jax.random.choice(test_key, full_span, (exp_config.eval_dataset_size, 1), replace=False)
     test_y = jnp.sin(test_x)
+
+    full_span_ = full_span.reshape((-1, 1))  # For plotting
+    full_span_ = full_span_, jnp.zeros(full_span_.shape)
 
     # Make a data iterator
     class sine_data_iter:
@@ -178,7 +189,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     architecture = architecture(exp_config.size, activation_fn=activation_fn, **net_config)
     net = build_models(*architecture)
 
-    opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
+    lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
+                                                              exp_config.final_lr, exp_config.lr_decay_steps)
+    opt = optimizer_choice[exp_config.optimizer](lr_schedule)
 
 # Set training/monitoring functions
     loss = utl.mse_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
@@ -251,6 +264,24 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name=f"Live neurons in layer {i}; whole training dataset", step=step)
             del dead_per_layers
 
+        if step % exp_config.drawing_freq == 0:
+            # Record a plot of the learned function to expose overfiting
+            fig = plt.figure(figsize=(15, 10))
+            plt.plot(jax.device_get(full_span), jax.device_get(jnp.sin(full_span)), label="True function (sin)",
+                     linewidth=4)
+            learned_curve, _ = net.apply(params, state, full_span_, return_activations=False, is_training=False)
+            plt.plot(jax.device_get(full_span), jax.device_get(learned_curve.flatten()), label="Learned function",
+                     linewidth=4)
+            plt.scatter(jax.device_get(train_x.flatten()), jax.device_get(train_y.flatten()), c="red",
+                        label="Training points", linewidth=4)
+            # plt.xlabel("Number of neurons in NN", fontsize=16)
+            # plt.ylabel("Live neurons at end of training", fontsize=16)
+            # plt.title("Learned function", fontweight='bold', fontsize=20)
+            plt.legend(prop={'size': 16})
+            aim_img = Image(fig)
+            exp_run.track(aim_img, name="Overfiting curve; img", step=step)
+            plt.close(fig)
+
         # Train step over single batch
         params, state, opt_state = update_fn(params, state, opt_state, next(train))
 
@@ -269,23 +300,20 @@ def run_exp(exp_config: ExpConfig) -> None:
     activations_count_dist = Distribution(activations_count, bin_count=50)
     exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0)
 
-    # Record a plot of the learned function to expose overfiting
-    fig = plt.figure(figsize=(15, 10))
-    plt.plot(jax.device_get(full_span), jax.device_get(jnp.sin(full_span)), label="True function (sin)", linewidth=4)
-
-    full_span_ = full_span.reshape((-1, 1))
-    full_span_ = full_span_, jnp.zeros(full_span_.shape)
-    learned_curve, _ = net.apply(params, state, full_span_, return_activations=False, is_training=False)
-    plt.plot(jax.device_get(full_span), jax.device_get(learned_curve.flatten()), label="Learned function", linewidth=4)
-    plt.scatter(jax.device_get(train_x.flatten()), jax.device_get(train_y.flatten()), label="Training points", linewidth=4)
-    # plt.xlabel("Number of neurons in NN", fontsize=16)
-    # plt.ylabel("Live neurons at end of training", fontsize=16)
-    # plt.title("Learned function", fontweight='bold', fontsize=20)
-    plt.legend(prop={'size': 16})
-    aim_fig = Figure(fig)
-    aim_img = Image(fig)
-    exp_run.track(aim_fig, name="Overfiting curve", step=0)
-    exp_run.track(aim_img, name="Overfiting curve; img", step=0)
+    # # Record a plot of the learned function to expose overfiting
+    # fig = plt.figure(figsize=(15, 10))
+    # plt.plot(jax.device_get(full_span), jax.device_get(jnp.sin(full_span)), label="True function (sin)", linewidth=4)
+    # full_span_ = full_span.reshape((-1, 1))
+    # full_span_ = full_span_, jnp.zeros(full_span_.shape)
+    # learned_curve, _ = net.apply(params, state, full_span_, return_activations=False, is_training=False)
+    # plt.plot(jax.device_get(full_span), jax.device_get(learned_curve.flatten()), label="Learned function", linewidth=4)
+    # plt.scatter(jax.device_get(train_x.flatten()), jax.device_get(train_y.flatten()), c="red", label="Training points", linewidth=4)
+    # # plt.xlabel("Number of neurons in NN", fontsize=16)
+    # # plt.ylabel("Live neurons at end of training", fontsize=16)
+    # # plt.title("Learned function", fontweight='bold', fontsize=20)
+    # plt.legend(prop={'size': 16})
+    # aim_img = Image(fig)
+    # exp_run.track(aim_img, name="Overfiting curve; img", step=0)
 
     # Print total runtime
     print()
