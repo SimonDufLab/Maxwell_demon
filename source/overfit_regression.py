@@ -184,7 +184,6 @@ def run_exp(exp_config: ExpConfig) -> None:
     loss = utl.mse_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param)
     test_loss_fn = utl.mse_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                         is_training=False)
-    # accuracy_fn = utl.accuracy_given_model(net)
     update_fn = utl.update_given_loss_and_optimizer(loss, opt)
     death_check_fn = utl.death_check_given_model(net)
     scan_len = exp_config.dataset_size // exp_config.death_batch_size
@@ -193,7 +192,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         utl.death_check_given_model(net, with_activations=True), scan_len, True)
 
     params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-    initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
     opt_state = opt.init(params)
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
@@ -202,14 +200,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     for step in range(exp_config.training_steps):
         if step % exp_config.record_freq == 0:
             train_loss = test_loss_fn(params, state, next(train_eval))
-            # train_accuracy = accuracy_fn(params, state, next(train_eval))
-            # test_accuracy = accuracy_fn(params, state, next(test_eval))
             test_loss = test_loss_fn(params, state, next(test_eval))
-            # train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
             # Periodically print classification accuracy on train & test sets.
             if step % exp_config.report_freq == 0:
-                # print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
-                #       f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
                 print(f"[Step {step}] Train / Test Loss: {train_loss:.3f} / {test_loss:.3f}")
             test_death_batch = next(test_death)
             dead_neurons = death_check_fn(params, state, test_death_batch)
@@ -227,8 +220,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                     exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
                                   name="Quasi-live neurons", step=step,
                                   context={"epsilon": eps})
-            # exp_run.track(test_accuracy, name="Test accuracy", step=step)
-            # exp_run.track(train_accuracy, name="Train accuracy", step=step)
             exp_run.track(jax.device_get(train_loss), name="Train loss", step=step)
             exp_run.track(jax.device_get(test_loss), name="Test loss", step=step)
 
@@ -279,7 +270,22 @@ def run_exp(exp_config: ExpConfig) -> None:
     exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0)
 
     # Record a plot of the learned function to expose overfiting
-    # TODO
+    fig = plt.figure(figsize=(15, 10))
+    plt.plot(jax.device_get(full_span), jax.device_get(jnp.sin(full_span)), label="True function (sin)", linewidth=4)
+
+    full_span_ = full_span.reshape((-1, 1))
+    full_span_ = full_span_, jnp.zeros(full_span_.shape)
+    learned_curve, _ = net.apply(params, state, full_span_, return_activations=False, is_training=False)
+    plt.plot(jax.device_get(full_span), jax.device_get(learned_curve.flatten()), label="Learned function", linewidth=4)
+    plt.scatter(jax.device_get(train_x.flatten()), jax.device_get(train_y.flatten()), label="Training points", linewidth=4)
+    # plt.xlabel("Number of neurons in NN", fontsize=16)
+    # plt.ylabel("Live neurons at end of training", fontsize=16)
+    # plt.title("Learned function", fontweight='bold', fontsize=20)
+    plt.legend(prop={'size': 16})
+    aim_fig = Figure(fig)
+    aim_img = Image(fig)
+    exp_run.track(aim_fig, name="Overfiting curve", step=0)
+    exp_run.track(aim_img, name="Overfiting curve; img", step=0)
 
     # Print total runtime
     print()
