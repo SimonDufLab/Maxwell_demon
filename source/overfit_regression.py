@@ -46,6 +46,7 @@ class ExpConfig:
     record_freq: int = 100
     pruning_freq: int = 2000
     drawing_freq: int = 20000
+    final_smoothing: int = 0  # Remove noise for n final smoothing steps
     lr: float = 1e-3
     lr_schedule: str = "None"
     final_lr: float = 1e-6
@@ -210,7 +211,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
 
-    for step in range(exp_config.training_steps):
+    for step in range(exp_config.training_steps+exp_config.final_smoothing):
         if step % exp_config.record_freq == 0:
             train_loss = test_loss_fn(params, state, next(train_eval))
             test_loss = test_loss_fn(params, state, next(test_eval))
@@ -284,6 +285,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Train step over single batch
         params, state, opt_state = update_fn(params, state, opt_state, next(train))
+
+        if step >= exp_config.training_steps:  # Remove noise from training ds for final smoothing phase
+            train = sine_data_iter(train_x, train_y, exp_config.train_batch_size, 0, 0)
 
     activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
     activations_max, activations_mean, activations_count = activations_data
