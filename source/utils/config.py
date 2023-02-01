@@ -6,7 +6,7 @@ from jax.tree_util import Partial
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule
-from models.mlp import mlp_3, mlp_3_bn
+from models.mlp import mlp_3, mlp_3_bn, mlp_3_reg
 from models.mlp import mlp_3_act_pre_relu, mlp_3_act_pre_bn, mlp_3_act_post_bn
 from models.mlp import mlp_3_dropout
 from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_2, conv_6_2_bn
@@ -54,6 +54,7 @@ lr_scheduler_choice = {
 # is_training flag for this specific model
 architecture_choice = {
     "mlp_3": mlp_3,
+    "mlp_3_reg": mlp_3_reg,
     "conv_3_2": conv_3_2,
     "conv_4_2": conv_4_2,
     "conv_4_2_ln": conv_4_2_ln,  # TODO: eventually switch to ln_architecture_choice, like bn
