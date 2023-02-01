@@ -35,7 +35,7 @@ from utils.config import regularizer_choice, architecture_choice, lr_scheduler_c
 from utils.config import pick_architecture
 
 # Experience name -> for aim logger
-exp_name = "asymptotic_live_neurons"
+exp_name = "overfit_regression"
 
 
 # Configuration
@@ -51,12 +51,12 @@ class ExpConfig:
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
-    train_batch_size: int = 7
+    train_batch_size: int = 12
     eval_batch_size: int = 100
-    death_batch_size: int = 7
+    death_batch_size: int = 12
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
-    dataset_size: int = 7  # We want to keep it small to allow overfitting
+    dataset_size: int = 12  # We want to keep it small to allow overfitting
     eval_dataset_size: int = 100  # Evaluate on more points
     dataset_seed: int = 1234  # Random seed to vary the training samples picked
     noise_std: float = 1.0  # std deviation of the normal distribution (mean=0) added to training data
