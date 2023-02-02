@@ -624,7 +624,8 @@ def dict_split(container, _len=2):
 ##############################
 # Prefixed data augmentation when desired
 augment_tf_dataset = tf.keras.Sequential([
-    tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+    # tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+    tf.keras.layers.RandomFlip("horizontal"),
     tf.keras.layers.ZeroPadding2D(4, data_format="channels_last"),
     tf.keras.layers.RandomCrop(32, 32)
 ])
@@ -752,7 +753,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     #     if data_augmentation:
     #         ds = ds.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
     #     # ds = ds.take(batch_size).cache().repeat()
-    ds = ds.cache()
+    # ds = ds.cache()
     ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
     ds = ds.repeat()
     if other_bs:
@@ -760,7 +761,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             # ds1 = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
             ds1 = ds.batch(batch_size)
             if data_augmentation:
-                ds1 = ds1.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+                ds1 = ds1.map(lambda x, y: (augment_tf_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
         else:
             ds1 = ds.batch(batch_size)
         ds1 = ds1.prefetch(tf.data.AUTOTUNE)
