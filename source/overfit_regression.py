@@ -71,6 +71,7 @@ class ExpConfig:
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
     with_rng_seed: int = 428
+    prune_reinit: bool = False  # If true, restart training from pruned initial weights to compare
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 
@@ -124,6 +125,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             with_bn=True).keys(), "Current architectures available with batchnorm: " + str(
             pick_architecture(with_bn=True).keys())
         net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
+
+    if exp_config.prune_reinit:
+        prune_context = [{"pruning": "unpruned, noisy"}, {"pruning": "pruned, no noise"}]
+    else:
+        prune_context = [{}]
 
     # Create the dataset, by sampling from a sine wave that span [0,10]
     full_span = jnp.linspace(0, 10, jnp.maximum(1e4, exp_config.dataset_size*10).astype(int))
@@ -211,113 +217,117 @@ def run_exp(exp_config: ExpConfig) -> None:
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
 
-    for step in range(exp_config.training_steps+exp_config.final_smoothing):
-        if step % exp_config.record_freq == 0:
-            train_loss = test_loss_fn(params, state, next(train_eval))
-            test_loss = test_loss_fn(params, state, next(test_eval))
-            # Periodically print classification accuracy on train & test sets.
-            if step % exp_config.report_freq == 0:
-                print(f"[Step {step}] Train / Test Loss: {train_loss:.3f} / {test_loss:.3f}")
-            test_death_batch = next(test_death)
-            dead_neurons = death_check_fn(params, state, test_death_batch)
-            # Record some metrics
-            dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
-            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step)
-            exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step)
-            if exp_config.epsilon_close:
-                for eps in exp_config.epsilon_close:
-                    eps_dead_neurons = death_check_fn(params, state, test_death_batch, eps)
-                    eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
-                    exp_run.track(jax.device_get(eps_dead_neurons_count),
-                                  name="Quasi-dead neurons", step=step,
-                                  context={"epsilon": eps})
-                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
-                                  name="Quasi-live neurons", step=step,
-                                  context={"epsilon": eps})
-            exp_run.track(jax.device_get(train_loss), name="Train loss", step=step)
-            exp_run.track(jax.device_get(test_loss), name="Test loss", step=step)
-
-        if step % exp_config.pruning_freq == 0:
-            dead_neurons = scan_death_check_fn(params, state, test_death)
-            dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
-            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
-                          step=step)
-            exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
-                          name="Live neurons; whole training dataset",
-                          step=step)
-            if exp_config.epsilon_close:
-                for eps in exp_config.epsilon_close:
-                    eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
-                    eps_dead_neurons_count, eps_dead_per_layers = utl.count_dead_neurons(eps_dead_neurons)
-                    exp_run.track(jax.device_get(eps_dead_neurons_count),
-                                  name="Quasi-dead neurons; whole training dataset",
-                                  step=step,
-                                  context={"epsilon": eps})
-                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
-                                  name="Quasi-live neurons; whole training dataset",
-                                  step=step,
-                                  context={"epsilon": eps})
-            for i, layer_dead in enumerate(dead_per_layers):
-                total_neuron_in_layer = total_per_layer[i]
-                exp_run.track(jax.device_get(layer_dead),
-                              name=f"Dead neurons in layer {i}; whole training dataset", step=step)
-                exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
-                              name=f"Live neurons in layer {i}; whole training dataset", step=step)
-            del dead_per_layers
-
-        if step % exp_config.drawing_freq == 0:
-            # Record a plot of the learned function to expose overfiting
-            fig = plt.figure(figsize=(15, 10))
-            plt.plot(jax.device_get(full_span), jax.device_get(jnp.sin(full_span)), label="True function (sin)",
-                     linewidth=4)
-            learned_curve, _ = net.apply(params, state, full_span_, return_activations=False, is_training=False)
-            plt.plot(jax.device_get(full_span), jax.device_get(learned_curve.flatten()), label="Learned function",
-                     linewidth=4)
-            plt.scatter(jax.device_get(train_x.flatten()), jax.device_get(train_y.flatten()), c="red",
-                        label="Training points", linewidth=4)
-            # plt.xlabel("Number of neurons in NN", fontsize=16)
-            # plt.ylabel("Live neurons at end of training", fontsize=16)
-            # plt.title("Learned function", fontweight='bold', fontsize=20)
-            plt.legend(prop={'size': 16})
-            aim_img = Image(fig)
-            exp_run.track(aim_img, name="Overfiting curve; img", step=step)
-            plt.close(fig)
-
-        # Train step over single batch
-        params, state, opt_state = update_fn(params, state, opt_state, next(train))
-
-        if step >= exp_config.training_steps:  # Remove noise from training ds for final smoothing phase
+    for _pruning_context in prune_context:
+        if "no noise" in _pruning_context:
             train = sine_data_iter(train_x, train_y, exp_config.train_batch_size, 0, 0)
 
-    activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
-    activations_max, activations_mean, activations_count = activations_data
-    activations_max, _ = ravel_pytree(activations_max)
-    activations_max = jax.device_get(activations_max)
-    activations_mean, _ = ravel_pytree(activations_mean)
-    activations_mean = jax.device_get(activations_mean)
-    activations_count, _ = ravel_pytree(activations_count)
-    activations_count = jax.device_get(activations_count)
-    activations_max_dist = Distribution(activations_max, bin_count=100)
-    exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0)
-    activations_mean_dist = Distribution(activations_mean, bin_count=100)
-    exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0)
-    activations_count_dist = Distribution(activations_count, bin_count=50)
-    exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0)
+        for step in range(exp_config.training_steps+exp_config.final_smoothing):
+            if step % exp_config.record_freq == 0:
+                train_loss = test_loss_fn(params, state, next(train_eval))
+                test_loss = test_loss_fn(params, state, next(test_eval))
+                # Periodically print classification accuracy on train & test sets.
+                if step % exp_config.report_freq == 0:
+                    print(f"[Step {step}] Train / Test Loss: {train_loss:.3f} / {test_loss:.3f}")
+                test_death_batch = next(test_death)
+                dead_neurons = death_check_fn(params, state, test_death_batch)
+                # Record some metrics
+                dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
+                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step, context={}.update(_pruning_context))
+                exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step, context={}.update(_pruning_context))
+                if exp_config.epsilon_close:
+                    for eps in exp_config.epsilon_close:
+                        eps_dead_neurons = death_check_fn(params, state, test_death_batch, eps)
+                        eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
+                        exp_run.track(jax.device_get(eps_dead_neurons_count),
+                                      name="Quasi-dead neurons", step=step,
+                                      context={"epsilon": eps}.update(_pruning_context))
+                        exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
+                                      name="Quasi-live neurons", step=step,
+                                      context={"epsilon": eps}.update(_pruning_context))
+                exp_run.track(jax.device_get(train_loss), name="Train loss", step=step, context={}.update(_pruning_context))
+                exp_run.track(jax.device_get(test_loss), name="Test loss", step=step, context={}.update(_pruning_context))
 
-    # # Record a plot of the learned function to expose overfiting
-    # fig = plt.figure(figsize=(15, 10))
-    # plt.plot(jax.device_get(full_span), jax.device_get(jnp.sin(full_span)), label="True function (sin)", linewidth=4)
-    # full_span_ = full_span.reshape((-1, 1))
-    # full_span_ = full_span_, jnp.zeros(full_span_.shape)
-    # learned_curve, _ = net.apply(params, state, full_span_, return_activations=False, is_training=False)
-    # plt.plot(jax.device_get(full_span), jax.device_get(learned_curve.flatten()), label="Learned function", linewidth=4)
-    # plt.scatter(jax.device_get(train_x.flatten()), jax.device_get(train_y.flatten()), c="red", label="Training points", linewidth=4)
-    # # plt.xlabel("Number of neurons in NN", fontsize=16)
-    # # plt.ylabel("Live neurons at end of training", fontsize=16)
-    # # plt.title("Learned function", fontweight='bold', fontsize=20)
-    # plt.legend(prop={'size': 16})
-    # aim_img = Image(fig)
-    # exp_run.track(aim_img, name="Overfiting curve; img", step=0)
+            if step % exp_config.pruning_freq == 0:
+                dead_neurons = scan_death_check_fn(params, state, test_death)
+                dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
+                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
+                              step=step, context={}.update(_pruning_context))
+                exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
+                              name="Live neurons; whole training dataset",
+                              step=step, context={}.update(_pruning_context))
+                if exp_config.epsilon_close:
+                    for eps in exp_config.epsilon_close:
+                        eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
+                        eps_dead_neurons_count, eps_dead_per_layers = utl.count_dead_neurons(eps_dead_neurons)
+                        exp_run.track(jax.device_get(eps_dead_neurons_count),
+                                      name="Quasi-dead neurons; whole training dataset",
+                                      step=step,
+                                      context={"epsilon": eps}.update(_pruning_context))
+                        exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
+                                      name="Quasi-live neurons; whole training dataset",
+                                      step=step,
+                                      context={"epsilon": eps}.update(_pruning_context))
+                for i, layer_dead in enumerate(dead_per_layers):
+                    total_neuron_in_layer = total_per_layer[i]
+                    exp_run.track(jax.device_get(layer_dead),
+                                  name=f"Dead neurons in layer {i}; whole training dataset", step=step, context={}.update(_pruning_context))
+                    exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
+                                  name=f"Live neurons in layer {i}; whole training dataset", step=step, context={}.update(_pruning_context))
+                del dead_per_layers
+
+            if step % exp_config.drawing_freq == 0:
+                # Record a plot of the learned function to expose overfiting
+                fig = plt.figure(figsize=(15, 10))
+                plt.plot(jax.device_get(full_span), jax.device_get(jnp.sin(full_span)), label="True function (sin)",
+                         linewidth=4)
+                learned_curve, _ = net.apply(params, state, full_span_, return_activations=False, is_training=False)
+                plt.plot(jax.device_get(full_span), jax.device_get(learned_curve.flatten()), label="Learned function",
+                         linewidth=4)
+                plt.scatter(jax.device_get(train_x.flatten()), jax.device_get(train_y.flatten()), c="red",
+                            label="Training points", linewidth=4)
+                # plt.xlabel("Number of neurons in NN", fontsize=16)
+                # plt.ylabel("Live neurons at end of training", fontsize=16)
+                # plt.title("Learned function", fontweight='bold', fontsize=20)
+                plt.legend(prop={'size': 16})
+                aim_img = Image(fig)
+                exp_run.track(aim_img, name="Overfiting curve; img", step=step, context={}.update(_pruning_context))
+                plt.close(fig)
+
+            # Train step over single batch
+            params, state, opt_state = update_fn(params, state, opt_state, next(train))
+
+            if step >= exp_config.training_steps:  # Remove noise from training ds for final smoothing phase
+                train = sine_data_iter(train_x, train_y, exp_config.train_batch_size, 0, 0)
+
+        activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
+        activations_max, activations_mean, activations_count = activations_data
+        activations_max, _ = ravel_pytree(activations_max)
+        activations_max = jax.device_get(activations_max)
+        activations_mean, _ = ravel_pytree(activations_mean)
+        activations_mean = jax.device_get(activations_mean)
+        activations_count, _ = ravel_pytree(activations_count)
+        activations_count = jax.device_get(activations_count)
+        activations_max_dist = Distribution(activations_max, bin_count=100)
+        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0, context={}.update(_pruning_context))
+        activations_mean_dist = Distribution(activations_mean, bin_count=100)
+        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0, context={}.update(_pruning_context))
+        activations_count_dist = Distribution(activations_count, bin_count=50)
+        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0, context={}.update(_pruning_context))
+
+        # # Record a plot of the learned function to expose overfiting
+        # fig = plt.figure(figsize=(15, 10))
+        # plt.plot(jax.device_get(full_span), jax.device_get(jnp.sin(full_span)), label="True function (sin)", linewidth=4)
+        # full_span_ = full_span.reshape((-1, 1))
+        # full_span_ = full_span_, jnp.zeros(full_span_.shape)
+        # learned_curve, _ = net.apply(params, state, full_span_, return_activations=False, is_training=False)
+        # plt.plot(jax.device_get(full_span), jax.device_get(learned_curve.flatten()), label="Learned function", linewidth=4)
+        # plt.scatter(jax.device_get(train_x.flatten()), jax.device_get(train_y.flatten()), c="red", label="Training points", linewidth=4)
+        # # plt.xlabel("Number of neurons in NN", fontsize=16)
+        # # plt.ylabel("Live neurons at end of training", fontsize=16)
+        # # plt.title("Learned function", fontweight='bold', fontsize=20)
+        # plt.legend(prop={'size': 16})
+        # aim_img = Image(fig)
+        # exp_run.track(aim_img, name="Overfiting curve; img", step=0)
 
     # Print total runtime
     print()
