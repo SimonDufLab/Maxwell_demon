@@ -213,13 +213,40 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
     opt_state = opt.init(params)
+    initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
+    initial_state = copy.deepcopy(state)
 
-    starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
-    total_neurons, total_per_layer = starting_neurons, starting_per_layer
+    total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, exp_config.size)
 
     for _pruning_context in prune_context:
-        if "no noise" in _pruning_context:
+        if "no noise" in _pruning_context["pruning"]:
+            # Remove noise from training ds
             train = sine_data_iter(train_x, train_y, exp_config.train_batch_size, 0, 0)
+            # Prune dead neurons from initialization params and rebuild model
+            dead_neurons = scan_death_check_fn(params, state, test_death)
+            params, new_sizes = utl.remove_dead_neurons_weights(initial_params, dead_neurons)
+            opt_state = opt.init(params)
+            state = initial_state
+            architecture = pick_architecture()[exp_config.architecture]
+            architecture = architecture(new_sizes, activation_fn=activation_fn, **net_config)
+            net = build_models(*architecture)
+            total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+
+            # Clear previous cache
+            loss.clear_cache()
+            test_loss_fn.clear_cache()
+            update_fn.clear_cache()
+            death_check_fn.clear_cache()
+
+            # Redefine utilities fn according to new model
+            loss = utl.mse_loss_given_model(net, regularizer=None)
+            test_loss_fn = utl.mse_loss_given_model(net, regularizer=None,
+                                                    is_training=False)
+            update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+            death_check_fn = utl.death_check_given_model(net)
+            scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+            scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+                utl.death_check_given_model(net, with_activations=True), scan_len, True)
 
         for step in range(exp_config.training_steps+exp_config.final_smoothing):
             if step % exp_config.record_freq == 0:
@@ -232,29 +259,29 @@ def run_exp(exp_config: ExpConfig) -> None:
                 dead_neurons = death_check_fn(params, state, test_death_batch)
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
-                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step, context={}.update(_pruning_context))
-                exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step, context={}.update(_pruning_context))
+                exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step, context={**_pruning_context})
+                exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step, context={**_pruning_context})
                 if exp_config.epsilon_close:
                     for eps in exp_config.epsilon_close:
                         eps_dead_neurons = death_check_fn(params, state, test_death_batch, eps)
                         eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
                         exp_run.track(jax.device_get(eps_dead_neurons_count),
                                       name="Quasi-dead neurons", step=step,
-                                      context={"epsilon": eps}.update(_pruning_context))
+                                      context={"epsilon": eps, **_pruning_context})
                         exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
                                       name="Quasi-live neurons", step=step,
-                                      context={"epsilon": eps}.update(_pruning_context))
-                exp_run.track(jax.device_get(train_loss), name="Train loss", step=step, context={}.update(_pruning_context))
-                exp_run.track(jax.device_get(test_loss), name="Test loss", step=step, context={}.update(_pruning_context))
+                                      context={"epsilon": eps, **_pruning_context})
+                exp_run.track(jax.device_get(train_loss), name="Train loss", step=step, context={**_pruning_context})
+                exp_run.track(jax.device_get(test_loss), name="Test loss", step=step, context={**_pruning_context})
 
             if step % exp_config.pruning_freq == 0:
                 dead_neurons = scan_death_check_fn(params, state, test_death)
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
-                              step=step, context={}.update(_pruning_context))
+                              step=step, context={**_pruning_context})
                 exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
                               name="Live neurons; whole training dataset",
-                              step=step, context={}.update(_pruning_context))
+                              step=step, context={**_pruning_context})
                 if exp_config.epsilon_close:
                     for eps in exp_config.epsilon_close:
                         eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
@@ -262,17 +289,17 @@ def run_exp(exp_config: ExpConfig) -> None:
                         exp_run.track(jax.device_get(eps_dead_neurons_count),
                                       name="Quasi-dead neurons; whole training dataset",
                                       step=step,
-                                      context={"epsilon": eps}.update(_pruning_context))
+                                      context={"epsilon": eps, **_pruning_context})
                         exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
                                       name="Quasi-live neurons; whole training dataset",
                                       step=step,
-                                      context={"epsilon": eps}.update(_pruning_context))
+                                      context={"epsilon": eps, **_pruning_context})
                 for i, layer_dead in enumerate(dead_per_layers):
                     total_neuron_in_layer = total_per_layer[i]
                     exp_run.track(jax.device_get(layer_dead),
-                                  name=f"Dead neurons in layer {i}; whole training dataset", step=step, context={}.update(_pruning_context))
+                                  name=f"Dead neurons in layer {i}; whole training dataset", step=step, context={**_pruning_context})
                     exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
-                                  name=f"Live neurons in layer {i}; whole training dataset", step=step, context={}.update(_pruning_context))
+                                  name=f"Live neurons in layer {i}; whole training dataset", step=step, context={**_pruning_context})
                 del dead_per_layers
 
             if step % exp_config.drawing_freq == 0:
@@ -290,7 +317,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # plt.title("Learned function", fontweight='bold', fontsize=20)
                 plt.legend(prop={'size': 16})
                 aim_img = Image(fig)
-                exp_run.track(aim_img, name="Overfiting curve; img", step=step, context={}.update(_pruning_context))
+                exp_run.track(aim_img, name="Overfiting curve; img", step=step, context={**_pruning_context})
                 plt.close(fig)
 
             # Train step over single batch
@@ -308,11 +335,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         activations_count, _ = ravel_pytree(activations_count)
         activations_count = jax.device_get(activations_count)
         activations_max_dist = Distribution(activations_max, bin_count=100)
-        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0, context={}.update(_pruning_context))
+        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0, context={**_pruning_context})
         activations_mean_dist = Distribution(activations_mean, bin_count=100)
-        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0, context={}.update(_pruning_context))
+        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0, context={**_pruning_context})
         activations_count_dist = Distribution(activations_count, bin_count=50)
-        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0, context={}.update(_pruning_context))
+        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0, context={**_pruning_context})
 
         # # Record a plot of the learned function to expose overfiting
         # fig = plt.figure(figsize=(15, 10))
