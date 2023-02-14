@@ -501,7 +501,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
         std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
 
-        log_step = reg_param*1000
+        log_step = reg_param*1e8
 
         exp_run.track(jax.device_get(avg_final_live_neurons),
                       name="On average, live neurons after convergence w/r reg param", step=log_step)
@@ -512,6 +512,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                       name="Live neurons after convergence w/r reg param", step=log_step)
         exp_run.track(jax.device_get(total_live_neurons/total_neurons),
                       name="Live neurons ratio after convergence w/r reg param", step=log_step)
+        exp_run.track(jax.device_get(reg_param),  # Logging true reg_param value to display with aim metrics
+                      name="Reg param w/r reg param", step=log_step)
         if exp_config.epsilon_close:
             for eps in exp_config.epsilon_close:
                 eps_final_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
