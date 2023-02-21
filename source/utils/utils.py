@@ -396,10 +396,13 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         classes = 10
 
     if regularizer:
-        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "cdg_l2_act", "cdg_lasso_act"]
+        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
+        if regularizer == "lasso":
+            def reg_fn(params, activations=None):
+                return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
@@ -480,10 +483,13 @@ def mse_loss_given_model(model, regularizer=None, reg_param=1e-4, is_training=Tr
     """ Build mean squared error loss given the model"""
 
     if regularizer:
-        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "cdg_l2_act", "cdg_lasso_act"]
+        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
+        if regularizer == "lasso":
+            def reg_fn(params, activations=None):
+                return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))

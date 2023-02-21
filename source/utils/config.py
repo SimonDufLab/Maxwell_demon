@@ -40,6 +40,7 @@ regularizer_choice = (
     "cdg_l2",
     "cdg_lasso",
     "l2",
+    "lasso",
     "cdg_l2_act",  # l2 regularization applied on the activations, not the weights! (funky, funky ...)
     "cdg_lasso_act"  # lasso regularization applied on the activations
 )

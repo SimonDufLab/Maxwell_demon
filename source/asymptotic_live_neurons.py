@@ -69,6 +69,8 @@ class ExpConfig:
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "None"
     reg_param: float = 1e-4
+    reg_param_decay_cycles: int = 1  # number of cycles -1 inside a switching_period that reg_param is divided by 10
+    zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     var_for_eps: bool = False  # Using the variance definition for detecting dead neurons
@@ -214,6 +216,10 @@ def run_exp(exp_config: ExpConfig) -> None:
             parameters: List[float] = field(default_factory=list)
         params_meta = FinalParamsMeta()
 
+    decaying_reg_param = copy.deepcopy(exp_config.reg_param)
+    decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
+    reg_param_decay_period = exp_config.training_steps // decay_cycles
+
     for size in exp_config.sizes:  # Vary the NN width
         # Time the subrun for the different sizes
         subrun_start_time = time.time()
@@ -277,6 +283,23 @@ def run_exp(exp_config: ExpConfig) -> None:
         total_neurons, total_per_layer = starting_neurons, starting_per_layer
 
         for step in range(exp_config.training_steps):
+            if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
+                    (not (step % exp_config.training_steps == 0)):
+                decaying_reg_param = decaying_reg_param / 10
+                if (exp_config.training_steps // reg_param_decay_period) == decay_cycles:
+                    decaying_reg_param = 0
+                loss.clear_cache()
+                test_loss_fn.clear_cache()
+                update_fn.clear_cache()
+
+                loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+                                               classes=classes, with_dropout=with_dropout)
+                test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                    reg_param=decaying_reg_param,
+                                                    classes=classes, is_training=False, with_dropout=with_dropout)
+                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                                exp_config.noise_live_only, with_dropout=with_dropout)
+
             if step % exp_config.record_freq == 0:
                 train_loss = test_loss_fn(params, state, next(train_eval))
                 train_accuracy = accuracy_fn(params, state, next(train_eval))
