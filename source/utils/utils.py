@@ -45,7 +45,7 @@ def mean_across_filter(filters):
         return filters
 
 
-def death_check_given_model(model, with_activations=False, check_tail=False, with_dropout=False, avg=False):
+def death_check_given_model(model, with_activations=False, check_tail=False, with_dropout=False, avg=False, var=False):
     """Return a boolean array per layer; with True values for dead neurons"""
     # assert epsilon >= 0, "epsilon value must be positive"
     # if check_tail:
@@ -76,11 +76,17 @@ def death_check_given_model(model, with_activations=False, check_tail=False, wit
         if avg:
             activations = jax.tree_map(jax.vmap(mean_across_filter),
                                        activations)  # mean across the filter first only if convnets
-            sum_activations = jax.tree_map(Partial(jnp.mean, axis=0), activations)
+            if var:
+                sum_activations = jax.tree_map(Partial(jnp.var, axis=0), activations)
+            else:
+                sum_activations = jax.tree_map(Partial(jnp.mean, axis=0), activations)
         else:
             activations = jax.tree_map(jax.vmap(sum_across_filter),
                                        activations)  # Sum across the filter first only if convnets
-            sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
+            if var:
+                sum_activations = jax.tree_map(Partial(jnp.var, axis=0), activations)
+            else:
+                sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
         if with_activations:
             return activations, jax.tree_map(test_fn, sum_activations)
         else:
@@ -111,18 +117,21 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
             running_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
             running_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
             running_count = count_activations_occurrence(activations)
+            running_var = jax.tree_map(Partial(jnp.var, axis=0), activations)
             N = 1
             for i in range(scan_len-1):
                 activations, dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
                 # batched_activations.append(activations)
                 running_max = update_running_max(activations, running_max)
                 running_mean = update_running_mean(activations, running_mean)
+                running_var = update_running_var(activations, running_var)
                 N += 1
                 running_count = update_running_count(activations, running_count)
 
                 previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
 
-            return (running_max, jax.tree_map(lambda x: x/N, running_mean), running_count), previous_dead
+            return (running_max, jax.tree_map(lambda x: x/N, running_mean),
+                    running_count, jax.tree_map(lambda x: x/N, running_var)), previous_dead
 
         return scan_death_check
     else:
@@ -183,6 +192,13 @@ def update_running_mean(new_batch, previous_mean):
     mean_sum = jax.tree_map(Partial(jnp.mean, axis=0), new_batch)
     mean_sum = jax.tree_map(jnp.add, mean_sum, previous_mean)
     return mean_sum
+
+
+@jax.jit
+def update_running_var(new_batch, previous_mean):
+    var_sum = jax.tree_map(Partial(jnp.var, axis=0), new_batch)
+    var_sum = jax.tree_map(jnp.add, var_sum, previous_mean)
+    return var_sum
 
 
 @jax.jit
@@ -380,10 +396,13 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         classes = 10
 
     if regularizer:
-        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "cdg_l2_act", "cdg_lasso_act"]
+        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
+        if regularizer == "lasso":
+            def reg_fn(params, activations=None):
+                return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
@@ -464,10 +483,13 @@ def mse_loss_given_model(model, regularizer=None, reg_param=1e-4, is_training=Tr
     """ Build mean squared error loss given the model"""
 
     if regularizer:
-        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "cdg_l2_act", "cdg_lasso_act"]
+        assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
+        if regularizer == "lasso":
+            def reg_fn(params, activations=None):
+                return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))

@@ -327,7 +327,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 train = sine_data_iter(train_x, train_y, exp_config.train_batch_size, 0, 0)
 
         activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
-        activations_max, activations_mean, activations_count = activations_data
+        activations_max, activations_mean, activations_count, _ = activations_data
         activations_max, _ = ravel_pytree(activations_max)
         activations_max = jax.device_get(activations_max)
         activations_mean, _ = ravel_pytree(activations_mean)

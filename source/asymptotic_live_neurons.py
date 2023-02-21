@@ -69,8 +69,12 @@ class ExpConfig:
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "None"
     reg_param: float = 1e-4
+    reg_param_decay_cycles: int = 1  # number of cycles -1 inside a switching_period that reg_param is divided by 10
+    zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
+    var_for_eps: bool = False  # Using the variance definition for detecting dead neurons
+    record_var_dist: bool = False  # Record variance distribution at pruning_freq is set to True
     init_seed: int = 41
     dynamic_pruning: bool = False
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
@@ -212,6 +216,10 @@ def run_exp(exp_config: ExpConfig) -> None:
             parameters: List[float] = field(default_factory=list)
         params_meta = FinalParamsMeta()
 
+    decaying_reg_param = copy.deepcopy(exp_config.reg_param)
+    decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
+    reg_param_decay_period = exp_config.training_steps // decay_cycles
+
     for size in exp_config.sizes:  # Vary the NN width
         # Time the subrun for the different sizes
         subrun_start_time = time.time()
@@ -248,14 +256,16 @@ def run_exp(exp_config: ExpConfig) -> None:
         accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                         exp_config.noise_live_only, with_dropout=with_dropout)
-        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                                                     avg=exp_config.avg_for_eps, var=exp_config.var_for_eps)
         # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
         #                                                  epsilon=exp_config.epsilon_close, avg=exp_config.avg_for_eps)
         scan_len = train_ds_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
         # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
         scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
-            utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
+            utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout,
+                                        avg=exp_config.avg_for_eps, var=exp_config.var_for_eps), scan_len, True)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
@@ -273,6 +283,23 @@ def run_exp(exp_config: ExpConfig) -> None:
         total_neurons, total_per_layer = starting_neurons, starting_per_layer
 
         for step in range(exp_config.training_steps):
+            if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
+                    (not (step % exp_config.training_steps == 0)):
+                decaying_reg_param = decaying_reg_param / 10
+                if (exp_config.training_steps // reg_param_decay_period) == decay_cycles:
+                    decaying_reg_param = 0
+                loss.clear_cache()
+                test_loss_fn.clear_cache()
+                update_fn.clear_cache()
+
+                loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+                                               classes=classes, with_dropout=with_dropout)
+                test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                    reg_param=decaying_reg_param,
+                                                    classes=classes, is_training=False, with_dropout=with_dropout)
+                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                                exp_config.noise_live_only, with_dropout=with_dropout)
+
             if step % exp_config.record_freq == 0:
                 train_loss = test_loss_fn(params, state, next(train_eval))
                 train_accuracy = accuracy_fn(params, state, next(train_eval))
@@ -312,7 +339,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                               context={"net size": utl.size_to_string(size)})
 
             if step % exp_config.pruning_freq == 0:
-                dead_neurons = scan_death_check_fn(params, state, test_death)
+                if exp_config.record_var_dist:
+                    dist_data, dead_neurons = scan_death_check_fn_with_activations_data(params, state,
+                                                                                        test_death)
+                else:
+                    dead_neurons = scan_death_check_fn(params, state, test_death)
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
                               step=step,
@@ -333,6 +364,14 @@ def run_exp(exp_config: ExpConfig) -> None:
                                       name="Quasi-live neurons; whole training dataset",
                                       step=step,
                                       context={"net size": utl.size_to_string(size), "epsilon": eps})
+                    if exp_config.record_var_dist:
+                        _, _, _, var_dist = dist_data
+                        var_dist, _ = ravel_pytree(var_dist)
+                        var_dist = jax.device_get(var_dist)
+                        aim_var_dist = Distribution(var_dist, bin_count=100)
+                        exp_run.track(aim_var_dist, name='Activation variance',
+                                      step=step,
+                                      context={"net size": utl.size_to_string(size)})
                 for i, layer_dead in enumerate(dead_per_layers):
                     total_neuron_in_layer = total_per_layer[i]
                     exp_run.track(jax.device_get(layer_dead),
@@ -383,7 +422,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
                                                                     exp_config.noise_imp, exp_config.noise_live_only,
                                                                     with_dropout=with_dropout)
-                    death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+                    death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                                                                 avg=exp_config.avg_for_eps, var=exp_config.var_for_eps)
                     # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                     #                                                  epsilon=exp_config.epsilon_close,
                     #                                                  avg=exp_config.avg_for_eps)
@@ -391,7 +431,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                     # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                     scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
-                        utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
+                        utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout,
+                                                    avg=exp_config.avg_for_eps, var=exp_config.var_for_eps), scan_len, True)
                     final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
                     full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
@@ -424,14 +465,16 @@ def run_exp(exp_config: ExpConfig) -> None:
                 accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout)
-                death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+                death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                                                             avg=exp_config.avg_for_eps, var=exp_config.var_for_eps)
                 # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                 #                                                  epsilon=exp_config.epsilon_close,
                 #                                                  avg=exp_config.avg_for_eps)
                 scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                 # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                 scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
-                    utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
+                    utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout,
+                                                avg=exp_config.avg_for_eps, var=exp_config.var_for_eps), scan_len, True)
                 final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
                 full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
@@ -459,7 +502,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
         del final_dead_neurons  # Freeing memory
 
-        activations_max, activations_mean, activations_count = activations_data
+        activations_max, activations_mean, activations_count, _ = activations_data
         if exp_config.save_wanda:
             activations_meta.maximum.append(activations_max)
             activations_meta.mean.append(activations_mean)
