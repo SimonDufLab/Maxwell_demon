@@ -319,7 +319,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         all_grad_sum.append({key: grad_sum[key] for key in list(grad_sum.keys())[:-1]}) # Removing head from stats
         activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
-        activations_max, activations_mean, activations_count = activations_data
+        activations_max, activations_mean, activations_count, _ = activations_data
         for i in range(len(activations_mean)):  # max or mean?
             all_activation_mean[i].append(activations_mean[i])
 

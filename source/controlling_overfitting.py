@@ -474,7 +474,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
         del final_dead_neurons  # Freeing memory
 
-        activations_max, activations_mean, activations_count = activations_data
+        activations_max, activations_mean, activations_count, _ = activations_data
         if exp_config.save_wanda:
             activations_meta.maximum.append(activations_max)
             activations_meta.mean.append(activations_mean)
