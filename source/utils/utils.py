@@ -14,7 +14,7 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
-from typing import Union, Tuple
+from typing import Union, Tuple, List
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
 from collections.abc import Iterable
@@ -68,31 +68,46 @@ def death_check_given_model(model, with_activations=False, check_tail=False, wit
     else:
         model_apply_fn = model.apply
 
-    @jax.jit
-    def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch, epsilon: float = 0) -> Union[
-                        jnp.ndarray, Tuple[jnp.array, jnp.array]]:
-        test_fn = Partial(_test_fn, epsilon)
-        (_, activations), _ = model_apply_fn(_params, _state, x=_batch, return_activations=True, is_training=False)
-        if avg:
-            activations = jax.tree_map(jax.vmap(mean_across_filter),
-                                       activations)  # mean across the filter first only if convnets
-            if var:
-                sum_activations = jax.tree_map(Partial(jnp.var, axis=0), activations)
-            else:
+    if not var:
+        @jax.jit
+        def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch, epsilon: float = 0) -> Union[
+                            jnp.ndarray, Tuple[jnp.array, jnp.array]]:
+            test_fn = Partial(_test_fn, epsilon)
+            (_, activations), _ = model_apply_fn(_params, _state, x=_batch, return_activations=True, is_training=False)
+            if avg:
+                activations = jax.tree_map(jax.vmap(mean_across_filter),
+                                           activations)  # mean across the filter first only if convnets
                 sum_activations = jax.tree_map(Partial(jnp.mean, axis=0), activations)
-        else:
-            activations = jax.tree_map(jax.vmap(sum_across_filter),
-                                       activations)  # Sum across the filter first only if convnets
-            if var:
-                sum_activations = jax.tree_map(Partial(jnp.var, axis=0), activations)
             else:
+                activations = jax.tree_map(jax.vmap(sum_across_filter),
+                                           activations)  # Sum across the filter first only if convnets
                 sum_activations = jax.tree_map(Partial(jnp.sum, axis=0), activations)
-        if with_activations:
-            return activations, jax.tree_map(test_fn, sum_activations)
-        else:
-            return jax.tree_map(test_fn, sum_activations)
+            if with_activations:
+                return activations, jax.tree_map(test_fn, sum_activations)
+            else:
+                return jax.tree_map(test_fn, sum_activations)
 
-    return _death_check
+        return _death_check
+
+    else:
+        @jax.jit
+        def _death_check(_params: hk.Params, _state: hk.State, _batch: Batch, epsilon: float = 0) -> Union[
+                         List[jnp.ndarray], Tuple[jnp.array, List[jnp.array]]]:
+            (_, activations), _ = model_apply_fn(_params, _state, x=_batch, return_activations=True, is_training=False)
+            if avg:
+                activations = jax.tree_map(jax.vmap(mean_across_filter),
+                                           activations)  # mean across the filter first only if convnets
+            else:
+                activations = jax.tree_map(jax.vmap(sum_across_filter),
+                                           activations)  # Sum across the filter first only if convnets
+            sum_activations = jax.tree_map(Partial(jnp.var, axis=0), activations)
+            layer_eps = [jnp.mean(layer) / 100 for layer in sum_activations]
+            if with_activations:
+                return activations, [_test_fn(eps, layer) for layer, eps in zip(sum_activations, layer_eps)]
+            else:
+                return [_test_fn(eps, layer) for layer, eps in zip(sum_activations, layer_eps)]
+
+        return _death_check
 
 
 def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False):
