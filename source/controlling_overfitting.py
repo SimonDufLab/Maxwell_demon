@@ -60,7 +60,7 @@ class ExpConfig:
     bn_config: str = "default"  # Different configs for bn; default have offset and scale trainable params
     size: Any = 50  # Can also be a tuple for convnets
     regularizer: Optional[str] = "cdg_l2"
-    reg_params: Any = (0.0, 1e-5, 1e-4, 1e-3, 1e-2, 1e-1)
+    reg_params: Any = (0.0, 1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1)
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
@@ -554,6 +554,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                       name="Accuracy after convergence w/r reg param", step=log_step)
         exp_run.track(final_train_acc,
                       name="Train accuracy after convergence w/r reg param", step=log_step)
+        log_sparsity_step = jax.device_get(total_live_neurons/total_neurons) * 1000
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
         params_vec, _ = ravel_pytree(params)
         initial_params_vec, _ = ravel_pytree(initial_params)
         exp_run.track(
