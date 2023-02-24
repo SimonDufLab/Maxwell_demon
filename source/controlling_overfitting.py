@@ -67,6 +67,7 @@ class ExpConfig:
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
     dynamic_pruning: bool = False
+    prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
     noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones
     noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
@@ -369,7 +370,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                   name="Total accuracy for linear NN", step=step,
                                   context={"reg param": utl.size_to_string(reg_param)})
 
-                if exp_config.dynamic_pruning:
+                if exp_config.dynamic_pruning and step >= exp_config.prune_after:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
                     architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
