@@ -558,12 +558,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         log_sparsity_step = jax.device_get(total_live_neurons/total_neurons) * 1000
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
-        params_vec, _ = ravel_pytree(params)
-        initial_params_vec, _ = ravel_pytree(initial_params)
-        exp_run.track(
-            jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
-            name="Relative change in norm of weights from init after convergence w/r reg param",
-            step=log_step)
+        if not exp_config.dynamic_pruning: # Cannot take norm between initial and pruned params
+            params_vec, _ = ravel_pytree(params)
+            initial_params_vec, _ = ravel_pytree(initial_params)
+            exp_run.track(
+                jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
+                name="Relative change in norm of weights from init after convergence w/r reg param",
+                step=log_step)
         activations_max_dist = Distribution(activations_max, bin_count=100)
         exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
                       context={"reg param": utl.size_to_string(reg_param)})
