@@ -414,22 +414,22 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
-                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
+                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "lasso":
             def reg_fn(params, activations=None):
-                return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(params))
+                return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
-                return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
+                return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_lasso":
             def reg_fn(params, activations=None):
-                return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_leaves(params))
+                return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2_act":
             def reg_fn(params, activations):
-                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(activations))
+                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(activations))
         if regularizer == "cdg_lasso_act":
             def reg_fn(params, activations):
-                return 0.5 * sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(activations))
+                return 0.5 * sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(activations))
     else:
         def reg_fn(params, activations=None):
             return 0
@@ -661,8 +661,8 @@ def dict_split(container, _len=2):
 ##############################
 # Prefixed data augmentation when desired
 augment_tf_dataset = tf.keras.Sequential([
-    # tf.keras.layers.RandomFlip("horizontal_and_vertical"),
-    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+    # tf.keras.layers.RandomFlip("horizontal"),
     tf.keras.layers.ZeroPadding2D(4, data_format="channels_last"),
     tf.keras.layers.RandomCrop(32, 32)
 ])
@@ -737,11 +737,17 @@ def interval_zero_one(image, label):
     return image/255, label
 
 
+def standardize_img(image, label):
+    image -= tf.math.reduce_mean(image, axis=[0, 1])
+    image /= tf.math.reduce_std(image, axis=[0, 1])
+    return image, label
+
+
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
                     other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
-                    gaussian_img_ratio: float = 0, data_augmentation: bool = False):  # -> Generator[Batch, None, None]:
+                    gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
@@ -782,6 +788,8 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     #     ds = ds.filter(filter_fn)  # Only take the randomly selected subset
 
     ds = ds.map(interval_zero_one)
+    if normalize:
+        ds = ds.map(standardize_img)
     # ds = ds.cache().repeat()
     # if is_training:
     #     # if subset is not None:
@@ -840,36 +848,36 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
 
 
 def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False):
+                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False, normalize: bool = False):
     return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size,
                            other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
                            noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
-                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset)
+                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset, normalize=normalize)
 
 
 def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                    noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False):
+                    noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False, normalize: bool = False):
     return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
                            subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
                            permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio,
-                           data_augmentation=augment_dataset)
+                           data_augmentation=augment_dataset, normalize=normalize)
 
 
 def load_cifar100_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                     noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False):
+                     noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False, normalize: bool = False):
     return load_tf_dataset("cifar100", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
                            subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
                            permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio,
-                           data_augmentation=augment_dataset)
+                           data_augmentation=augment_dataset, normalize=normalize)
 
 
 def load_fashion_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True,
                           cardinality=False, noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0,
-                          augment_dataset=False):
+                          augment_dataset=False, normalize: bool = False):
     return load_tf_dataset("fashion_mnist", split=split, is_training=is_training, batch_size=batch_size,
                            other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
                            noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
-                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset)
+                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset, normalize=normalize)
 
 
 # Pytorch dataloader # TODO: deprecated; should remove!!
@@ -1007,6 +1015,10 @@ def piecewise_constant_schedule(training_steps, base_lr, final_lr, decay_steps):
 def cosine_decay(training_steps, base_lr, final_lr, decay_steps):
     alpha_val = final_lr/base_lr
     return optax.cosine_decay_schedule(base_lr, training_steps, alpha_val)
+
+
+def one_cycle_schedule(training_steps, base_lr, final_lr, decay_steps):
+    return optax.cosine_onecycle_schedule(training_steps, base_lr)
 
 
 ##############################
