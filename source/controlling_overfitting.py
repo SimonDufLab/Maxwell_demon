@@ -49,6 +49,7 @@ class ExpConfig:
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
+    normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
     noisy_label: float = 0.25  # ratio (between [0,1]) of labels to randomly (uniformly) flip
@@ -181,9 +182,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                              noisy_label=exp_config.noisy_label,
                                                              permuted_img_ratio=exp_config.permuted_img_ratio,
                                                              gaussian_img_ratio=exp_config.gaussian_img_ratio,
-                                                             augment_dataset=exp_config.augment_dataset)
+                                                             augment_dataset=exp_config.augment_dataset,
+                                                             normalize=exp_config.normalize_inputs)
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
-                                     cardinality=True)
+                                     cardinality=True, normalize=exp_config.normalize_inputs)
 
     # Recording over all widths
     live_neurons = []
