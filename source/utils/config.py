@@ -5,7 +5,7 @@ from jax.tree_util import Partial
 
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
-from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule
+from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule, one_cycle_schedule
 from models.mlp import mlp_3, mlp_3_bn, mlp_3_reg
 from models.mlp import mlp_3_act_pre_relu, mlp_3_act_pre_bn, mlp_3_act_post_bn
 from models.mlp import mlp_3_dropout
@@ -48,7 +48,8 @@ regularizer_choice = (
 lr_scheduler_choice = {
     'None': constant_schedule,
     'piecewise_constant': piecewise_constant_schedule,
-    'cosine_decay': cosine_decay
+    'cosine_decay': cosine_decay,
+    'one_cycle': one_cycle_schedule
 }
 
 # Return the desired architecture along with a bool indicating if there is a
