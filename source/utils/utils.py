@@ -310,31 +310,61 @@ def remove_dead_neurons_weights(params, neurons_state, opt_state=None):
             field_names.remove('count')
         filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
     layers_name = list(params.keys())
-    for i, layer in enumerate(layers_name[:-1]):
+    # Remove norm layer form layers_name list; nothing to prune in them
+    _layers_name = []
+    _shorcut_layers = []
+    for layer in layers_name:
+        if ("norm" not in layer) and ("bn" not in layer) and ('short' not in layer):
+            _layers_name.append(layer)
+        if ('short' in layer) and ("norm" not in layer):
+            _shorcut_layers.append(layer)
+    # print(len(_layers_name))
+    # print(len(_shorcut_layers))
+    # print(len(neurons_state))
+    # print(_layers_name)
+    # print("########")
+    # print()
+    # print(_shorcut_layers)
+    shortcut_counter = 0
+    for i, layer in enumerate(_layers_name[:-1]):
         # print(i, layer)
         # print(neurons_state[i].shape)
         for dict_key in filtered_params[layer].keys():
+            if ("conv_1" in layer) and (shortcut_counter < len(_shorcut_layers)):
+                location = layer.index("block")
+                if layer[location:location+7] == _shorcut_layers[shortcut_counter][location:location+7]:
+                    shortcut_flag = True
+                    shortcut_layer = _shorcut_layers[shortcut_counter]
+                    shortcut_counter += 1
+                else:
+                    shortcut_flag = False
+            else:
+                shortcut_flag = False
             # print(filtered_params[layer][dict_key].shape)
             filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
+            if shortcut_flag:
+                filtered_params[shortcut_layer][dict_key] = filtered_params[shortcut_layer][dict_key][..., neurons_state[i]]
             if opt_state:
                 for j, field in enumerate(filter_in_opt_state):
                     # print(field)
                     filter_in_opt_state[j][layer][dict_key] = field[layer][dict_key][..., neurons_state[i]]
+                    if shortcut_flag:
+                        filter_in_opt_state[j][shortcut_layer][dict_key] = field[shortcut_layer][dict_key][..., neurons_state[i]]
 
         # for dict_key in filtered_params[layers_name[i+1]].keys():
         #     print(neurons_state[i].shape)
         #     print(filtered_params[layers_name[i+1]][dict_key].shape)
-        to_repeat = filtered_params[layers_name[i+1]]['w'].shape[-2] // neurons_state[i].size
-        if to_repeat > 1 :
+        to_repeat = filtered_params[_layers_name[i+1]]['w'].shape[-2] // neurons_state[i].size
+        if to_repeat > 1:
             current_state = jnp.repeat(neurons_state[i].reshape(1, -1), to_repeat, axis=0).flatten()
             # print(neurons_state[i])
             # print(current_state)
         else:
             current_state = neurons_state[i]
-        filtered_params[layers_name[i+1]]['w'] = filtered_params[layers_name[i+1]]['w'][..., current_state, :]
+        filtered_params[_layers_name[i+1]]['w'] = filtered_params[_layers_name[i+1]]['w'][..., current_state, :]
         if opt_state:
             for j, field in enumerate(filter_in_opt_state):
-                filter_in_opt_state[j][layers_name[i + 1]]['w'] = filter_in_opt_state[j][layers_name[i + 1]]['w'][...,
+                filter_in_opt_state[j][_layers_name[i + 1]]['w'] = filter_in_opt_state[j][_layers_name[i + 1]]['w'][...,
                                                                   current_state, :]
 
     if opt_state:
