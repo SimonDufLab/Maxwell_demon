@@ -2,6 +2,7 @@
 by applying either cdg_l1 or cdg_l2 loss"""
 
 import copy
+import optax
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -40,6 +41,7 @@ class ExpConfig:
     pruning_freq: int = 1000
     live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     lr: float = 1e-3
+    gradient_clipping: bool = False
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
@@ -229,13 +231,18 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **net_config)
             lin_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
+        opt_chain = []
+        if exp_config.gradient_clipping:
+            opt_chain.append(optax.clip(0.1))
+
         if 'noisy' in exp_config.optimizer:
-            opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noise_eta,
-                                                         gamma=exp_config.noise_gamma)
+            opt_chain.append(optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noise_eta,
+                                                         gamma=exp_config.noise_gamma))
         else:
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
                                                                       exp_config.final_lr, exp_config.lr_decay_steps)
-            opt = optimizer_choice[exp_config.optimizer](lr_schedule)
+            opt_chain.append(optimizer_choice[exp_config.optimizer](lr_schedule))
+        opt = optax.chain(*opt_chain)
         accuracies_log = []
 
         # Set training/monitoring functions
