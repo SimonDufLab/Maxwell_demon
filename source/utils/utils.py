@@ -691,8 +691,8 @@ def dict_split(container, _len=2):
 ##############################
 # Prefixed data augmentation when desired
 augment_tf_dataset = tf.keras.Sequential([
-    tf.keras.layers.RandomFlip("horizontal_and_vertical"),
-    # tf.keras.layers.RandomFlip("horizontal"),
+    # tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+    tf.keras.layers.RandomFlip("horizontal"),
     tf.keras.layers.ZeroPadding2D(4, data_format="channels_last"),
     tf.keras.layers.RandomCrop(32, 32)
 ])
