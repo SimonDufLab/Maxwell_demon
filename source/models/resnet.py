@@ -57,12 +57,12 @@ FloatStrOrBool = Union[str, float, bool]
 base_bn_config = {"create_scale": True, "create_offset": True, "decay_rate": 0.999}
 
 
-class ResnetBlock(ResNet.BlockV1):
+class ResnetBlock(hk.Module):
     """Resnet block that also outputs the activations"""
 
     def __init__(
             self,
-            channels: int,
+            channels: Sequence[int],
             stride: Union[int, Sequence[int]],
             activation_fn: Callable,
             use_projection: bool,
@@ -72,8 +72,56 @@ class ResnetBlock(ResNet.BlockV1):
             bn_config: dict = base_bn_config,
             name: Optional[str] = None,
     ):
-        super().__init__(channels=channels, stride=stride, use_projection=use_projection, bn_config=bn_config,
-                         bottleneck=bottleneck, name=name)
+        super().__init__(name=name)
+        self.use_projection = use_projection
+
+        bn_config = dict(bn_config)
+
+        if self.use_projection:
+            self.proj_conv = hk.Conv2D(
+                output_channels=channels[0],
+                kernel_shape=1,
+                stride=stride,
+                with_bias=False,
+                padding="SAME",
+                name="shortcut_conv")
+
+            self.proj_batchnorm = hk.BatchNorm(name="shortcut_batchnorm", **bn_config)
+
+        channel_div = 4 if bottleneck else 1
+        conv_0 = hk.Conv2D(
+            output_channels=channels[0],
+            kernel_shape=1 if bottleneck else 3,
+            stride=1 if bottleneck else stride,
+            with_bias=False,
+            padding="SAME",
+            name="conv_0")
+        bn_0 = hk.BatchNorm(name="batchnorm_0", **bn_config)
+
+        conv_1 = hk.Conv2D(
+            output_channels=channels[1],
+            kernel_shape=3,
+            stride=stride if bottleneck else 1,
+            with_bias=False,
+            padding="SAME",
+            name="conv_1")
+
+        bn_1 = hk.BatchNorm(name="batchnorm_1", **bn_config)
+        layers = ((conv_0, bn_0), (conv_1, bn_1))
+
+        if bottleneck:
+            conv_2 = hk.Conv2D(
+                output_channels=channels[2],
+                kernel_shape=1,
+                stride=1,
+                with_bias=False,
+                padding="SAME",
+                name="conv_2")
+
+            bn_2 = hk.BatchNorm(name="batchnorm_2", scale_init=jnp.zeros, **bn_config)
+            layers = layers + ((conv_2, bn_2),)
+
+        self.layers = layers
         self.is_training = is_training
         self.activation_fn = activation_fn
         self.with_bn = with_bn
@@ -125,17 +173,18 @@ class ResnetInit(hk.Module):
         return self.activation_fn(x)
 
 
-def block_group(channels: int, num_blocks: int, stride: Union[int, Sequence[int]], activation_fn: Callable, bottleneck: bool,
+def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Sequence[int]], activation_fn: Callable, bottleneck: bool,
                 use_projection: bool, with_bn: bool, bn_config: dict):
     """Adapted from: https://github.com/deepmind/dm-haiku/blob/d6e3c2085253735c3179018be495ebabf1e6b17c/
     haiku/_src/nets/resnet.py#L200"""
 
     train_layers = []
     test_layers = []
+    layer_per_block = len(channels)//num_blocks
 
     for i in range(num_blocks):
         train_layers.append(
-            [Partial(ResnetBlock, channels=channels,
+            [Partial(ResnetBlock, channels=channels[i*layer_per_block:(i+1)*layer_per_block],
                      stride=(1 if i else stride),
                      activation_fn=activation_fn,
                      use_projection=(i == 0 and use_projection),
@@ -145,7 +194,7 @@ def block_group(channels: int, num_blocks: int, stride: Union[int, Sequence[int]
                      is_training=True,)])
                      # name=f"block_{i}")])
         test_layers.append(
-            [Partial(ResnetBlock, channels=channels,
+            [Partial(ResnetBlock, channels=channels[i*layer_per_block:(i+1)*layer_per_block],
                      stride=(1 if i else stride),
                      activation_fn=activation_fn,
                      use_projection=(i == 0 and use_projection),
@@ -162,7 +211,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                  num_classes: int,
                  activation_fn: Callable,
                  bottleneck: bool = True,
-                 channels_per_group: Sequence[int] = (256, 512, 1024, 2048),
+                 channels_per_group: Sequence[Sequence[int]] = tuple([[64*i]*4 for i in [1, 2, 4, 8]]),
                  use_projection: Sequence[bool] = (True, True, True, True),
                  logits_config: Optional[Mapping[str, Any]] = None,
                  with_bn: bool = True,
@@ -231,14 +280,24 @@ def resnet18(size: Union[int, Sequence[int]],
              with_bn: bool = True,
              bn_config: dict = base_bn_config):
 
+    if type(size) == int:
+        init_conv_size = size
+        sizes = [[size*i]*4 for i in [1, 2, 4, 8]]
+    else:
+        init_conv_size = size[0]
+        sizes = size[1:]
+        sizes = [sizes[i:i+4] for i in range(0, 16, 4)]
+
+    print(sizes)
+
     resnet_config = {
                     "blocks_per_group": (2, 2, 2, 2),
                     "bottleneck": False,
-                    "channels_per_group": (size, size*2, size*4, size*8),  # typical resnet18 size = 64
+                    "channels_per_group": sizes,  # typical resnet18 size = 64
                     "use_projection": (False, True, True, True),
                     "bn_config": bn_config
                     }
-    default_initial_conv_config["output_channels"] = size
+    default_initial_conv_config["output_channels"] = init_conv_size
 
     return resnet_model(num_classes=num_classes,
                         activation_fn=activation_fn,
