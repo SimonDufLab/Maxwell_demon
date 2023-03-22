@@ -79,7 +79,7 @@ class ResnetBlock(hk.Module):
 
         if self.use_projection:
             self.proj_conv = hk.Conv2D(
-                output_channels=channels[0],
+                output_channels=channels[1],
                 kernel_shape=1,
                 stride=stride,
                 with_bias=False,
@@ -287,8 +287,6 @@ def resnet18(size: Union[int, Sequence[int]],
         init_conv_size = size[0]
         sizes = size[1:]
         sizes = [sizes[i:i+4] for i in range(0, 16, 4)]
-
-    print(sizes)
 
     resnet_config = {
                     "blocks_per_group": (2, 2, 2, 2),

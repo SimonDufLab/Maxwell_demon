@@ -297,6 +297,8 @@ def extract_layer_lists(params):
     we know that they will be in the desired order. This order is not guaranteed to remain the same, that's why we want
     to do it once. Returned layer lists will be kept in memory for later usage"""
     layers_name = list(params.keys())
+    print(layers_name)
+    raise SystemExit
     # print(layers_name)
     # Remove norm layer form layers_name list; nothing to prune in them
     _layers_name = []
@@ -345,27 +347,31 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         # print(neurons_state[i].shape)
         for dict_key in filtered_params[layer].keys():
             if ("conv_1" in layer) and (shortcut_counter < len(_shortcut_layers)):
+                shortcut_layer = _shortcut_layers[shortcut_counter]
                 location = layer.index("block")
                 if layer[location:location+7] == _shortcut_layers[shortcut_counter][location:location+7]:
-                    shortcut_flag = True
+                    in_shortcut_flag = False
+                    out_shortcut_flag = True
                     shortcut_layer = _shortcut_layers[shortcut_counter]
                     shortcut_counter += 1
                 else:
-                    shortcut_flag = False
+                    in_shortcut_flag = True
+                    out_shortcut_flag = False
             else:
-                shortcut_flag = False
+                in_shortcut_flag = False
+                out_shortcut_flag = False
             # print(filtered_params[layer][dict_key].shape)
             # print(layer)
             # print(dict_key)
             # print(neurons_state[i].shape)
             filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
-            if shortcut_flag:
+            if out_shortcut_flag:
                 filtered_params[shortcut_layer][dict_key] = filtered_params[shortcut_layer][dict_key][..., neurons_state[i]]
             if opt_state:
                 for j, field in enumerate(filter_in_opt_state):
                     # print(field)
                     filter_in_opt_state[j][layer][dict_key] = field[layer][dict_key][..., neurons_state[i]]
-                    if shortcut_flag:
+                    if out_shortcut_flag:
                         filter_in_opt_state[j][shortcut_layer][dict_key] = field[shortcut_layer][dict_key][..., neurons_state[i]]
 
         # for dict_key in filtered_params[layers_name[i+1]].keys():
@@ -379,10 +385,16 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         else:
             current_state = neurons_state[i]
         filtered_params[_layers_name[i+1]]['w'] = filtered_params[_layers_name[i+1]]['w'][..., current_state, :]
+        if in_shortcut_flag:
+            filtered_params[shortcut_layer]['w'] = filtered_params[shortcut_layer]['w'][..., current_state, :]
         if opt_state:
             for j, field in enumerate(filter_in_opt_state):
                 filter_in_opt_state[j][_layers_name[i + 1]]['w'] = filter_in_opt_state[j][_layers_name[i + 1]]['w'][...,
                                                                   current_state, :]
+                if in_shortcut_flag:
+                    filter_in_opt_state[j][shortcut_layer]['w'] = filter_in_opt_state[j][shortcut_layer]['w'][
+                                                                       ...,
+                                                                       current_state, :]
 
     if opt_state:
         filtered_opt_state, empty_state = copy.copy(opt_state)
