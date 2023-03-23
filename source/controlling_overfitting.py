@@ -271,6 +271,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
         opt_state = opt.init(params)
+        frozen_layer_lists = utl.extract_layer_lists(params)
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
@@ -381,7 +382,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 if exp_config.dynamic_pruning and step >= exp_config.prune_after:
                     # Pruning the network
-                    params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, opt_state)
+                    params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, frozen_layer_lists, opt_state)
+                    print(jax.tree_map(jnp.shape, params))
                     architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
                     architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
                     net = build_models(*architecture)
