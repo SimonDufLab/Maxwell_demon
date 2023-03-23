@@ -297,19 +297,31 @@ def extract_layer_lists(params):
     we know that they will be in the desired order. This order is not guaranteed to remain the same, that's why we want
     to do it once. Returned layer lists will be kept in memory for later usage"""
     layers_name = list(params.keys())
-    print(layers_name)
-    raise SystemExit
     # print(layers_name)
     # Remove norm layer form layers_name list; nothing to prune in them
     _layers_name = []
     _shorcut_layers = []
+    _short_bn_layers = []
+    _bn_layers = []
     for layer in layers_name:
         if ("norm" not in layer) and ("bn" not in layer) and ('short' not in layer):
             _layers_name.append(layer)
-        if ('short' in layer) and ("norm" not in layer):
+        elif ('short' in layer) and ("norm" not in layer):
             _shorcut_layers.append(layer)
+        elif ('short' in layer) and ("norm" in layer):
+            _short_bn_layers.append(layer)
+        elif ("bn" in layer) or ("norm" in layer):
+            _bn_layers.append(layer)
+    # print(layers_name)
+    # print()
+    # print(_layers_name)
+    # print(len(_layers_name))
+    # print(_bn_layers)
+    # print(len(_bn_layers))
+    # print(_shorcut_layers)
+    # print(len(_shorcut_layers))
 
-    return _layers_name, _shorcut_layers
+    return _layers_name, _shorcut_layers, _bn_layers, _short_bn_layers
 
 
 def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_state=None):
@@ -333,7 +345,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             field_names.remove('count')
         filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
 
-    _layers_name, _shortcut_layers = frozen_layer_lists
+    _layers_name, _shortcut_layers, _bn_layers, _short_bn_layers = frozen_layer_lists
     # print(len(_layers_name))
     # print(len(_shorcut_layers))
     # print(len(neurons_state))
@@ -353,6 +365,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                     in_shortcut_flag = False
                     out_shortcut_flag = True
                     shortcut_layer = _shortcut_layers[shortcut_counter]
+                    shortcut_bn = _short_bn_layers[shortcut_counter]
                     shortcut_counter += 1
                 else:
                     in_shortcut_flag = True
@@ -367,12 +380,24 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
             if out_shortcut_flag:
                 filtered_params[shortcut_layer][dict_key] = filtered_params[shortcut_layer][dict_key][..., neurons_state[i]]
+                for d_key in filtered_params[shortcut_bn].keys():
+                    filtered_params[shortcut_bn][d_key] = filtered_params[shortcut_bn][d_key][..., neurons_state[i]]
             if opt_state:
                 for j, field in enumerate(filter_in_opt_state):
                     # print(field)
                     filter_in_opt_state[j][layer][dict_key] = field[layer][dict_key][..., neurons_state[i]]
                     if out_shortcut_flag:
                         filter_in_opt_state[j][shortcut_layer][dict_key] = field[shortcut_layer][dict_key][..., neurons_state[i]]
+                        for d_key in filtered_params[shortcut_bn].keys():
+                            filter_in_opt_state[j][shortcut_bn][d_key] = field[shortcut_bn][d_key][..., neurons_state[i]]
+        for dict_key in filtered_params[_bn_layers[i]].keys():
+            # print(layer)
+            # print(_bn_layers[i])
+            filtered_params[_bn_layers[i]][dict_key] = filtered_params[_bn_layers[i]][dict_key][..., neurons_state[i]]
+            if opt_state:
+                for j, field in enumerate(filter_in_opt_state):
+                    # print(field)
+                    filter_in_opt_state[j][_bn_layers[i]][dict_key] = field[_bn_layers[i]][dict_key][..., neurons_state[i]]
 
         # for dict_key in filtered_params[layers_name[i+1]].keys():
         #     print(neurons_state[i].shape)

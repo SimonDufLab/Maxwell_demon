@@ -383,6 +383,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if exp_config.dynamic_pruning and step >= exp_config.prune_after:
                     # Pruning the network
                     params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, frozen_layer_lists, opt_state)
+                    print(jax.tree_map(jnp.shape, params))
                     architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
                     architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
                     net = build_models(*architecture)
