@@ -84,7 +84,8 @@ class ResnetBlock(hk.Module):
                 stride=stride,
                 with_bias=False,
                 padding="SAME",
-                name="shortcut_conv")
+                name="shortcut_conv",
+                **default_block_conv_config)
 
             self.proj_batchnorm = hk.BatchNorm(name="shortcut_batchnorm", **bn_config)
 
@@ -95,7 +96,8 @@ class ResnetBlock(hk.Module):
             stride=1 if bottleneck else stride,
             with_bias=False,
             padding="SAME",
-            name="conv_0")
+            name="conv_0",
+            **default_block_conv_config)
         bn_0 = hk.BatchNorm(name="batchnorm_0", **bn_config)
 
         conv_1 = hk.Conv2D(
@@ -104,7 +106,8 @@ class ResnetBlock(hk.Module):
             stride=stride if bottleneck else 1,
             with_bias=False,
             padding="SAME",
-            name="conv_1")
+            name="conv_1",
+            **default_block_conv_config)
 
         bn_1 = hk.BatchNorm(name="batchnorm_1", **bn_config)
         layers = ((conv_0, bn_0), (conv_1, bn_1))
@@ -116,7 +119,8 @@ class ResnetBlock(hk.Module):
                 stride=1,
                 with_bias=False,
                 padding="SAME",
-                name="conv_2")
+                name="conv_2",
+                **default_block_conv_config)
 
             bn_2 = hk.BatchNorm(name="batchnorm_2", scale_init=jnp.zeros, **bn_config)
             layers = layers + ((conv_2, bn_2),)
@@ -263,12 +267,16 @@ def resnet_model(blocks_per_group: Sequence[int],
     return train_layers, test_layers
 
 
-default_logits_config = {"w_init": jnp.zeros, "name": "logits"}
+kaiming_normal = hk.initializers.VarianceScaling(2.0, 'fan_in', "truncated_normal")
+# default_logits_config = {"w_init": jnp.zeros, "name": "logits"}
+default_logits_config = {"name": "logits"}
 default_initial_conv_config = {"kernel_shape": 7,
                                "stride": 2,
                                "with_bias": False,
                                "padding": "SAME",
-                               "name": "initial_conv"}
+                               "name": "initial_conv",
+                               "w_init": kaiming_normal}
+default_block_conv_config = {"w_init": kaiming_normal}
 
 
 def resnet18(size: Union[int, Sequence[int]],
