@@ -147,7 +147,14 @@ class ResnetBlock(hk.Module):
                 out = self.activation_fn(out)
                 activations.append(out)
 
-        out = self.activation_fn(out + shortcut)
+        try:
+            out = self.activation_fn(out + shortcut)
+        except:
+            print(out.shape)
+            print(shortcut.shape)
+            print(self.layers[-1][0].name)
+            print(self.proj_conv.name)
+            raise SystemExit
         activations.append(out)
 
         return out, activations

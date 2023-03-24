@@ -324,7 +324,7 @@ def extract_layer_lists(params):
     return _layers_name, _shorcut_layers, _bn_layers, _short_bn_layers
 
 
-def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_state=None):
+def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_state=None, state=None):
     """Given the current params and the neuron state (True if dead) returns a
      filtered params dict (and its associated optimizer state) with dead weights
       removed and the new size of the layers (that is, # of conv filters or # of
@@ -344,6 +344,9 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         if 'count' in field_names:
             field_names.remove('count')
         filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
+    if state:
+        filtered_state = copy.deepcopy(state)
+        state_names = ["/~/var_ema", "/~/mean_ema"]
 
     _layers_name, _shortcut_layers, _bn_layers, _short_bn_layers = frozen_layer_lists
     # print(len(_layers_name))
@@ -357,39 +360,55 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
     for i, layer in enumerate(_layers_name[:-1]):
         # print(i, layer)
         # print(neurons_state[i].shape)
-        for dict_key in filtered_params[layer].keys():
-            if ("conv_1" in layer) and (shortcut_counter < len(_shortcut_layers)):
-                shortcut_layer = _shortcut_layers[shortcut_counter]
-                location = layer.index("block")
-                if layer[location:location+7] == _shortcut_layers[shortcut_counter][location:location+7]:
-                    in_shortcut_flag = False
-                    out_shortcut_flag = True
-                    shortcut_layer = _shortcut_layers[shortcut_counter]
-                    shortcut_bn = _short_bn_layers[shortcut_counter]
-                    shortcut_counter += 1
-                else:
-                    in_shortcut_flag = True
-                    out_shortcut_flag = False
-            else:
+        if ("conv_1" in layer) and (shortcut_counter < len(_shortcut_layers)):
+            shortcut_layer = _shortcut_layers[shortcut_counter]
+            location = layer.index("block")
+            if layer[location:location + 7] == _shortcut_layers[shortcut_counter][location:location + 7]:
                 in_shortcut_flag = False
+                out_shortcut_flag = True
+                shortcut_layer = _shortcut_layers[shortcut_counter]
+                shortcut_bn = _short_bn_layers[shortcut_counter]
+                shortcut_counter += 1
+            else:
+                in_shortcut_flag = True
                 out_shortcut_flag = False
+        else:
+            in_shortcut_flag = False
+            out_shortcut_flag = False
+        for dict_key in filtered_params[layer].keys():
             # print(filtered_params[layer][dict_key].shape)
             # print(layer)
             # print(dict_key)
             # print(neurons_state[i].shape)
             filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
+            print(layer, jax.tree_map(jnp.shape, filtered_params[layer]))
             if out_shortcut_flag:
                 filtered_params[shortcut_layer][dict_key] = filtered_params[shortcut_layer][dict_key][..., neurons_state[i]]
-                for d_key in filtered_params[shortcut_bn].keys():
-                    filtered_params[shortcut_bn][d_key] = filtered_params[shortcut_bn][d_key][..., neurons_state[i]]
+                print(shortcut_layer, jax.tree_map(jnp.shape, filtered_params[shortcut_layer]))
             if opt_state:
                 for j, field in enumerate(filter_in_opt_state):
                     # print(field)
                     filter_in_opt_state[j][layer][dict_key] = field[layer][dict_key][..., neurons_state[i]]
                     if out_shortcut_flag:
                         filter_in_opt_state[j][shortcut_layer][dict_key] = field[shortcut_layer][dict_key][..., neurons_state[i]]
-                        for d_key in filtered_params[shortcut_bn].keys():
-                            filter_in_opt_state[j][shortcut_bn][d_key] = field[shortcut_bn][d_key][..., neurons_state[i]]
+        if out_shortcut_flag:
+            for d_key in filtered_params[shortcut_bn].keys():
+                filtered_params[shortcut_bn][d_key] = filtered_params[shortcut_bn][d_key][..., neurons_state[i]]
+            if opt_state:
+                for d_key in filtered_params[shortcut_bn].keys():
+                    filter_in_opt_state[j][shortcut_bn][d_key] = field[shortcut_bn][d_key][..., neurons_state[i]]
+            print(shortcut_bn, jax.tree_map(jnp.shape, filtered_params[shortcut_bn]))
+        if state:
+            for nme in state_names:
+                filtered_state[_bn_layers[i] + nme]["average"] = filtered_state[_bn_layers[i] + nme]["average"][
+                    ..., neurons_state[i]]
+                filtered_state[_bn_layers[i] + nme]["hidden"] = filtered_state[_bn_layers[i] + nme]["hidden"][
+                    ..., neurons_state[i]]
+                if out_shortcut_flag:
+                    filtered_state[shortcut_bn + nme]["average"] = filtered_state[shortcut_bn + nme]["average"][
+                        ..., neurons_state[i]]
+                    filtered_state[shortcut_bn + nme]["hidden"] = filtered_state[shortcut_bn + nme]["hidden"][
+                        ..., neurons_state[i]]
         for dict_key in filtered_params[_bn_layers[i]].keys():
             # print(layer)
             # print(_bn_layers[i])
@@ -398,6 +417,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                 for j, field in enumerate(filter_in_opt_state):
                     # print(field)
                     filter_in_opt_state[j][_bn_layers[i]][dict_key] = field[_bn_layers[i]][dict_key][..., neurons_state[i]]
+        print(_bn_layers[i], jax.tree_map(jnp.shape, filtered_params[_bn_layers[i]]))
 
         # for dict_key in filtered_params[layers_name[i+1]].keys():
         #     print(neurons_state[i].shape)
@@ -436,9 +456,13 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
     # print(list(filtered_params.keys()))
 
     if opt_state:
-        return filtered_params, new_opt_state, tuple(new_sizes)
+        if state:
+            return filtered_params, new_opt_state, filtered_state, tuple(new_sizes)
     else:
-        return filtered_params, tuple(new_sizes)
+        if state:
+            return filtered_params, filtered_state, tuple(new_sizes)
+        else:
+            return filtered_params, tuple(new_sizes)
 
 
 # def rebuild_model(new_architecture, sizes):
