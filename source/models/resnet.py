@@ -8,8 +8,55 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from haiku.nets import ResNet
 from haiku._src.nets.resnet import check_length
+from haiku._src.utils import replicate
+from haiku._src.conv import to_dimension_numbers
 
 FloatStrOrBool = Union[str, float, bool]
+
+
+def init_identity_conv(shape, dtype):
+    eye = jnp.eye(shape[-1])
+    return eye.reshape(shape).astype(dtype)
+
+
+class IdentityConv2D(hk.Module):
+
+    def __init__(
+        self,
+        out_channels: int,
+        data_format: str = "NHWC",
+        name: Optional[str] = None,
+                ):
+        """ Utility layer that performs a convolution identity transformation initially. Maintain a state but no parameter.
+            Use to prune skip connections
+        """
+        super().__init__(name=name)
+        self.out_channels = out_channels
+        self.data_format = data_format
+        self.channel_index = hk.get_channel_index(data_format)
+        self.dimension_numbers = to_dimension_numbers(
+            2, channels_last=(self.channel_index == -1),
+            transpose=False)
+
+    def __call__(self,
+                 inputs: jax.Array,
+                 precision: Optional[jax.lax.Precision] = None,
+                 ) -> jax.Array:
+        w = hk.get_state("w", (1, 1, inputs.shape[-1], self.out_channels), inputs.dtype, init=init_identity_conv)
+
+        # out = jax.lax.conv(inputs, w, window_strides=replicate(1, 2, "strides"), padding="SAME")
+        out = jax.lax.conv_general_dilated(inputs,
+                                       w,
+                                       window_strides=replicate(1, 2, "strides"),
+                                       padding="SAME",
+                                       dimension_numbers=self.dimension_numbers,
+                                       precision=precision)
+
+        return out
+
+    @property
+    def w(self):
+        return hk.get_state("w")
 
 # def resnet_block(channels: int, stride: Union[int, Sequence[int]], use_projection: bool, bottleneck: bool,
 #                  is_training: bool, name: Optional[str] = None):
@@ -88,6 +135,8 @@ class ResnetBlock(hk.Module):
                 **default_block_conv_config)
 
             self.proj_batchnorm = hk.BatchNorm(name="shortcut_batchnorm", **bn_config)
+        else:
+            self.identity_skip = IdentityConv2D(out_channels=channels[1], name="identity_skip")
 
         channel_div = 4 if bottleneck else 1
         conv_0 = hk.Conv2D(
@@ -138,6 +187,8 @@ class ResnetBlock(hk.Module):
             shortcut = self.proj_conv(shortcut)
             if self.with_bn:
                 shortcut = self.proj_batchnorm(shortcut, self.is_training)
+        else:
+            shortcut = self.identity_skip(shortcut)
 
         for i, (conv_i, bn_i) in enumerate(self.layers):
             out = conv_i(out)
@@ -147,14 +198,14 @@ class ResnetBlock(hk.Module):
                 out = self.activation_fn(out)
                 activations.append(out)
 
-        try:
-            out = self.activation_fn(out + shortcut)
-        except:
-            print(out.shape)
-            print(shortcut.shape)
-            print(self.layers[-1][0].name)
-            print(self.proj_conv.name)
-            raise SystemExit
+        # try:
+        out = self.activation_fn(out + shortcut)
+        # except:
+        #     print(out.shape)
+        #     print(shortcut.shape)
+        #     print(self.layers[-1][0].name)
+        #     print(self.proj_conv.name)
+        #     raise SystemExit
         activations.append(out)
 
         return out, activations
