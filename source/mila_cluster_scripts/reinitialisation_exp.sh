@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=reinitialisation_exp
-#SBATCH --partition=unkillable                           # Ask for unkillable job
-#SBATCH --cpus-per-task=2                                # Ask for 2 CPUs
+#SBATCH --partition=long                           # Ask for unkillable job
+#SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=12G                                        # Ask for 10 GB of RAM
-#SBATCH --time=1:00:00                                  # The job will run for 1 hour
+#SBATCH --mem=16G                                        # Ask for 10 GB of RAM
+#SBATCH --time=8:00:00                                  # The job will run for 1 hour
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -39,5 +39,16 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    reg_param: float = 1e-4
 
 # Run experiments
-python source/reinitialisation_exp.py dataset='fashion mnist' regularizer=None
+#python source/reinitialisation_exp.py dataset='cifar100' total_steps=400001 compare_to_reset=False kept_classes=10 architecture='conv_3_2' 'size="(32, 100)"' activation='relu' reset_horizon=0.75 norm_grad=False with_bias=False
+#wait $!
+#python source/reinitialisation_exp.py dataset='cifar100' total_steps=400001 compare_to_reset=False kept_classes=10 activation='relu' with_bias=False
+#wait $!
+
+#python source/reinitialisation_exp.py dataset=mnist total_steps=100001 report_freq=1000 switching_period=5000 compare_to_reset=False architecture=conv_4_2_ln activation=threlu with_bias=False reduce_head=False mask_head=True info=funky_CL_with_LN 'size="(512, 768)"'
+#wait $!
+
+#python source/reinitialisation_exp.py total_steps=300001 report_freq=3000 switching_period=60000 kept_classes=2 train_batch_size=16 dataset=cifar10 lr=0.01 lr_schedule=piecewise_constant reduce_head=False mask_head=True regularizer=cdg_l2 freeze_and_reinit=True architecture=conv_4_2 'size="(128, 512)"' reg_param=0.01 optimizer=momentum9 sequential_classes=True reg_param_decay_cycles=4 info=freeze_and_reinit_reduce_head_gap_conv_4_2_cifar10 init_seed=41 reduce_head_gap=True tanh_head=False
+#wait $!
+
+python source/reinitialisation_exp.py total_steps=300001 report_freq=3000 switching_period=60000 kept_classes=2 train_batch_size=16 dataset=cifar10 lr=0.01 lr_schedule=piecewise_constant reduce_head=False mask_head=True regularizer=cdg_l2 freeze_and_reinit=True architecture=conv_4_2 'size="(128, 512)"' reg_param=0.01 optimizer=momentum9 sequential_classes=True reg_param_decay_cycles=4 info=freeze_and_reinit_tanh_head_conv_4_2_cifar10 init_seed=41 reduce_head_gap=False tanh_head=True
 wait $!
