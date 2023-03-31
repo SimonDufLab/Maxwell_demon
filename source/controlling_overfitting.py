@@ -277,6 +277,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
         total_neurons, total_per_layer = starting_neurons, starting_per_layer
+        init_total_neurons = copy.copy(total_neurons)
+        init_total_per_layer = copy.copy(total_per_layer)
+
+        initial_params_count = utl.count_params(params)
 
         decaying_reg_param = copy.deepcopy(reg_param)
         decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
@@ -329,7 +333,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                       name="Quasi-live neurons", step=step,
                                       context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
                 exp_run.track(test_accuracy, name="Test accuracy", step=step,
-                              context={"reg param": utl.size_to_string(reg_param)})
+                                 context={"reg param": utl.size_to_string(reg_param)})
                 exp_run.track(train_accuracy, name="Train accuracy", step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
                 exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
@@ -382,9 +386,11 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 if exp_config.dynamic_pruning and step >= exp_config.prune_after:
                     # Pruning the network
-                    params, opt_state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons, frozen_layer_lists, opt_state)
-                    print(jax.tree_map(jnp.shape, params))
-                    architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+                    params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons,
+                                                                                          frozen_layer_lists, opt_state,
+                                                                                          state)
+                    architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+                        exp_config.architecture]
                     architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
@@ -484,6 +490,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
         final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
+        pruned_params, _, _, _ = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+                                                                 frozen_layer_lists, opt_state,
+                                                                 state)
+        final_params_count = utl.count_params(pruned_params)
         del final_dead_neurons  # Freeing memory
 
         activations_max, activations_mean, activations_count, _ = activations_data
@@ -554,7 +564,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                               step=log_step, context={"epsilon": eps})
 
         for i, layer_dead in enumerate(final_dead_per_layer):
-            total_neuron_in_layer = total_per_layer[i]
+            total_neuron_in_layer = init_total_per_layer[i]
             live_in_layer = total_neuron_in_layer - layer_dead
             exp_run.track(jax.device_get(live_in_layer),
                           name=f"Live neurons in layer {i} after convergence w/r reg param",
@@ -566,10 +576,14 @@ def run_exp(exp_config: ExpConfig) -> None:
                       name="Accuracy after convergence w/r reg param", step=log_step)
         exp_run.track(final_train_acc,
                       name="Train accuracy after convergence w/r reg param", step=log_step)
-        log_sparsity_step = jax.device_get(total_live_neurons/total_neurons) * 1000
+        log_sparsity_step = jax.device_get(total_live_neurons/init_total_neurons) * 1000
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
-        if not exp_config.dynamic_pruning: # Cannot take norm between initial and pruned params
+        log_params_sparsity_step = final_params_count/initial_params_count * 1000
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r percent*10 of params remaining",
+                      step=log_params_sparsity_step)
+        if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
             params_vec, _ = ravel_pytree(params)
             initial_params_vec, _ = ravel_pytree(initial_params)
             exp_run.track(
