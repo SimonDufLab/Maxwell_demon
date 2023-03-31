@@ -100,6 +100,7 @@ class IdentityConv2D(hk.Module):
 #     bn_1 = hk.BatchNorm(name="batchnorm_1", *bn_config)
 #     layers = ((conv_0, bn_0), (conv_1, bn_1))
 
+
 # global batch normalization configuration
 base_bn_config = {"create_scale": True, "create_offset": True, "decay_rate": 0.999}
 
