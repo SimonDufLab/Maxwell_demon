@@ -39,9 +39,9 @@ class IdentityConv2D(hk.Module):
             transpose=False)
 
     def __call__(self,
-                 inputs: jax.Array,
+                 inputs: Any,  # Used to be jax.Array; but cluster jax version < 0.4.1 (not compatible)
                  precision: Optional[jax.lax.Precision] = None,
-                 ) -> jax.Array:
+                 ) -> Any: # Again; switch to jax.Array when version updated on cluster
         w = hk.get_state("w", (1, 1, inputs.shape[-1], self.out_channels), inputs.dtype, init=init_identity_conv)
 
         # out = jax.lax.conv(inputs, w, window_strides=replicate(1, 2, "strides"), padding="SAME")
