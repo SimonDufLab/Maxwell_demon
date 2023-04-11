@@ -375,17 +375,18 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                 shortcut_bn = _short_bn_layers[shortcut_counter]
                 shortcut_counter += 1
                 identity_skip_counter += 1
+
             elif layer[location:location + 7] == "block/~":
                 in_skip_flag = True
                 out_skip_flag = True
                 in_shortcut_flag = False
                 out_shortcut_flag = False
-                identity_skip_counter += 1
             else:
                 in_skip_flag = False
                 out_skip_flag = True
                 in_shortcut_flag = True
                 out_shortcut_flag = False
+
         elif "initial_conv" in layer:
             in_skip_flag = True
             out_skip_flag = False
@@ -438,11 +439,14 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                     filtered_state[shortcut_bn + nme]["hidden"] = filtered_state[shortcut_bn + nme]["hidden"][
                         ..., neurons_state[i]]
             if out_skip_flag:
+                ind = identity_skip_counter
+                if layer[location:location + 7] == "block/~":
+                    identity_skip_counter += 1
                 # print("out pruning")
+                # print(ind)
                 # print(layer)
                 # print(_identity_state_name[ind])
                 # print()
-                ind = identity_skip_counter
                 filtered_state[_identity_state_name[ind]]["w"] = filtered_state[_identity_state_name[ind]]["w"][
                     ..., neurons_state[i]]
         for dict_key in filtered_params[_bn_layers[i]].keys():
@@ -476,6 +480,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         if in_skip_flag:
             ind = identity_skip_counter
             # print("in pruning")
+            # print(ind)
             # print(layer)
             # print(_identity_state_name[ind])
             # print()
@@ -483,10 +488,13 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                                                              current_state, :]
         if opt_state:
             for j, field in enumerate(filter_in_opt_state):
-                filter_in_opt_state[j][_layers_name[i + 1]]['w'] = filter_in_opt_state[j][_layers_name[i + 1]]['w'][...,
+                # print()
+                # print(layer + "-->", _layers_name[i+1])
+                # print()
+                filter_in_opt_state[j][_layers_name[i + 1]]['w'] = field[_layers_name[i + 1]]['w'][...,
                                                                   current_state, :]
                 if in_shortcut_flag:
-                    filter_in_opt_state[j][shortcut_layer]['w'] = filter_in_opt_state[j][shortcut_layer]['w'][
+                    filter_in_opt_state[j][shortcut_layer]['w'] = field[shortcut_layer]['w'][
                                                                        ...,
                                                                        current_state, :]
 

@@ -272,6 +272,14 @@ def run_exp(exp_config: ExpConfig) -> None:
         initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
         opt_state = opt.init(params)
         frozen_layer_lists = utl.extract_layer_lists(params)
+        # print(frozen_layer_lists)
+        # print()
+        # print("state")
+        # print(jax.tree_map(jnp.shape, state))
+        # print()
+        # print("opt_state")
+        # print(jax.tree_map(jnp.shape, opt_state))
+        # raise SystemExit
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
@@ -394,6 +402,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                     architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
                     net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+                    # for _layer_name in params.keys():
+                    #     if "logit" in _layer_name:
+                    #         print("final_countdown")
+                    #         print(jax.tree_map(jnp.shape, params[_layer_name]))
+                    #         print()
 
                     # Clear previous cache
                     loss.clear_cache()
