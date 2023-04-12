@@ -351,6 +351,8 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         # print(_identity_state_name)
 
     _layers_name, _shortcut_layers, _bn_layers, _short_bn_layers = frozen_layer_lists
+    # Flag to check if there is shortcut bn layers (yes if ResnetBlockV1, no if V2)
+    shcut_bn_flag = len(_short_bn_layers) > 0
     # print(len(_layers_name))
     # print(len(_shorcut_layers))
     # print(len(neurons_state))
@@ -372,7 +374,8 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                 in_shortcut_flag = False
                 out_shortcut_flag = True
                 shortcut_layer = _shortcut_layers[shortcut_counter]
-                shortcut_bn = _short_bn_layers[shortcut_counter]
+                if shcut_bn_flag:
+                    shortcut_bn = _short_bn_layers[shortcut_counter]
                 shortcut_counter += 1
                 identity_skip_counter += 1
 
@@ -419,7 +422,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                     filter_in_opt_state[j][layer][dict_key] = field[layer][dict_key][..., neurons_state[i]]
                     if out_shortcut_flag:
                         filter_in_opt_state[j][shortcut_layer][dict_key] = field[shortcut_layer][dict_key][..., neurons_state[i]]
-        if out_shortcut_flag:
+        if out_shortcut_flag and shcut_bn_flag:
             for d_key in filtered_params[shortcut_bn].keys():
                 filtered_params[shortcut_bn][d_key] = filtered_params[shortcut_bn][d_key][..., neurons_state[i]]
             if opt_state:
@@ -433,7 +436,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                     ..., neurons_state[i]]
                 filtered_state[_bn_layers[i] + nme]["hidden"] = filtered_state[_bn_layers[i] + nme]["hidden"][
                     ..., neurons_state[i]]
-                if out_shortcut_flag:
+                if out_shortcut_flag and shcut_bn_flag:
                     filtered_state[shortcut_bn + nme]["average"] = filtered_state[shortcut_bn + nme]["average"][
                         ..., neurons_state[i]]
                     filtered_state[shortcut_bn + nme]["hidden"] = filtered_state[shortcut_bn + nme]["hidden"][

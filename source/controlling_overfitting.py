@@ -380,9 +380,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                                   name=f"Live neurons in layer {i}; whole training dataset", step=step,
                                   context={"reg param": utl.size_to_string(reg_param)})
                 del dead_per_layers
+                # if decay_cycles > 1:  # Don't record, aim metric don't support y value smaller than 0.001 ...
+                #     exp_run.track(decaying_reg_param, name="Current reg_param value", step=step,
+                #                   context={"reg param": utl.size_to_string(reg_param)})
 
                 if exp_config.measure_linear_perf:
-                    # Record performance over full validation set of the NN for relu and linear activations
+                    # Record performance over full validation set of the NN for relu and decaying_reg_paramlinear activations
                     relu_perf = jax.device_get(final_accuracy_fn(params, state, test_eval))
                     exp_run.track(relu_perf,
                                   name="Total accuracy for relu NN", step=step,
