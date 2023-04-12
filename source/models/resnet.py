@@ -105,7 +105,7 @@ class IdentityConv2D(hk.Module):
 base_bn_config = {"create_scale": True, "create_offset": True, "decay_rate": 0.999}
 
 
-class ResnetBlock(hk.Module):
+class ResnetBlockV1(hk.Module):
     """Resnet block that also outputs the activations"""
 
     def __init__(
@@ -212,6 +212,58 @@ class ResnetBlock(hk.Module):
         return out, activations
 
 
+class ResnetBlockV2(ResnetBlockV1):
+    """ Resnet block that also outputs the activations
+        Difference with V1: bn is after concatenation with shortcut"""
+
+    def __init__(
+            self,
+            channels: Sequence[int],
+            stride: Union[int, Sequence[int]],
+            activation_fn: Callable,
+            use_projection: bool,
+            bottleneck: bool,
+            is_training: bool,
+            with_bn: bool,
+            bn_config: dict = base_bn_config,
+            name: Optional[str] = None,
+    ):
+        super().__init__(
+            channels=channels,
+            stride=stride,
+            activation_fn=activation_fn,
+            use_projection=use_projection,
+            bottleneck=bottleneck,
+            is_training=is_training,
+            with_bn=with_bn,
+            bn_config=bn_config,
+            name=name)
+
+    def __call__(self, inputs):
+        out = shortcut = inputs
+        activations = []
+
+        if self.use_projection:
+            shortcut = self.proj_conv(shortcut)
+        else:
+            shortcut = self.identity_skip(shortcut)
+
+        for i, (conv_i, bn_i) in enumerate(self.layers):
+            out = conv_i(out)
+            if i < len(self.layers) - 1:  # Don't apply activation and bn right away on last block layer
+                if self.with_bn:
+                    out = bn_i(out, self.is_training)
+                out = self.activation_fn(out)
+                activations.append(out)
+
+        out = self.activation_fn(out + shortcut)
+        if self.with_bn:
+            out = bn_i(out, self.is_training)
+        activations.append(out)
+
+        return out, activations
+
+
 class ResnetInit(hk.Module):
     """Create the initial layer for resnet models"""
     def __init__(
@@ -237,7 +289,7 @@ class ResnetInit(hk.Module):
 
 
 def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Sequence[int]], activation_fn: Callable, bottleneck: bool,
-                use_projection: bool, with_bn: bool, bn_config: dict):
+                use_projection: bool, with_bn: bool, bn_config: dict, resnet_block: hk.Module = ResnetBlockV1):
     """Adapted from: https://github.com/deepmind/dm-haiku/blob/d6e3c2085253735c3179018be495ebabf1e6b17c/
     haiku/_src/nets/resnet.py#L200"""
 
@@ -247,7 +299,7 @@ def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Seq
 
     for i in range(num_blocks):
         train_layers.append(
-            [Partial(ResnetBlock, channels=channels[i*layer_per_block:(i+1)*layer_per_block],
+            [Partial(resnet_block, channels=channels[i*layer_per_block:(i+1)*layer_per_block],
                      stride=(1 if i else stride),
                      activation_fn=activation_fn,
                      use_projection=(i == 0 and use_projection),
@@ -257,7 +309,7 @@ def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Seq
                      is_training=True,)])
                      # name=f"block_{i}")])
         test_layers.append(
-            [Partial(ResnetBlock, channels=channels[i*layer_per_block:(i+1)*layer_per_block],
+            [Partial(resnet_block, channels=channels[i*layer_per_block:(i+1)*layer_per_block],
                      stride=(1 if i else stride),
                      activation_fn=activation_fn,
                      use_projection=(i == 0 and use_projection),
@@ -279,6 +331,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                  logits_config: Optional[Mapping[str, Any]] = None,
                  with_bn: bool = True,
                  bn_config: dict = base_bn_config,
+                 resnet_block: hk.Module = ResnetBlockV1,  # Either V1 or V2
                  name: Optional[str] = None,
                  initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
                  strides: Sequence[int] = (1, 2, 2, 2),):
@@ -306,7 +359,8 @@ def resnet_model(blocks_per_group: Sequence[int],
                                                             bottleneck=bottleneck,
                                                             use_projection=use_projection[i],
                                                             with_bn=with_bn,
-                                                            bn_config=bn_config)
+                                                            bn_config=bn_config,
+                                                            resnet_block=resnet_block)
         if i == 0:
             max_pool = Partial(hk.MaxPool, window_shape=(1, 3, 3, 1), strides=(1, 2, 2, 1), padding="SAME")
             block_train_layers[0] = [max_pool] + block_train_layers[0]
@@ -345,7 +399,10 @@ def resnet18(size: Union[int, Sequence[int]],
              initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = default_initial_conv_config,
              strides: Sequence[int] = (1, 2, 2, 2),
              with_bn: bool = True,
-             bn_config: dict = base_bn_config):
+             bn_config: dict = base_bn_config,
+             version: str = 'V1'):
+
+    assert version in ["V1", "V2"], "version must be either V1 or V2"
 
     if type(size) == int:
         init_conv_size = size
@@ -364,10 +421,16 @@ def resnet18(size: Union[int, Sequence[int]],
                     }
     default_initial_conv_config["output_channels"] = init_conv_size
 
+    if version == "V1":
+        resnet_block_type = ResnetBlockV1
+    elif version == "V2":
+        resnet_block_type = ResnetBlockV2
+
     return resnet_model(num_classes=num_classes,
                         activation_fn=activation_fn,
                         initial_conv_config=initial_conv_config,
                         strides=strides,
                         logits_config=logits_config,
                         with_bn=with_bn,
+                        resnet_block=resnet_block_type,
                         **resnet_config)

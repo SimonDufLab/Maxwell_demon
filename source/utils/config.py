@@ -62,6 +62,7 @@ architecture_choice = {
     "conv_4_2_ln": conv_4_2_ln,  # TODO: eventually switch to ln_architecture_choice, like bn
     "conv_6_2": conv_6_2,
     "resnet18": Partial(resnet18, with_bn=False),
+    "resnet18_v2": Partial(resnet18, with_bn=False, version="V2"),
 }
 
 architecture_choice_dropout = {
@@ -75,6 +76,7 @@ bn_architecture_choice = {
     "conv_4_2": conv_4_2_bn,
     "conv_6_2": conv_6_2_bn,
     "resnet18": resnet18,
+    "resnet18_v2": Partial(resnet18, version="V2"),
 }
 
 bn_config_choice = {
