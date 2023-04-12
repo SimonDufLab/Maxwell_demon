@@ -414,7 +414,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
             # print(layer, jax.tree_map(jnp.shape, filtered_params[layer]))
             if out_shortcut_flag:
-                filtered_params[shortcut_layer][dict_key] = filtered_params[shortcut_layer][dict_key][..., neurons_state[i]]
+                    filtered_params[shortcut_layer][dict_key] = filtered_params[shortcut_layer][dict_key][..., neurons_state[i]]
                 # print(shortcut_layer, jax.tree_map(jnp.shape, filtered_params[shortcut_layer]))
             if opt_state:
                 for j, field in enumerate(filter_in_opt_state):
@@ -1225,7 +1225,7 @@ def get_total_neurons(architecture, sizes):
     elif architecture == 'conv_6_2':
         if len(sizes) == 2:  # Size can be specified with 2 args
             sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
-    elif architecture == "resnet18":
+    elif architecture == "resnet18" or architecture == "resnet18_v2":
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes,
                      sizes, sizes,
