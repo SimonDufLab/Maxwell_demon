@@ -20,6 +20,7 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
 from jax.flatten_util import ravel_pytree
+from jax.tree_util import Partial
 
 import utils.utils as utl
 from utils.utils import build_models
@@ -117,6 +118,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
+    assert not (exp_config.optimizer == "adamw" and bool(
+        exp_config.regularizer)), "Don't use wd along regularization loss"
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
     if type(exp_config.reg_params) == str:
@@ -231,17 +234,20 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **net_config)
             lin_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
+        optimizer = optimizer_choice[exp_config.optimizer]
+        if exp_config.optimizer == "adamw":  # Pass reg_param to wd argument of adamw
+            optimizer = Partial(optimizer, weight_decay=reg_param)
         opt_chain = []
         if exp_config.gradient_clipping:
             opt_chain.append(optax.clip(0.1))
 
         if 'noisy' in exp_config.optimizer:
-            opt_chain.append(optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noise_eta,
+            opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
                                                          gamma=exp_config.noise_gamma))
         else:
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
                                                                       exp_config.final_lr, exp_config.lr_decay_steps)
-            opt_chain.append(optimizer_choice[exp_config.optimizer](lr_schedule))
+            opt_chain.append(optimizer(lr_schedule))
         opt = optax.chain(*opt_chain)
         accuracies_log = []
 
