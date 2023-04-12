@@ -17,6 +17,7 @@ from utils.utils import identity_fn, threlu
 
 optimizer_choice = {
     "adam": optax.adam,
+    "adamw": optax.adamw,
     "sgd": optax.sgd,
     "noisy_sgd": optax.noisy_sgd,
     "momentum9": Partial(optax.sgd, momentum=0.9),

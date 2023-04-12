@@ -368,7 +368,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         if ("conv_1" in layer) and (shortcut_counter < len(_shortcut_layers)):
             shortcut_layer = _shortcut_layers[shortcut_counter]
             location = layer.index("block")
-            if layer[location:location + 7] == _shortcut_layers[shortcut_counter][location:location + 7]:
+            if layer[location:location + 10] == _shortcut_layers[shortcut_counter][location:location + 10]:
                 in_skip_flag = True
                 out_skip_flag = False
                 in_shortcut_flag = False
@@ -379,7 +379,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                 shortcut_counter += 1
                 identity_skip_counter += 1
 
-            elif layer[location:location + 7] == "block/~":
+            elif layer[location:location + 10] == "block_v1/~" or layer[location:location + 10] == "block_v2/~":
                 in_skip_flag = True
                 out_skip_flag = True
                 in_shortcut_flag = False
@@ -396,7 +396,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             in_shortcut_flag = False
             out_shortcut_flag = False
             identity_skip_counter += 1
-        elif "block_7/~/conv_1" in layer:
+        elif "_7/~/conv_1" in layer:
             in_skip_flag = False
             out_skip_flag = True
             in_shortcut_flag = False
@@ -414,7 +414,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             filtered_params[layer][dict_key] = filtered_params[layer][dict_key][..., neurons_state[i]]
             # print(layer, jax.tree_map(jnp.shape, filtered_params[layer]))
             if out_shortcut_flag:
-                    filtered_params[shortcut_layer][dict_key] = filtered_params[shortcut_layer][dict_key][..., neurons_state[i]]
+                filtered_params[shortcut_layer][dict_key] = filtered_params[shortcut_layer][dict_key][..., neurons_state[i]]
                 # print(shortcut_layer, jax.tree_map(jnp.shape, filtered_params[shortcut_layer]))
             if opt_state:
                 for j, field in enumerate(filter_in_opt_state):
@@ -443,7 +443,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                         ..., neurons_state[i]]
             if out_skip_flag:
                 ind = identity_skip_counter
-                if layer[location:location + 7] == "block/~":
+                if layer[location:location + 10] == "block_v1/~" or layer[location:location + 10] == "block_v2/~":
                     identity_skip_counter += 1
                 # print("out pruning")
                 # print(ind)
@@ -502,15 +502,17 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                                                                        current_state, :]
 
     if opt_state:
-        filtered_opt_state, empty_state = copy.copy(opt_state)
+        cp_state = copy.copy(opt_state)
+        filtered_opt_state = cp_state[0]
+        empty_state = cp_state[1:]
         for j, field in enumerate(field_names):
             # setattr(filtered_opt_state, field, filter_in_opt_state[j])
             filtered_opt_state = filtered_opt_state._replace(**{field: filter_in_opt_state[j]})
 
         if flag_opt:
-            new_opt_state = ((filtered_opt_state, empty_state),)
+            new_opt_state = ((filtered_opt_state,) + empty_state,)
         else:
-            new_opt_state = filtered_opt_state, empty_state
+            new_opt_state = (filtered_opt_state,) + empty_state
 
     new_sizes = [int(jnp.sum(layer)) for layer in neurons_state]
     # print(list(filtered_params.keys()))
@@ -738,7 +740,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
             grads, (new_state, next_drop_key) = jax.grad(loss, has_aux=True)(_params, _state, _batch, _drop_key)
             if norm_grad:
                 grads = jax.tree_map(grad_normalisation_per_layer, grads)
-            updates, _opt_state = optimizer.update(grads, _opt_state)
+            updates, _opt_state = optimizer.update(grads, _opt_state, _params)
             new_params = optax.apply_updates(_params, updates)
             return new_params, new_state, _opt_state, next_drop_key
 
@@ -751,7 +753,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
-                    updates, _opt_state = optimizer.update(grads, _opt_state)
+                    updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     new_params = optax.apply_updates(_params, updates)
                     return grads, new_params, new_state, _opt_state
 
@@ -763,7 +765,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     # try:
-                    updates, _opt_state = optimizer.update(grads, _opt_state)
+                    updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     # except:
                     #     grad_dict = jax.tree_map(jnp.shape, grads)
                     #     mu_dict = jax.tree_map(jnp.shape, grads)
@@ -786,7 +788,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
                     added_noise = added_noise * (jnp.abs(flat_grads) >= 1e-8)  # Only apply noise to weights with gradient!=0
                     # noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
-                    updates, _opt_state = optimizer.update(grads, _opt_state)
+                    updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     flat_updates, _ = ravel_pytree(updates)
                     noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
                     new_params = optax.apply_updates(_params, noisy_updates)
@@ -796,7 +798,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
                             _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
                     grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
-                    updates, _opt_state = optimizer.update(grads, _opt_state)
+                    updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     key, next_key = jax.random.split(_key)
                     flat_updates, unravel_fn = ravel_pytree(updates)
                     added_noise = _var*jax.random.normal(key, shape=flat_updates.shape)
@@ -815,7 +817,7 @@ def get_mask_update_fn(loss, optimizer):
                 _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
         grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
         grads = reinitialize_excluding_head(grad_mask, grads, zero_grad)
-        updates, _opt_state = optimizer.update(grads, _opt_state)
+        updates, _opt_state = optimizer.update(grads, _opt_state, _params)
         new_params = optax.apply_updates(_params, updates)
         return new_params, new_state, _opt_state
 
