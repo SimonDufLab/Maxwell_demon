@@ -1238,6 +1238,7 @@ def get_total_neurons(architecture, sizes):
                      4 * sizes, 4 * sizes,
                      8 * sizes, 8 * sizes,
                      8 * sizes, 8 * sizes,
+                     4 * sizes,
                      ]
     else:
         raise NotImplementedError("get_size not implemented for current architecture")
