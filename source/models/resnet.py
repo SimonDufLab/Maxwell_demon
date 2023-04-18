@@ -6,6 +6,8 @@ from jax.tree_util import Partial
 from jax.nn import relu
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
+from models.bn_base_unit import Base_BN
+
 from haiku.nets import ResNet
 from haiku._src.nets.resnet import check_length
 from haiku._src.utils import replicate
@@ -336,6 +338,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                  initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
                  strides: Sequence[int] = (1, 2, 2, 2),):
 
+    def act():
+        return activation_fn
+
     check_length(4, blocks_per_group, "blocks_per_group")
     check_length(4, channels_per_group, "channels_per_group")
     check_length(4, strides, "strides")
@@ -372,10 +377,15 @@ def resnet_model(blocks_per_group: Sequence[int],
     def layer_mean():
         return Partial(jnp.mean, axis=(1, 2))
 
-    final_layer = [layer_mean, Partial(hk.Linear, num_classes, **logits_config)]
+    train_final_layers = [
+        [layer_mean, Partial(hk.Linear, **default_fc_layer_config), Partial(Base_BN, is_training=True, name="lin_bn", bn_config=bn_config), act],
+        [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
+    test_final_layers = [
+        [layer_mean, Partial(hk.Linear, **default_fc_layer_config), Partial(Base_BN, is_training=False, name="lin_bn", bn_config=bn_config), act],
+        [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
 
-    train_layers.append(final_layer)
-    test_layers.append(final_layer)
+    train_layers += train_final_layers
+    test_layers += test_final_layers
 
     return train_layers, test_layers
 
@@ -390,6 +400,7 @@ default_initial_conv_config = {"kernel_shape": 7,
                                "name": "initial_conv",
                                "w_init": kaiming_normal}
 default_block_conv_config = {"w_init": kaiming_normal}
+default_fc_layer_config = {"with_bias": True, "w_init": kaiming_normal}
 
 
 def resnet18(size: Union[int, Sequence[int]],
@@ -407,9 +418,11 @@ def resnet18(size: Union[int, Sequence[int]],
     if type(size) == int:
         init_conv_size = size
         sizes = [[size*i]*4 for i in [1, 2, 4, 8]]
+        fc_size = 4 * size
     else:
         init_conv_size = size[0]
-        sizes = size[1:]
+        fc_size = size[-1]
+        sizes = size[1:-1]
         sizes = [sizes[i:i+4] for i in range(0, 16, 4)]
 
     resnet_config = {
@@ -420,6 +433,7 @@ def resnet18(size: Union[int, Sequence[int]],
                     "bn_config": bn_config
                     }
     default_initial_conv_config["output_channels"] = init_conv_size
+    default_fc_layer_config["output_size"] = fc_size
 
     if version == "V1":
         resnet_block_type = ResnetBlockV1
