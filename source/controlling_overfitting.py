@@ -190,7 +190,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                              augment_dataset=exp_config.augment_dataset,
                                                              normalize=exp_config.normalize_inputs)
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
-                                     cardinality=True, normalize=exp_config.normalize_inputs)
+                                     cardinality=True, augment_dataset=exp_config.augment_dataset,
+                                     normalize=exp_config.normalize_inputs)
 
     # Recording over all widths
     live_neurons = []
