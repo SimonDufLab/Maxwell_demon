@@ -87,7 +87,7 @@ bn_config_choice = {
 
 activation_choice = {
     "relu": jax.nn.relu,
-    "leaky_relu": jax.nn.leaky_relu,
+    "leaky_relu": Partial(jax.nn.leaky_relu, negative_slope=0.05),  # leak = 0.05
     "abs": jax.numpy.abs,  # Absolute value as the activation function
     "elu": jax.nn.elu,
     "swish": jax.nn.swish,

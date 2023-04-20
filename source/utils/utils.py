@@ -52,7 +52,7 @@ def death_check_given_model(model, with_activations=False, check_tail=False, wit
     #     assert epsilon <= 1, "for tanh activation fn, epsilon must be smaller than 1"
 
     def relu_test(epsilon, arr):  # Test for relu, leaky-relu, elu, swish, etc. activation fn. Check if bigger than epsilon
-        return jnp.abs(arr) <= epsilon
+        return arr <= jnp.abs(epsilon)
 
     def tanh_test(epsilon, arr):  # Test for tanh, sigmoid, etc. activation fn. Check if abs(tanh(x)) >= 1-epsilon
         return jnp.abs(arr) >= 1-epsilon  # TODO: test fn not compatible with convnets
