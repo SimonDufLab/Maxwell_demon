@@ -933,6 +933,27 @@ def standardize_img(image, label):
     return image, label
 
 
+def custom_normalize_img(image, label, dataset):
+    assert dataset in ["mnist", 'cifar10', 'cifar100'], "need to implement normalization for others dataset"
+    if dataset == "cifar10":
+        mean = [0.4914, 0.4822, 0.4465]  # Mean for each channel (R, G, B)
+        std = [0.2023, 0.1994, 0.2010]  # Standard deviation for each channel (R, G, B)
+    elif dataset == "mnist":
+        mean = [0.1307]  # Mean for each channel (R, G, B)
+        std = [0.3081]  # Standard deviation for each channel (R, G, B)
+    elif dataset == "cifar100":
+        mean = [0.5070751592371323, 0.48654887331495095, 0.4409178433670343]
+        std = [0.2673342858792401, 0.2564384629170883, 0.27615047132568404]
+    else:
+        raise SystemExit
+    mean = tf.constant(mean, dtype=tf.float32)
+    std = tf.constant(std, dtype=tf.float32)
+
+    image = tf.cast(image, dtype=tf.float32)
+    image = (image - mean) / std
+    return image, label
+
+
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
                     other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
@@ -979,7 +1000,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
 
     ds = ds.map(interval_zero_one)
     if normalize:
-        ds = ds.map(standardize_img)
+        ds = ds.map(Partial(custom_normalize_img, dataset=dataset))
     # ds = ds.cache().repeat()
     # if is_training:
     #     # if subset is not None:
@@ -1039,7 +1060,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
 
 def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
                   noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False, normalize: bool = False):
-    return load_tf_dataset("mnist:3.*.*", split=split, is_training=is_training, batch_size=batch_size,
+    return load_tf_dataset("mnist", split=split, is_training=is_training, batch_size=batch_size,
                            other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
                            noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
                            gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset, normalize=normalize)
