@@ -858,6 +858,14 @@ augment_tf_dataset = tf.keras.Sequential([
 ])
 
 
+def resize_tf_dataset(images, labels, dataset):
+    """Final data augmentation step for cifar10, consisting of a resizing to 64x64"""
+    if dataset == 'cifar10':
+        # Resize images to 64x64
+        images = tf.image.resize(images, [64, 64])
+    return images, labels
+
+
 def map_noisy_labels(sample_from):
     def _map_noisy_labels(image, label):
         # sample_from = np.arange(num_classes-1)
@@ -1018,6 +1026,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             ds1 = ds.batch(batch_size)
             if data_augmentation:
                 ds1 = ds1.map(lambda x, y: (augment_tf_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+                ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
         else:
             ds1 = ds.batch(batch_size)
         ds1 = ds1.prefetch(tf.data.AUTOTUNE)
@@ -1041,6 +1050,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             ds = ds.batch(batch_size)
             if data_augmentation:
                 ds = ds.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+                ds = ds.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
         else:
             ds = ds.batch(batch_size)
         ds = ds.prefetch(tf.data.AUTOTUNE)
