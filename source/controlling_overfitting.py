@@ -65,6 +65,7 @@ class ExpConfig:
     size: Any = 50  # Can also be a tuple for convnets
     regularizer: Optional[str] = "cdg_l2"
     reg_params: Any = (0.0, 1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1)
+    wd_param: Optional[float] = None
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
@@ -118,8 +119,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
-    assert not (exp_config.optimizer == "adamw" and bool(
-        exp_config.regularizer)), "Don't use wd along regularization loss"
+    if exp_config.wd_param == 'None':
+        exp_config.wd_param = None
+    assert (not (exp_config.optimizer == "adamw" and bool(
+        exp_config.regularizer))) or bool(exp_config.wd_param), "Don't use wd along regularization loss"
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
     if type(exp_config.reg_params) == str:
@@ -237,7 +240,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         optimizer = optimizer_choice[exp_config.optimizer]
         if exp_config.optimizer == "adamw":  # Pass reg_param to wd argument of adamw
-            optimizer = Partial(optimizer, weight_decay=reg_param)
+            if exp_config.wd_param:  # wd_param overwrite reg_param when specified
+                optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
+            else:
+                optimizer = Partial(optimizer, weight_decay=reg_param)
         opt_chain = []
         if exp_config.gradient_clipping:
             opt_chain.append(optax.clip(0.1))
