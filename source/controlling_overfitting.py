@@ -75,6 +75,7 @@ class ExpConfig:
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     prune_at_end: Any = None  # If prune after training, tuple like (reg_param, lr, additional_steps)
     pruning_reg: str = "cdg_l2"
+    pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
     noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones
     noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
@@ -323,7 +324,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             if step == exp_config.training_steps and bool(add_steps):
                 print("Entered pruning phase")
                 #  Reset optimizer:
-                optimizer = optimizer_choice[exp_config.optimizer]
+                optimizer = optimizer_choice[exp_config.pruning_opt]
                 if exp_config.optimizer == "adamw":  # Pass reg_param to wd argument of adamw
                     if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                         optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
