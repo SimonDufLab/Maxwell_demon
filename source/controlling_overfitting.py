@@ -73,6 +73,8 @@ class ExpConfig:
     init_seed: int = 41
     dynamic_pruning: bool = False
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
+    prune_at_end: Any = None  # If prune after training, tuple like (reg_param, lr, additional_steps)
+    pruning_reg: str = "cdg_l2"
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
     noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones
     noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
@@ -121,6 +123,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.regularizer = None
     if exp_config.wd_param == 'None':
         exp_config.wd_param = None
+    if exp_config.prune_at_end == 'None':
+        exp_config.prune_at_end = None
     assert (not (exp_config.optimizer == "adamw" and bool(
         exp_config.regularizer))) or bool(exp_config.wd_param), "Don't use wd along regularization loss"
     if type(exp_config.size) == str:
@@ -131,6 +135,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.noise_imp = literal_eval(exp_config.noise_imp)
     if type(exp_config.epsilon_close) == str:
         exp_config.epsilon_close = literal_eval(exp_config.epsilon_close)
+    if type(exp_config.prune_at_end) == str:
+        exp_config.prune_at_end = literal_eval(exp_config.prune_at_end)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
@@ -283,6 +289,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
+        init_state = copy.deepcopy(state)
         opt_state = opt.init(params)
         frozen_layer_lists = utl.extract_layer_lists(params)
         # print(frozen_layer_lists)
@@ -307,7 +314,41 @@ def run_exp(exp_config: ExpConfig) -> None:
         decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
         reg_param_decay_period = exp_config.training_steps // decay_cycles
 
-        for step in range(exp_config.training_steps):
+        if exp_config.prune_at_end:
+            pruning_reg_param, pruning_lr, add_steps = exp_config.prune_at_end
+        else:
+            add_steps = 0
+
+        for step in range(exp_config.training_steps + add_steps):
+            if step == exp_config.training_steps and bool(add_steps):
+                print("Entered pruning phase")
+                #  Reset optimizer:
+                optimizer = optimizer_choice[exp_config.optimizer]
+                if exp_config.optimizer == "adamw":  # Pass reg_param to wd argument of adamw
+                    if exp_config.wd_param:  # wd_param overwrite reg_param when specified
+                        optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
+                    else:
+                        optimizer = Partial(optimizer, weight_decay=reg_param)
+                opt_chain = []
+                if exp_config.gradient_clipping:
+                    opt_chain.append(optax.clip(0.1))
+                lr_schedule = lr_scheduler_choice["None"](add_steps, pruning_lr, None, None)  # Constant schedule only
+                opt_chain.append(optimizer(lr_schedule))
+                opt = optax.chain(*opt_chain)
+                opt_state = opt.init(params)
+                state = init_state  # Reset state as well
+                # Reset losses etc.
+                loss.clear_cache()
+                test_loss_fn.clear_cache()
+                update_fn.clear_cache()
+                loss = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg, reg_param=pruning_reg_param,
+                                               classes=classes, with_dropout=with_dropout)
+                test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg,
+                                                       reg_param=pruning_reg_param,
+                                                       classes=classes, is_training=False, with_dropout=with_dropout)
+                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                                exp_config.noise_live_only, with_dropout=with_dropout)
+
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                     (not (step % exp_config.training_steps == 0)):
                 decaying_reg_param = decaying_reg_param / 10
