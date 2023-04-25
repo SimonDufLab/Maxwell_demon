@@ -3,6 +3,7 @@ import jax
 import optax
 from jax.tree_util import Partial
 
+import utils.utils
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule, one_cycle_schedule
@@ -18,6 +19,7 @@ from utils.utils import identity_fn, threlu
 optimizer_choice = {
     "adam": optax.adam,
     "adamw": optax.adamw,
+    "adamw_cdg": utils.utils.adamw_cdg,
     "sgd": optax.sgd,
     "noisy_sgd": optax.noisy_sgd,
     "momentum9": Partial(optax.sgd, momentum=0.9),

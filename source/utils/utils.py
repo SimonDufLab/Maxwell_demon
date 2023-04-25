@@ -14,11 +14,17 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Callable
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
 from collections.abc import Iterable
 from itertools import cycle
+
+from optax._src import base
+from optax._src import wrappers
+from optax._src import combine
+from optax._src import transform
+from optax._src.alias import _scale_by_learning_rate
 
 import psutil
 import sys
@@ -1247,6 +1253,105 @@ def one_cycle_schedule(training_steps, base_lr, final_lr, decay_steps):
     return optax.cosine_onecycle_schedule(training_steps, base_lr)
 
 
+##############################
+# Modified optax optimizer
+##############################
+AddDecayedWeightsState = base.EmptyState
+ScalarOrSchedule = Union[float, base.Schedule]
+
+
+def add_cdg_decayed_weights(
+    weight_decay: float = 0.0,
+    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None
+) -> base.GradientTransformation:
+    """Cdg variant of optax weight_decay
+    Add parameter where positive weights are scaled by `weight_decay`
+
+    Args:
+    weight_decay: A scalar weight decay rate.
+    mask: A tree with same structure as (or a prefix of) the params PyTree,
+      or a Callable that returns such a pytree given the params/updates.
+      The leaves should be booleans, `True` for leaves/subtrees you want to
+      apply the transformation to, and `False` for those you want to skip.
+
+    Returns:
+    A `GradientTransformation` object.
+    """
+
+    def init_fn(params):
+        del params
+        return AddDecayedWeightsState()
+
+    def cdg_mask(params):
+        return jax.tree_util.tree_map(
+            lambda x: (x > 0)*x, params)
+
+    def update_fn(updates, state, params):
+        if params is None:
+            raise ValueError(base.NO_PARAMS_MSG)
+        updates = jax.tree_util.tree_map(
+            lambda g, p: g + weight_decay * p, updates, cdg_mask(params))
+        return updates, state
+
+    # If mask is not `None`, apply mask to the gradient transformation.
+    # E.g. it is common to skip weight decay on bias units and batch stats.
+    if mask is not None:
+        return wrappers.masked(
+            base.GradientTransformation(init_fn, update_fn), mask)
+    return base.GradientTransformation(init_fn, update_fn)
+
+
+def adamw_cdg(
+    learning_rate: ScalarOrSchedule,
+    b1: float = 0.9,
+    b2: float = 0.999,
+    eps: float = 1e-8,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[Any] = None,
+    weight_decay: float = 1e-4,
+    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
+) -> base.GradientTransformation:
+    """Cdg version of optax Adam with weight decay regularization.
+
+    AdamW uses weight decay to regularize learning towards small weights, as
+    this leads to better generalization. In SGD you can also use L2 regularization
+    to implement this as an additive loss term, however L2 regularization
+    does not behave as intended for adaptive gradient algorithms such as Adam.
+
+    References:
+    Loshchilov et al, 2019: https://arxiv.org/abs/1711.05101
+
+    Args:
+    learning_rate: A fixed global scaling factor.
+    b1: Exponential decay rate to track the first moment of past gradients.
+    b2: Exponential decay rate to track the second moment of past gradients.
+    eps: A small constant applied to denominator outside of the square root
+      (as in the Adam paper) to avoid dividing by zero when rescaling.
+    eps_root: A small constant applied to denominator inside the square root (as
+      in RMSProp), to avoid dividing by zero when rescaling. This is needed for
+      instance when computing (meta-)gradients through Adam.
+    mu_dtype: Optional `dtype` to be used for the first order accumulator; if
+      `None` then the `dtype` is inferred from `params` and `updates`.
+    weight_decay: Strength of the weight decay regularization. Note that this
+      weight decay is multiplied with the learning rate. This is consistent
+      with other frameworks such as PyTorch, but different from
+      (Loshchilov et al, 2019) where the weight decay is only multiplied with
+      the "schedule multiplier", but not the base learning rate.
+    mask: A tree with same structure as (or a prefix of) the params PyTree,
+      or a Callable that returns such a pytree given the params/updates.
+      The leaves should be booleans, `True` for leaves/subtrees you want to
+      apply the weight decay to, and `False` for those you want to skip. Note
+      that the Adam gradient transformations are applied to all parameters.
+
+    Returns:
+    The corresponding `GradientTransformation`.
+    """
+    return combine.chain(
+      transform.scale_by_adam(
+          b1=b1, b2=b2, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
+      add_cdg_decayed_weights(weight_decay, mask),
+      _scale_by_learning_rate(learning_rate),
+    )
 ##############################
 # Varia
 ##############################
