@@ -325,7 +325,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 print("Entered pruning phase")
                 #  Reset optimizer:
                 optimizer = optimizer_choice[exp_config.pruning_opt]
-                if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
+                if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamw
                     if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                         optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
                     else:
@@ -353,7 +353,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 print("Ending pruning phase")  # Removing agressive reg_param at the end and decay lr
                 #  Reset optimizer:
                 optimizer = optimizer_choice[exp_config.pruning_opt]
-                if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
+                if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamw
                     if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                         optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
                     else:
