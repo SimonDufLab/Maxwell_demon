@@ -253,7 +253,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 optimizer = Partial(optimizer, weight_decay=reg_param)
         opt_chain = []
         if exp_config.gradient_clipping:
-            opt_chain.append(optax.clip(0.1))
+            opt_chain.append(optax.clip(10))
 
         if 'noisy' in exp_config.optimizer:
             opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
@@ -325,15 +325,15 @@ def run_exp(exp_config: ExpConfig) -> None:
                 print("Entered pruning phase")
                 #  Reset optimizer:
                 optimizer = optimizer_choice[exp_config.pruning_opt]
-                if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamw
+                if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamwclipp
                     if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                         optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
                     else:
                         optimizer = Partial(optimizer, weight_decay=reg_param)
                 opt_chain = []
-                if exp_config.gradient_clipping:
-                    opt_chain.append(optax.clip(0.1))
-                lr_schedule = lr_scheduler_choice["None"](add_steps//2, pruning_lr, None, None)  # Constant schedule only for now
+                # if exp_config.gradient_clipping:
+                #     opt_chain.append(optax.clip(0.1))
+                lr_schedule = lr_scheduler_choice["one_cycle"](add_steps, pruning_lr, None, None)  # TODO: fixed schd...
                 opt_chain.append(optimizer(lr_schedule))
                 opt = optax.chain(*opt_chain)
                 opt_state = opt.init(params)
@@ -349,38 +349,38 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        classes=classes, is_training=False, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout)
-            if step == exp_config.training_steps+(add_steps//2) and bool(add_steps):
-                print("Ending pruning phase")  # Removing agressive reg_param at the end and decay lr
-                #  Reset optimizer:
-                optimizer = optimizer_choice[exp_config.pruning_opt]
-                if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamw
-                    if exp_config.wd_param:  # wd_param overwrite reg_param when specified
-                        optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
-                    else:
-                        optimizer = Partial(optimizer, weight_decay=reg_param)
-                opt_chain = []
-                if exp_config.gradient_clipping:
-                    opt_chain.append(optax.clip(0.1))
-                lr_schedule = lr_scheduler_choice["None"](add_steps // 2, 1e-5, None,
-                                                          None)  # Constant schedule only for now
-                opt_chain.append(optimizer(lr_schedule))
-                opt = optax.chain(*opt_chain)
-                opt_state = opt.init(params)
-                state = init_state  # Reset state as well
-                # Reset losses etc.
-                loss.clear_cache()
-                test_loss_fn.clear_cache()
-                update_fn.clear_cache()
-                loss = utl.ce_loss_given_model(net, regularizer=None, reg_param=pruning_reg_param,
-                                               classes=classes, with_dropout=with_dropout)
-                test_loss_fn = utl.ce_loss_given_model(net, regularizer=None,
-                                                       reg_param=pruning_reg_param,
-                                                       classes=classes, is_training=False,
-                                                       with_dropout=with_dropout)
-                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
-                                                                exp_config.noise_imp,
-                                                                exp_config.noise_live_only,
-                                                                with_dropout=with_dropout)
+            # if step == exp_config.training_steps+(add_steps//2) and bool(add_steps):  # Use one_cycle opt instead to reduce lr
+            #     print("Ending pruning phase")  # Removing agressive reg_param at the end and decay lr
+            #     #  Reset optimizer:
+            #     optimizer = optimizer_choice[exp_config.pruning_opt]
+            #     if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamw
+            #         if exp_config.wd_param:  # wd_param overwrite reg_param when specified
+            #             optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
+            #         else:
+            #             optimizer = Partial(optimizer, weight_decay=reg_param)
+            #     opt_chain = []
+            #     if exp_config.gradient_clipping:
+            #         opt_chain.append(optax.clip(0.1))
+            #     lr_schedule = lr_scheduler_choice["None"](add_steps // 2, 1e-5, None,
+            #                                               None)  # Constant schedule only for now
+            #     opt_chain.append(optimizer(lr_schedule))
+            #     opt = optax.chain(*opt_chain)
+            #     opt_state = opt.init(params)
+            #     state = init_state  # Reset state as well
+            #     # Reset losses etc.
+            #     loss.clear_cache()
+            #     test_loss_fn.clear_cache()
+            #     update_fn.clear_cache()
+            #     loss = utl.ce_loss_given_model(net, regularizer=None, reg_param=pruning_reg_param,
+            #                                    classes=classes, with_dropout=with_dropout)
+            #     test_loss_fn = utl.ce_loss_given_model(net, regularizer=None,
+            #                                            reg_param=pruning_reg_param,
+            #                                            classes=classes, is_training=False,
+            #                                            with_dropout=with_dropout)
+            #     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
+            #                                                     exp_config.noise_imp,
+            #                                                     exp_config.noise_live_only,
+            #                                                     with_dropout=with_dropout)
 
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                     (not (step % exp_config.training_steps == 0)):
