@@ -1416,9 +1416,12 @@ def mask_next_layer_filters(params, next_layers, previous_smallest_filter_indice
         layer_masks = {}
         layer_param = params[layer]
         for key in layer_param.keys():
-            _mask = jnp.ones_like(layer_param[key])
-            _mask = _mask.at[..., previous_smallest_filter_indices, :].set(0)
-            layer_masks[key] = _mask
+            if key == "w":
+                _mask = jnp.ones_like(layer_param["w"])
+                _mask = _mask.at[..., previous_smallest_filter_indices, :].set(0)
+                layer_masks["w"] = _mask
+            else:
+                layer_masks[key] = jnp.ones_like(layer_param[key])
         all_masks[layer] = layer_masks
 
     return all_masks
@@ -1433,7 +1436,7 @@ def prune_params(params, ordered_layers, layer_index, prune_ratio):
     for key in pruning_masks.keys():
         pruned_params[key] = jax.tree_map(jnp.multiply, params[key], pruning_masks[key])
     # prune next layer dependent kernel weights, if any
-    if layer_index < len(ordered_layers):
+    if layer_index < len(ordered_layers)-1:
         next_layers = ordered_layers[layer_index+1]
         pruning_masks = mask_next_layer_filters(params, next_layers, smallest_filter_indices)
         for key in pruning_masks.keys():
@@ -1448,18 +1451,18 @@ def prune_until_perf_decay(ref_perf, allowed_decay, evaluate_fn, greedy: bool, p
     for i in range(len(ordered_layers)):
         prune_ratio = starting_ratios[i]
         perf_decay = 0
-        while perf_decay < ref_perf - allowed_decay:
+        while perf_decay < allowed_decay and (prune_ratio+prune_ratio_step) < 1:
             prune_ratio += prune_ratio_step
             _pruned_params = prune_params(params, ordered_layers, i, prune_ratio)
             curr_perf = evaluate_fn(_pruned_params)
             perf_decay = ref_perf - curr_perf
-            if perf_decay < ref_perf - allowed_decay:
+            if perf_decay < allowed_decay:
                 for layer in ordered_layers[i]:
                     pruned_params[layer] = _pruned_params[layer]
-                if i < len(ordered_layers):
+                if i < len(ordered_layers)-1:
                     for layer in ordered_layers[i + 1]:
                         pruned_params[layer] = _pruned_params[layer]
-        if greedy and i < len(ordered_layers):
+        if greedy and i < len(ordered_layers)-1:
             for layer in ordered_layers[i+1]:
                 params[layer] = pruned_params[layer]
         starting_ratios[i] = prune_ratio - prune_ratio_step
