@@ -54,7 +54,7 @@ class ExpConfig:
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
-    noisy_label: float = 0.25  # ratio (between [0,1]) of labels to randomly (uniformly) flip
+    noisy_label: float = 0.0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     permuted_img_ratio: float = 0  # ratio ([0,1]) of training image in training ds to randomly permute their pixels
     gaussian_img_ratio: float = 0  # ratio ([0,1]) of img to replace by gaussian noise; same mean and variance as ds
     architecture: str = "mlp_3"
@@ -73,6 +73,8 @@ class ExpConfig:
     dynamic_pruning: bool = False
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     prune_decay_eps: Any = (0.05, 0.1)
+    prune_ratio_step: float = 0.025  # Pruning 2.5% of the layer at the time
+    greedy_layer_pruning: bool = False
     fine_tune_lr: float = 1e-3  # lr for fine-tuning
     fine_tune_steps: int = 20000  # Fine-tuning steps after pruning
     dropout_rate: float = 0
@@ -242,6 +244,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     init_state = copy.deepcopy(state)
     opt_state = opt.init(params)
     frozen_layer_lists = utl.extract_layer_lists(params)
+    ordered_layers = utl.extract_ordered_layers(params)
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
@@ -256,12 +259,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     reg_param_decay_period = exp_config.training_steps // decay_cycles
 
     subrun_start_time = time.time()
-    for step in range(exp_config.training_steps + exp_config.fine_tune_steps):
-        if step == exp_config.training_steps and bool(exp_config.fine_tune_steps):
-            print("Beginning fine-tuning after pruning")
-
-            # TODO: fill pruning here ; reset loss, opt and everything
-
+    for step in range(exp_config.training_steps):
         if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                 (not (step % exp_config.training_steps == 0)):
             decaying_reg_param = decaying_reg_param / 10
@@ -412,16 +410,23 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Print running time
     print()
-    print(f"Running time for reg_param {reg_param}: " + str(timedelta(seconds=time.time() - subrun_start_time)))
+    print(f"Running time for model before pruning: " + str(timedelta(seconds=time.time() - subrun_start_time)))
     print("----------------------------------------------")
     print()
     print("Pruning the network and fine-tuning for various perf_decay")
     print()
 
-    trained_params = copy.deepcopy(params)
+    carried_pruned_params = copy.deepcopy(params)
+    ref_perf = jax.device_get(final_accuracy_fn(params, state, test_eval))
+    eval_fn = final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // (eval_size*5)) # eval on 1/5
+    starting_ratios = [0] * len(ordered_layers)
     for _eps in exp_config.prune_decay_eps:
-        # TODO: prune before training
+        subrun_start_time = time.time()
 
+        carried_pruned_params, starting_ratios = utl.prune_until_perf_decay(ref_perf, _eps, eval_fn, exp_config.greedy_layer_pruning,
+                                                             carried_pruned_params, ordered_layers, exp_config.prune_ratio_step,
+                                                             starting_ratios)
+        params = copy.deepcopy(carried_pruned_params)
 
         # Reinitialize state and opt_state
         optimizer = optimizer_choice[exp_config.optimizer]
@@ -528,4 +533,137 @@ def run_exp(exp_config: ExpConfig) -> None:
             else:
                 params, state, opt_state = update_fn(params, state, opt_state, next(train))
 
+        final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
+        final_train_acc = jax.device_get(full_train_acc_fn(params, state, train_eval))
 
+        activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
+        # final_dead_neurons = scan_death_check_fn(params, test_death)
+
+        # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
+        final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
+        pruned_params, _, _, _ = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+                                                                 frozen_layer_lists, opt_state,
+                                                                 state)
+        final_params_count = utl.count_params(pruned_params)
+        del final_dead_neurons  # Freeing memory
+
+        activations_max, activations_mean, activations_count, _ = activations_data
+        if exp_config.save_wanda:
+            activations_meta.maximum.append(activations_max)
+            activations_meta.mean.append(activations_mean)
+            activations_meta.count.append(activations_count)
+        activations_max, _ = ravel_pytree(activations_max)
+        activations_max = jax.device_get(activations_max)
+        activations_mean, _ = ravel_pytree(activations_mean)
+        activations_mean = jax.device_get(activations_mean)
+        activations_count, _ = ravel_pytree(activations_count)
+        activations_count = jax.device_get(activations_count)
+
+        batch_dead_neurons = death_check_fn(params, state, next(test_death))
+        batches_final_live_neurons = [total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0]]
+        for i in range(scan_len - 1):
+            batch_dead_neurons = death_check_fn(params, state, next(test_death))
+            batches_final_live_neurons.append(total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0])
+        batches_final_live_neurons = jnp.stack(batches_final_live_neurons)
+
+        avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
+        std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
+
+        log_step = _eps*100
+
+        exp_run.track(jax.device_get(avg_final_live_neurons),
+                      name="On average, live neurons after convergence w/r eps decay", step=log_step)
+        exp_run.track(jax.device_get(avg_final_live_neurons / total_neurons),
+                      name="Average live neurons ratio after convergence w/r eps decay", step=log_step)
+        total_live_neurons = total_neurons - final_dead_neurons_count
+        exp_run.track(jax.device_get(total_live_neurons),
+                      name="Live neurons after convergence w/r eps decay", step=log_step)
+        exp_run.track(jax.device_get(total_live_neurons / total_neurons),
+                      name="Live neurons ratio after convergence w/r eps decay", step=log_step)
+        exp_run.track(jax.device_get(_eps),  # Logging true reg_param value to display with aim metrics
+                      name="Eps decay w/r eps decay", step=log_step)
+        if exp_config.epsilon_close:
+            for eps in exp_config.epsilon_close:
+                eps_final_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
+                eps_final_dead_neurons_count, _ = utl.count_dead_neurons(eps_final_dead_neurons)
+                del eps_final_dead_neurons
+                eps_batch_dead_neurons = death_check_fn(params, state, next(test_death), eps)
+                eps_batches_final_live_neurons = [total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0]]
+                for i in range(scan_len - 1):
+                    eps_batch_dead_neurons = death_check_fn(params, state, next(test_death), eps)
+                    eps_batches_final_live_neurons.append(
+                        total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0])
+                eps_batches_final_live_neurons = jnp.stack(eps_batches_final_live_neurons)
+                eps_avg_final_live_neurons = jnp.mean(eps_batches_final_live_neurons, axis=0)
+
+                exp_run.track(jax.device_get(eps_avg_final_live_neurons),
+                              name="On average, quasi-live neurons after convergence w/r eps decay",
+                              step=log_step, context={"epsilon": eps})
+                exp_run.track(jax.device_get(eps_avg_final_live_neurons / total_neurons),
+                              name="Average quasi-live neurons ratio after convergence w/r eps decay",
+                              step=log_step, context={"epsilon": eps})
+                eps_total_live_neurons = total_neurons - eps_final_dead_neurons_count
+                exp_run.track(jax.device_get(eps_total_live_neurons),
+                              name="Quasi-live neurons after convergence w/r eps decay", step=log_step,
+                              context={"epsilon": eps})
+                exp_run.track(jax.device_get(eps_total_live_neurons / total_neurons),
+                              name="Quasi-live neurons ratio after convergence w/r eps decay",
+                              step=log_step, context={"epsilon": eps})
+
+        for i, layer_dead in enumerate(final_dead_per_layer):
+            total_neuron_in_layer = init_total_per_layer[i]
+            live_in_layer = total_neuron_in_layer - layer_dead
+            exp_run.track(jax.device_get(live_in_layer),
+                          name=f"Live neurons in layer {i} after convergence w/r eps decay",
+                          step=log_step)
+            exp_run.track(jax.device_get(live_in_layer / total_neuron_in_layer),
+                          name=f"Live neurons ratio in layer {i} after convergence w/r eps decay",
+                          step=log_step)
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r eps decay", step=log_step)
+        exp_run.track(final_train_acc,
+                      name="Train accuracy after convergence w/r eps decay", step=log_step)
+        log_sparsity_step = jax.device_get(total_live_neurons / init_total_neurons) * 1000
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
+        log_params_sparsity_step = final_params_count / initial_params_count * 1000
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r percent*10 of params remaining",
+                      step=log_params_sparsity_step)
+        if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
+            params_vec, _ = ravel_pytree(params)
+            initial_params_vec, _ = ravel_pytree(initial_params)
+            exp_run.track(
+                jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
+                name="Relative change in norm of weights from init after convergence w/r eps decay",
+                step=log_step)
+        activations_max_dist = Distribution(activations_max, bin_count=100)
+        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
+                      context={"pruning decay eps": str(_eps)})
+        activations_mean_dist = Distribution(activations_mean, bin_count=100)
+        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
+                      context={"pruning decay eps": str(_eps)})
+        activations_count_dist = Distribution(activations_count, bin_count=50)
+        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
+                      context={"pruning decay eps": str(_eps)})
+
+        # Making sure compiled fn cache was cleared
+        loss.clear_cache()
+        test_loss_fn.clear_cache()
+        accuracy_fn.clear_cache()
+        update_fn.clear_cache()
+        death_check_fn.clear_cache()
+
+        # Print running time
+        print()
+        print(f"Running time for eps decay {_eps}: " + str(timedelta(seconds=time.time() - subrun_start_time)))
+        print("----------------------------------------------")
+        print()
+
+    # Print total runtime
+    print()
+    print("==================================")
+    print("Whole experiment completed in: " + str(timedelta(seconds=time.time() - run_start_time)))
+
+if __name__ == "__main__":
+    run_exp()

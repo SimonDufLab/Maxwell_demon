@@ -1372,7 +1372,9 @@ def mask_layer_filters(params, layers, prune_ratio):
     main_params = params[main_layer]
 
     _axis = tuple(range(len(jnp.shape(main_params["w"]))-1))
-    norms = jnp.sum(jnp.abs(main_params["w"]), axis=_axis) + jnp.abs(main_params["b"])
+    norms = jnp.sum(jnp.abs(main_params["w"]), axis=_axis)
+    add_norms = [jnp.abs(main_params[key]) for key in main_params.keys() if key != "w"]  # Adding bias and other to norm if any
+    norms += sum(add_norms)
     num_filters_to_prune = int(prune_ratio*norms.size)
 
     smallest_filter_indices = jnp.argpartition(norms, num_filters_to_prune)[:num_filters_to_prune]
@@ -1392,7 +1394,7 @@ def mask_layer_filters(params, layers, prune_ratio):
         layer_masks = {}
         layer_param = params[layer]
         for key in layer_param.keys():
-            _mask = jnp.ones_like(layer_param)
+            _mask = jnp.ones_like(layer_param[key])
             _mask = _mask.at[..., smallest_filter_indices].set(0)
             layer_masks[key] = _mask
         all_masks[layer] = layer_masks
@@ -1414,7 +1416,7 @@ def mask_next_layer_filters(params, next_layers, previous_smallest_filter_indice
         layer_masks = {}
         layer_param = params[layer]
         for key in layer_param.keys():
-            _mask = jnp.ones_like(layer_param)
+            _mask = jnp.ones_like(layer_param[key])
             _mask = _mask.at[..., previous_smallest_filter_indices, :].set(0)
             layer_masks[key] = _mask
         all_masks[layer] = layer_masks
@@ -1440,11 +1442,11 @@ def prune_params(params, ordered_layers, layer_index, prune_ratio):
     return pruned_params
 
 
-def prune_until_perf_decay(ref_perf, allowed_decay, evaluate_fn, greedy: bool, params, ordered_layers, prune_ratio_step):
+def prune_until_perf_decay(ref_perf, allowed_decay, evaluate_fn, greedy: bool, params, ordered_layers, prune_ratio_step, starting_ratios):
     assert allowed_decay >= 0, "allowed_decay must be positive"
     pruned_params = copy.copy(params)
     for i in range(len(ordered_layers)):
-        prune_ratio = 0
+        prune_ratio = starting_ratios[i]
         perf_decay = 0
         while perf_decay < ref_perf - allowed_decay:
             prune_ratio += prune_ratio_step
@@ -1460,8 +1462,25 @@ def prune_until_perf_decay(ref_perf, allowed_decay, evaluate_fn, greedy: bool, p
         if greedy and i < len(ordered_layers):
             for layer in ordered_layers[i+1]:
                 params[layer] = pruned_params[layer]
+        starting_ratios[i] = prune_ratio - prune_ratio_step
 
-    return pruned_params
+    return pruned_params, starting_ratios
+
+
+def extract_ordered_layers(params):
+    """Extract layer list. Based on `extract_layer_lists`. Here however, we group together
+     layers in block for pruning"""
+    layers_name = list(params.keys())
+    ordered_layers = []
+    curr_block = [layers_name[0]]
+    for layer in layers_name[1:]:
+        if "conv" in layer or 'linear' in layer or "logits" in layer:
+            ordered_layers.append(curr_block)
+            curr_block = [layer]
+        else:
+            curr_block.append(layer)
+
+    return ordered_layers
 
 
 ##############################
