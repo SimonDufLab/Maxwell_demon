@@ -1322,26 +1322,26 @@ def adamw_cdg(
     Loshchilov et al, 2019: https://arxiv.org/abs/1711.05101
 
     Args:
-    learning_rate: A fixed global scaling factor.
-    b1: Exponential decay rate to track the first moment of past gradients.
-    b2: Exponential decay rate to track the second moment of past gradients.
-    eps: A small constant applied to denominator outside of the square root
-      (as in the Adam paper) to avoid dividing by zero when rescaling.
-    eps_root: A small constant applied to denominator inside the square root (as
-      in RMSProp), to avoid dividing by zero when rescaling. This is needed for
-      instance when computing (meta-)gradients through Adam.
-    mu_dtype: Optional `dtype` to be used for the first order accumulator; if
-      `None` then the `dtype` is inferred from `params` and `updates`.
-    weight_decay: Strength of the weight decay regularization. Note that this
-      weight decay is multiplied with the learning rate. This is consistent
-      with other frameworks such as PyTorch, but different from
-      (Loshchilov et al, 2019) where the weight decay is only multiplied with
-      the "schedule multiplier", but not the base learning rate.
-    mask: A tree with same structure as (or a prefix of) the params PyTree,
-      or a Callable that returns such a pytree given the params/updates.
-      The leaves should be booleans, `True` for leaves/subtrees you want to
-      apply the weight decay to, and `False` for those you want to skip. Note
-      that the Adam gradient transformations are applied to all parameters.
+        learning_rate: A fixed global scaling factor.
+        b1: Exponential decay rate to track the first moment of past gradients.
+        b2: Exponential decay rate to track the second moment of past gradients.
+        eps: A small constant applied to denominator outside of the square root
+          (as in the Adam paper) to avoid dividing by zero when rescaling.
+        eps_root: A small constant applied to denominator inside the square root (as
+          in RMSProp), to avoid dividing by zero when rescaling. This is needed for
+          instance when computing (meta-)gradients through Adam.
+        mu_dtype: Optional `dtype` to be used for the first order accumulator; if
+          `None` then the `dtype` is inferred from `params` and `updates`.
+        weight_decay: Strength of the weight decay regularization. Note that this
+          weight decay is multiplied with the learning rate. This is consistent
+          with other frameworks such as PyTorch, but different from
+          (Loshchilov et al, 2019) where the weight decay is only multiplied with
+          the "schedule multiplier", but not the base learning rate.
+        mask: A tree with same structure as (or a prefix of) the params PyTree,
+          or a Callable that returns such a pytree given the params/updates.
+          The leaves should be booleans, `True` for leaves/subtrees you want to
+          apply the weight decay to, and `False` for those you want to skip. Note
+          that the Adam gradient transformations are applied to all parameters.
 
     Returns:
     The corresponding `GradientTransformation`.
@@ -1352,6 +1352,140 @@ def adamw_cdg(
       add_cdg_decayed_weights(weight_decay, mask),
       _scale_by_learning_rate(learning_rate),
     )
+
+
+##############################
+# Baseline pruning
+##############################
+# Implementation of some baseline methods for pruning, along with their utilities
+# For comparison purpose w/r to our method
+def mask_layer_filters(params, layers, prune_ratio):
+    """Gradually prune the filters in a layer given a pruning ratio. Compatible with fc and conv layers
+
+    Args:
+        params: The params to prune, a dictionnary of type hk.params
+        layers: The layers to prune, a list where first one is a conv layer and then associate bn layers if any
+        prune_ratio: The ratio of filters to prune in the given layer
+        """
+
+    main_layer = layers[0]
+    main_params = params[main_layer]
+
+    _axis = tuple(range(len(jnp.shape(main_params["w"]))-1))
+    norms = jnp.sum(jnp.abs(main_params["w"]), axis=_axis)
+    add_norms = [jnp.abs(main_params[key]) for key in main_params.keys() if key != "w"]  # Adding bias and other to norm if any
+    norms += sum(add_norms)
+    num_filters_to_prune = int(prune_ratio*norms.size)
+
+    smallest_filter_indices = jnp.argpartition(norms, num_filters_to_prune)[:num_filters_to_prune]
+
+    # Generate a mask, (0 if pruned) for the layer
+    all_masks = {}
+    layer_masks = {}
+    for key in main_params.keys():
+        mask = jnp.ones_like(main_params[key])
+        mask = mask.at[..., smallest_filter_indices].set(0)
+        layer_masks[key] = mask
+
+    all_masks[main_layer] = layer_masks
+
+    # Generate the mask for additional layers
+    for layer in layers[1:]:
+        layer_masks = {}
+        layer_param = params[layer]
+        for key in layer_param.keys():
+            _mask = jnp.ones_like(layer_param[key])
+            _mask = _mask.at[..., smallest_filter_indices].set(0)
+            layer_masks[key] = _mask
+        all_masks[layer] = layer_masks
+
+    return all_masks, smallest_filter_indices
+
+
+def mask_next_layer_filters(params, next_layers, previous_smallest_filter_indices):
+    """Remove the kernel weights associated to filters that were pruned in the previous layer
+
+    Args:
+        params: The params to prune, a dictionnary of type hk.params
+        next_layers: The layers to prune, a list where first one is a conv layer and then associate bn layers if any
+        previous_smallest_filter_indices: The index of the kernel weights to prune
+    """
+
+    all_masks = {}
+    for layer in next_layers:
+        layer_masks = {}
+        layer_param = params[layer]
+        for key in layer_param.keys():
+            if key == "w":
+                _mask = jnp.ones_like(layer_param["w"])
+                _mask = _mask.at[..., previous_smallest_filter_indices, :].set(0)
+                layer_masks["w"] = _mask
+            else:
+                layer_masks[key] = jnp.ones_like(layer_param[key])
+        all_masks[layer] = layer_masks
+
+    return all_masks
+
+
+def prune_params(params, ordered_layers, layer_index, prune_ratio):
+    layers = ordered_layers[layer_index]
+    pruned_params = copy.copy(params)
+
+    # prune the currently considered layer
+    pruning_masks, smallest_filter_indices = mask_layer_filters(params, layers, prune_ratio)
+    for key in pruning_masks.keys():
+        pruned_params[key] = jax.tree_map(jnp.multiply, params[key], pruning_masks[key])
+    # prune next layer dependent kernel weights, if any
+    if layer_index < len(ordered_layers)-1:
+        next_layers = ordered_layers[layer_index+1]
+        pruning_masks = mask_next_layer_filters(params, next_layers, smallest_filter_indices)
+        for key in pruning_masks.keys():
+            pruned_params[key] = jax.tree_map(jnp.multiply, params[key], pruning_masks[key])
+
+    return pruned_params
+
+
+def prune_until_perf_decay(ref_perf, allowed_decay, evaluate_fn, greedy: bool, params, ordered_layers, prune_ratio_step, starting_ratios):
+    assert allowed_decay >= 0, "allowed_decay must be positive"
+    pruned_params = copy.copy(params)
+    for i in range(len(ordered_layers)):
+        prune_ratio = starting_ratios[i]
+        perf_decay = 0
+        while perf_decay < allowed_decay and (prune_ratio+prune_ratio_step) < 1:
+            prune_ratio += prune_ratio_step
+            _pruned_params = prune_params(params, ordered_layers, i, prune_ratio)
+            curr_perf = evaluate_fn(_pruned_params)
+            perf_decay = ref_perf - curr_perf
+            if perf_decay < allowed_decay:
+                for layer in ordered_layers[i]:
+                    pruned_params[layer] = _pruned_params[layer]
+                if i < len(ordered_layers)-1:
+                    for layer in ordered_layers[i + 1]:
+                        pruned_params[layer] = _pruned_params[layer]
+        if greedy and i < len(ordered_layers)-1:
+            for layer in ordered_layers[i+1]:
+                params[layer] = pruned_params[layer]
+        starting_ratios[i] = prune_ratio - prune_ratio_step
+
+    return pruned_params, starting_ratios
+
+
+def extract_ordered_layers(params):
+    """Extract layer list. Based on `extract_layer_lists`. Here however, we group together
+     layers in block for pruning"""
+    layers_name = list(params.keys())
+    ordered_layers = []
+    curr_block = [layers_name[0]]
+    for layer in layers_name[1:]:
+        if "conv" in layer or 'linear' in layer or "logits" in layer:
+            ordered_layers.append(curr_block)
+            curr_block = [layer]
+        else:
+            curr_block.append(layer)
+
+    return ordered_layers
+
+
 ##############################
 # Varia
 ##############################
