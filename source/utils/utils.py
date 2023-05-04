@@ -1377,7 +1377,9 @@ def mask_layer_filters(params, layers, prune_ratio):
     norms += sum(add_norms)
     num_filters_to_prune = int(prune_ratio*norms.size)
 
-    smallest_filter_indices = jnp.argpartition(norms, num_filters_to_prune)[:num_filters_to_prune]
+    #smallest_filter_indices = jnp.argpartition(norms, num_filters_to_prune)[:num_filters_to_prune]  # not implemented in cluster jacx version
+
+    _, smallest_filter_indices = jax.lax.top_k(-norms, num_filters_to_prune)
 
     # Generate a mask, (0 if pruned) for the layer
     all_masks = {}
