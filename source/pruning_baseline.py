@@ -781,5 +781,6 @@ def run_exp(exp_config: ExpConfig) -> None:
     print("==================================")
     print("Whole experiment completed in: " + str(timedelta(seconds=time.time() - run_start_time)))
 
+
 if __name__ == "__main__":
     run_exp()
