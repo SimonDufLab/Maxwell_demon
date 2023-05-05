@@ -226,10 +226,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         accuracies_log = []
 
         # Configuring the (jax)pruner
-        sparsity_distribution = functools.partial(
-            jaxpruner.sparsity_distributions.uniform, sparsity=sparsity)
+        # sparsity_distribution = functools.partial(
+        #     jaxpruner.sparsity_distributions.uniform, sparsity=sparsity)
+
+        def custom_distribution(params, _sparsity=sparsity):  # Don't prune normalization layer
+            return {key: 0.0 if 'norm' in key else sparsity for key in params}
         pruner = jaxpruner.MagnitudePruning(
-            sparsity_distribution_fn=sparsity_distribution,
+            sparsity_distribution_fn=functools.partial(custom_distribution, _sparsity=sparsity),
             scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
                 update_freq=200, update_start_step=1000, update_end_step=int(.75*exp_config.training_steps))
         )
@@ -257,11 +260,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
         init_state = copy.deepcopy(state)
         opt_state = opt.init(params)
-        # print(jax.tree_map(jnp.shape, opt_state))
-        # print(type(opt_state))
-        # print()
-        # print(opt_state.inner_state)
-        # raise SystemExit
         frozen_layer_lists = utl.extract_layer_lists(params)
         ordered_layers = utl.extract_ordered_layers(params)
         # print(jax.tree_map(jnp.shape, params))
