@@ -75,11 +75,6 @@ class ExpConfig:
     dynamic_pruning: bool = False
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     spar_levels: Any = (0.5, 0.8)
-    # prune_decay_eps: Any = (0.05, 0.1)
-    # prune_ratio_step: float = 0.5  # Pruning 2.5% of the layer at the time
-    # greedy_layer_pruning: bool = False
-    # fine_tune_lr: float = 1e-3  # lr for fine-tuning
-    # fine_tune_steps: int = 20000  # Fine-tuning steps after pruning
     dropout_rate: float = 0
     with_rng_seed: int = 428
     save_wanda: bool = False  # Whether to save weights and activations value or not
