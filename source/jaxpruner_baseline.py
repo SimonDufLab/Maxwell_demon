@@ -444,7 +444,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         pruned_params, _, _, _ = utl.remove_dead_neurons_weights(params, final_dead_neurons,
                                                                  frozen_layer_lists, opt_state.inner_state,
                                                                  state)
-        final_params_count = utl.count_params(pruned_params)
+        # final_params_count = utl.count_params(pruned_params)
+        final_params_count = utl.count_non_zero_params(pruned_params)
         del final_dead_neurons  # Freeing memory
 
         activations_max, activations_mean, activations_count, _ = activations_data
