@@ -226,13 +226,23 @@ def run_exp(exp_config: ExpConfig) -> None:
         accuracies_log = []
 
         # Configuring the (jax)pruner
-        # sparsity_distribution = functools.partial(
-        #     jaxpruner.sparsity_distributions.uniform, sparsity=sparsity)
+        sparsity_distribution = functools.partial(
+            jaxpruner.sparsity_distributions.uniform, sparsity=sparsity)
 
-        def custom_distribution(params, _sparsity=sparsity):  # Don't prune normalization layer
-            return {key: 0.0 if 'norm' in key else sparsity for key in params}
+        def treemap_sparsity(pytree, _sparsity):
+            return jax.tree_map(lambda x: _sparsity, pytree)
+
+        def exclusion_fn(key):  # fn to exclude specific layer from pruner (for example, bn layers)
+            to_exclude = ["norm", "bn", 'init']
+            return any([_nme in key for _nme in to_exclude])
+
+        def custom_distribution(_params):  # Don't prune normalization layer and init conv, according to litterature
+            _sparsity_dict = sparsity_distribution(_params)
+            return {key: treemap_sparsity(_sparsity_dict[key], None) if exclusion_fn(key) else _sparsity_dict[key] for
+                    key in _sparsity_dict}
+
         pruner = jaxpruner.MagnitudePruning(
-            sparsity_distribution_fn=functools.partial(custom_distribution, _sparsity=sparsity),
+            sparsity_distribution_fn=custom_distribution,
             scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
                 update_freq=200, update_start_step=1000, update_end_step=int(.75*exp_config.training_steps))
         )
