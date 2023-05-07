@@ -113,8 +113,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.size = literal_eval(exp_config.size)
     if type(exp_config.epsilon_close) == str:
         exp_config.epsilon_close = literal_eval(exp_config.epsilon_close)
-    # if type(exp_config.prune_decay_eps) == str:
-    #     exp_config.prune_decay_eps = literal_eval(exp_config.prune_decay_eps)
+    if type(exp_config.spar_levels) == str:
+        exp_config.spar_levels = literal_eval(exp_config.spar_levels)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
