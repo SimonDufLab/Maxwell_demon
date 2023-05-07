@@ -127,12 +127,12 @@ def run_exp(exp_config: ExpConfig) -> None:
     activation_fn = activation_choice[exp_config.activation]
 
     # Logger config
-    exp_run = Run(repo="./logs", experiment=exp_name_)
+    exp_run = Run(repo="./Neurips2023_baseline", experiment=exp_name_)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
     if exp_config.save_wanda:
         # Create pickle directory
-        pickle_dir_path = "./logs/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+        pickle_dir_path = "./Neurips2023_baseline/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
         os.makedirs(pickle_dir_path)
         # Dump config file in it as well
         with open(pickle_dir_path + 'config.json', 'w') as fp:
@@ -780,6 +780,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     print()
     print("==================================")
     print("Whole experiment completed in: " + str(timedelta(seconds=time.time() - run_start_time)))
+
 
 if __name__ == "__main__":
     run_exp()
