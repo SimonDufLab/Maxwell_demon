@@ -558,6 +558,13 @@ def count_params(params):
     return jax.device_get(jnp.sum(params_size))
 
 
+def count_non_zero_params(params):
+    """ Params counter suitable for method that prunes with mask"""
+    params_count = jax.tree_map(jnp.count_nonzero, params)
+    params_count, _ = ravel_pytree(params_count)
+    return jax.device_get(jnp.sum(params_count))
+
+
 ##############################
 # Training utilities
 ##############################

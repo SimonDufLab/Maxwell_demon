@@ -9,10 +9,10 @@
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
-git checkout experiments-logs
+git checkout exp-config
 
 # Load required modules
-module load python/3.7
+module load python/3.8
 module load cuda/11.2/cudnn/8.1
 
 # Load venv
