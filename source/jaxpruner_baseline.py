@@ -75,6 +75,7 @@ class ExpConfig:
     dynamic_pruning: bool = False
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     spar_levels: Any = (0.5, 0.8)
+    sparsity_distribution: str = "uniform"  # uniform or erk : available distribution in jaxpruner
     dropout_rate: float = 0
     with_rng_seed: int = 428
     save_wanda: bool = False  # Whether to save weights and activations value or not
@@ -102,6 +103,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         lr_scheduler_choice.keys())
     assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
         bn_config_choice.keys())
+    assert exp_config.sparsity_distribution in (
+    "uniform", "erk"), "Implemented sparsity distribution in jaxpruner are uniform or erk rn"
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -221,8 +224,12 @@ def run_exp(exp_config: ExpConfig) -> None:
         accuracies_log = []
 
         # Configuring the (jax)pruner
-        sparsity_distribution = functools.partial(
-            jaxpruner.sparsity_distributions.uniform, sparsity=sparsity)
+        if exp_config.sparsity_distribution == "uniform":
+            sparsity_distribution = functools.partial(
+                jaxpruner.sparsity_distributions.uniform, sparsity=sparsity)
+        elif exp_config.sparsity_distribution == "erk":
+            sparsity_distribution = functools.partial(
+                jaxpruner.sparsity_distributions.erk, sparsity=sparsity)
 
         def treemap_sparsity(pytree, _sparsity):
             return jax.tree_map(lambda x: _sparsity, pytree)
@@ -239,7 +246,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         pruner = jaxpruner.MagnitudePruning(
             sparsity_distribution_fn=custom_distribution,
             scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
-                update_freq=200, update_start_step=1000, update_end_step=int(.75*exp_config.training_steps))
+                update_freq=500, update_start_step=int(.30*exp_config.training_steps), update_end_step=int(.80*exp_config.training_steps))
         )
         opt = pruner.wrap_optax(opt)
 
