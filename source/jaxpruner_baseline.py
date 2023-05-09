@@ -76,6 +76,7 @@ class ExpConfig:
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     spar_levels: Any = (0.5, 0.8)
     sparsity_distribution: str = "uniform"  # uniform or erk : available distribution in jaxpruner
+    pruning_method: str = "WMP"  # WMP or LMP; respectively weight magnitude or layer magnitude pruning
     dropout_rate: float = 0
     with_rng_seed: int = 428
     save_wanda: bool = False  # Whether to save weights and activations value or not
@@ -105,6 +106,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         bn_config_choice.keys())
     assert exp_config.sparsity_distribution in (
     "uniform", "erk"), "Implemented sparsity distribution in jaxpruner are uniform or erk rn"
+    assert exp_config.pruning_method in ("WMP", "LMP"), "Supporting only WMP or LMP algo rn"
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -243,11 +245,19 @@ def run_exp(exp_config: ExpConfig) -> None:
             return {key: treemap_sparsity(_sparsity_dict[key], None) if exclusion_fn(key) else _sparsity_dict[key] for
                     key in _sparsity_dict}
 
-        pruner = jaxpruner.MagnitudePruning(
-            sparsity_distribution_fn=custom_distribution,
-            scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
-                update_freq=500, update_start_step=int(.30*exp_config.training_steps), update_end_step=int(.80*exp_config.training_steps))
-        )
+        if exp_config.pruning_method == "WMP":
+            pruner = jaxpruner.MagnitudePruning(
+                sparsity_distribution_fn=custom_distribution,
+                scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
+                    update_freq=500, update_start_step=int(.30*exp_config.training_steps), update_end_step=int(.80*exp_config.training_steps))
+            )
+        elif exp_config.pruning_method == "LMP":
+            pruner = utl.LayerMagnitudePruning(
+                sparsity_distribution_fn=custom_distribution,
+                scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
+                    update_freq=500, update_start_step=int(.30 * exp_config.training_steps),
+                    update_end_step=int(.80 * exp_config.training_steps))
+            )
         opt = pruner.wrap_optax(opt)
 
         # Set training/monitoring functions

@@ -1,5 +1,6 @@
 import copy
 from typing import Any, Generator, Mapping, Optional, Tuple
+import dataclasses
 from dataclasses import fields
 
 import haiku as hk
@@ -25,6 +26,7 @@ from optax._src import wrappers
 from optax._src import combine
 from optax._src import transform
 from optax._src.alias import _scale_by_learning_rate
+from jaxpruner import base_updater
 
 import psutil
 import sys
@@ -32,6 +34,7 @@ import gc
 
 OptState = Any
 Batch = Mapping[int, np.ndarray]
+BaseUpdater = base_updater.BaseUpdater
 
 
 ##############################
@@ -1493,6 +1496,23 @@ def extract_ordered_layers(params):
             curr_block.append(layer)
 
     return ordered_layers
+
+
+# Reimplementing a version of layer weight magnitude pruning, but with jaxpruner
+@dataclasses.dataclass
+class LayerMagnitudePruning(BaseUpdater):
+    """Implements layer magnitude based pruning."""
+
+    def calculate_scores(self, params, sparse_state=None, grads=None):
+        del sparse_state, grads
+
+        def sum_and_broadcast(x):
+            axes = tuple(range(x.ndim - 1))
+            summed = jnp.sum(jnp.abs(x), axis=axes)
+            return jnp.broadcast_to(summed, x.shape)
+
+        layer_magnitudes = jax.tree_map(sum_and_broadcast, params)
+        return layer_magnitudes
 
 
 ##############################
