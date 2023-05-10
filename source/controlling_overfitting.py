@@ -313,7 +313,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         decaying_reg_param = copy.deepcopy(reg_param)
         decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
-        reg_param_decay_period = exp_config.training_steps // decay_cycles
+        if decay_cycles == 2:
+            reg_param_decay_period = int(0.8*exp_config.training_steps)
+        else:
+            reg_param_decay_period = exp_config.training_steps // decay_cycles
 
         if exp_config.prune_at_end:
             pruning_reg_param, pruning_lr, add_steps = exp_config.prune_at_end
@@ -384,9 +387,13 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                     (not (step % exp_config.training_steps == 0)):
+                print("debug test?")
                 decaying_reg_param = decaying_reg_param / 10
-                if (exp_config.training_steps // reg_param_decay_period) == decay_cycles:
+                if exp_config.training_steps >= (decay_cycles-1) * reg_param_decay_period:
                     decaying_reg_param = 0
+                print("decaying reg param:")
+                print(decaying_reg_param)
+                print()
                 loss.clear_cache()
                 test_loss_fn.clear_cache()
                 update_fn.clear_cache()
