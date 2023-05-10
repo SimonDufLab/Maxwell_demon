@@ -6,6 +6,7 @@ neurons after reaching the overfitting regime and the plateau. Empirical observa
 number of live neurons at the end eventually also reaches a plateau."""
 
 import copy
+import optax
 import jax
 import jax.numpy as jnp
 import haiku as hk
@@ -48,6 +49,7 @@ class ExpConfig:
     pruning_freq: int = 2000
     live_freq: int = 20000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     lr: float = 1e-3
+    gradient_clipping: bool = False
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
@@ -57,6 +59,7 @@ class ExpConfig:
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
+    normalize_inputs: bool = False
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
     noisy_label: float = 0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
@@ -69,6 +72,7 @@ class ExpConfig:
     sizes: Any = (50, 100, 250, 500, 750, 1000, 1250, 1500, 2000)
     regularizer: Optional[str] = "None"
     reg_param: float = 1e-4
+    wd_param: Optional[float] = None
     reg_param_decay_cycles: int = 1  # number of cycles -1 inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
@@ -123,6 +127,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
+    if exp_config.wd_param == 'None':
+        exp_config.wd_param = None
+    assert (not (("adamw" in exp_config.optimizer) and bool(
+        exp_config.regularizer))) or bool(exp_config.wd_param), "Set wd_param if adamw is used with a regularization loss"
     if type(exp_config.sizes) == str:
         exp_config.sizes = literal_eval(exp_config.sizes)
     if type(exp_config.noise_imp) == str:
@@ -188,11 +196,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                              noisy_label=exp_config.noisy_label,
                                                              permuted_img_ratio=exp_config.permuted_img_ratio,
                                                              gaussian_img_ratio=exp_config.gaussian_img_ratio,
-                                                             augment_dataset=exp_config.augment_dataset)
+                                                             augment_dataset=exp_config.augment_dataset,
+                                                             normalize=exp_config.normalize_inputs)
     # train_eval = train
     # test_death = train
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
-                                     cardinality=True)
+                                     cardinality=True, augment_dataset=exp_config.augment_dataset,
+                                     normalize=exp_config.normalize_inputs)
 
     # Recording over all widths
     live_neurons = []
@@ -239,13 +249,24 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **net_config)
             lin_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
+        optimizer = optimizer_choice[exp_config.optimizer]
+        if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
+            if exp_config.wd_param:  # wd_param overwrite reg_param when specified
+                optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
+            else:
+                optimizer = Partial(optimizer, weight_decay=exp_config.reg_param)
+        opt_chain = []
+        if exp_config.gradient_clipping:
+            opt_chain.append(optax.clip(10))
+
         if 'noisy' in exp_config.optimizer:
-            opt = optimizer_choice[exp_config.optimizer](exp_config.lr, eta=exp_config.noise_eta,
-                                                         gamma=exp_config.noise_gamma)
+            opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
+                                       gamma=exp_config.noise_gamma))
         else:
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
                                                                       exp_config.final_lr, exp_config.lr_decay_steps)
-            opt = optimizer_choice[exp_config.optimizer](lr_schedule)
+            opt_chain.append(optimizer(lr_schedule))
+        opt = optax.chain(*opt_chain)
         accuracies_log = []
 
         # Set training/monitoring functions
