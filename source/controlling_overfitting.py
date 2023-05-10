@@ -127,7 +127,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     if exp_config.prune_at_end == 'None':
         exp_config.prune_at_end = None
     assert (not (("adamw" in exp_config.optimizer) and bool(
-        exp_config.regularizer))) or bool(exp_config.wd_param), "Don't use wd along regularization loss"
+        exp_config.regularizer))) or bool(exp_config.wd_param), "Set wd_param if adamw is used with a regularization loss"
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
     if type(exp_config.reg_params) == str:
