@@ -8,6 +8,7 @@ import copy
 
 import jax
 import jax.numpy as jnp
+import optax
 
 import matplotlib.pyplot as plt
 from aim import Run, Figure, Distribution, Image
@@ -24,11 +25,12 @@ from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
 
 from jax.flatten_util import ravel_pytree
+from jax.tree_util import Partial
 
 import utils.utils as utl
 from utils.utils import build_models
 from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality
-from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice
+from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice, bn_config_choice
 from utils.config import pick_architecture
 
 # Experience name -> for aim logger
@@ -42,10 +44,11 @@ class ExpConfig:
     report_freq: int = 3000
     record_freq: int = 100
     full_ds_eval_freq: int = 2000
-    pruning_cycles: int = 1
+    pruning_cycles: int = 2
     cycle_tolerance: float = 0.01  # Stop pruning cycle early is variation in dead neurons is smaller than tolerance
     lr: float = 1e-3
     end_lr: float = 1e-5  # lr used during low noise evaluation
+    gradient_clipping: bool = False
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     end_final_lr: float = 1e-6  # final lr used for scheduler during low noise evaluation
@@ -57,14 +60,23 @@ class ExpConfig:
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
+    normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
+    augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     architecture: str = "mlp_3"
+    with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
+    with_bn: bool = False  # Add batchnorm layers or not in the models
+    bn_config: str = "default"  # Different configs for bn; default have offset and scale trainable params
     size: Any = 50
     regularizer: Optional[str] = 'None'
     reg_param: float = 1e-4
+    wd_param: Optional[float] = None
+    cycling_regularizer: Optional[str] = 'None'
+    cycling_reg_param: float = 1e-4
     init_seed: int = 41
     dynamic_pruning: bool = False
     dropout_rate: float = 0
     with_rng_seed: int = 428
+    run_low_noise: bool = False
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 
@@ -87,16 +99,23 @@ def run_exp(exp_config: ExpConfig) -> None:
         activation_choice.keys())
     assert exp_config.lr_schedule in lr_scheduler_choice.keys(), "Current lr scheduler function available: " + str(
         lr_scheduler_choice.keys())
+    assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
+        bn_config_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
+    if exp_config.wd_param == 'None':
+        exp_config.wd_param = None
+    assert (not (("adamw" in exp_config.optimizer) and bool(
+        exp_config.regularizer))) or bool(
+        exp_config.wd_param), "Set wd_param if adamw is used with a regularization loss"
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
 
     activation_fn = activation_choice[exp_config.activation]
 
     # Logger config
-    exp_run = Run(repo="./logs", experiment=exp_name)
+    exp_run = Run(repo="./Neurips2023_LTH_compare", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
     # Experiments with dropout
@@ -104,11 +123,20 @@ def run_exp(exp_config: ExpConfig) -> None:
     if with_dropout:
         dropout_key = jax.random.PRNGKey(exp_config.with_rng_seed)
         assert exp_config.architecture in pick_architecture(
-            True).keys(), "Current architectures available with dropout: " + str(
-            pick_architecture(True).keys())
-        drop_config = {"dropout_rate": exp_config.dropout_rate}
+            with_dropout=True).keys(), "Current architectures available with dropout: " + str(
+            pick_architecture(with_dropout=True).keys())
+        net_config = {"dropout_rate": exp_config.dropout_rate}
     else:
-        drop_config = {}
+        net_config = {}
+
+    if not exp_config.with_bias:
+        net_config['with_bias'] = exp_config.with_bias
+
+    if exp_config.with_bn:
+        assert exp_config.architecture in pick_architecture(
+            with_bn=True).keys(), "Current architectures available with batchnorm: " + str(
+            pick_architecture(with_bn=True).keys())
+        net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
 
     # Load the different dataset
     load_data = dataset_choice[exp_config.dataset]
@@ -117,18 +145,38 @@ def run_exp(exp_config: ExpConfig) -> None:
     train_ds_size, train, train_eval, test_death = load_data(split="train", is_training=True,
                                                              batch_size=exp_config.train_batch_size,
                                                              other_bs=[eval_size, death_minibatch_size],
-                                                             cardinality=True)
-    test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, cardinality=True)
+                                                             cardinality=True,
+                                                             augment_dataset=exp_config.augment_dataset,
+                                                             normalize=exp_config.normalize_inputs)
+    test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size,
+                                     cardinality=True, augment_dataset=exp_config.augment_dataset,
+                                     normalize=exp_config.normalize_inputs)
 
     # Make the network and optimiser
-    architecture = pick_architecture(with_dropout)[exp_config.architecture]
+    architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
     classes = dataset_target_cardinality[exp_config.dataset]  # Retrieving the number of classes in dataset
     size = exp_config.size
-    architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
+    architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
     net = build_models(*architecture, with_dropout=with_dropout)
-    lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
-                                                              exp_config.final_lr, exp_config.lr_decay_steps)
-    opt = optimizer_choice[exp_config.optimizer](lr_schedule)
+
+    optimizer = optimizer_choice[exp_config.optimizer]
+    if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
+        if exp_config.wd_param:  # wd_param overwrite reg_param when specified
+            optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
+        else:
+            optimizer = Partial(optimizer, weight_decay=exp_config.reg_param)
+    opt_chain = []
+    if exp_config.gradient_clipping:
+        opt_chain.append(optax.clip(10))
+
+    if 'noisy' in exp_config.optimizer:
+        opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
+                                   gamma=exp_config.noise_gamma))
+    else:
+        lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
+                                                                  exp_config.final_lr, exp_config.lr_decay_steps)
+        opt_chain.append(optimizer(lr_schedule))
+    opt = optax.chain(*opt_chain)
 
     # Set training/monitoring functions
     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
@@ -148,6 +196,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     opt_state = opt.init(params)
     initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
     initial_state = copy.deepcopy(state)
+    frozen_layer_lists = utl.extract_layer_lists(params)
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
@@ -181,7 +230,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 exp_run.track(jax.device_get(test_loss), name="Test loss", step=step,
                               context={"experiment phase": context})
 
-            if step % exp_config.full_ds_eval_freq == 0:
+            if step % exp_config.full_ds_eval_freq == 0 or step == exp_config.training_steps - 1:
                 dead_neurons = scan_death_check_fn(params, state, test_death)
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
 
@@ -209,7 +258,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                               step=step,
                               context={"experiment phase": context})
                 test_acc_whole_ds = jax.device_get(final_accuracy_fn(params, state, test_eval))
-                exp_run.track(test_acc_whole_ds, name="Test accuracy; whole training dataset",
+                exp_run.track(test_acc_whole_ds, name="Test accuracy; whole eval dataset",
                               step=step,
                               context={"experiment phase": context})
         return print_and_record_metrics
@@ -237,15 +286,18 @@ def run_exp(exp_config: ExpConfig) -> None:
     tol_flag = True
     dead_neurons = scan_death_check_fn(params, state, test_death)
     pruned_init_params = initial_params
+    state = initial_state
     while (cycle_step < exp_config.pruning_cycles) and tol_flag:
         subtask_start_time = time.time()
         # prune the init params
-        pruned_init_params, opt_state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons, opt_state)
+        pruned_init_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons,
+                                                                                          frozen_layer_lists, opt_state,
+                                                                                          state)
         params = copy.deepcopy(pruned_init_params)
-        state = initial_state
+        # state = initial_state
         opt_state = opt.init(params)
-        architecture = pick_architecture(with_dropout)[exp_config.architecture]
-        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **drop_config)
+        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
         net = build_models(*architecture)
         del dead_neurons  # Freeing memory
 
@@ -260,11 +312,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         death_check_fn.clear_cache()
 
         # Recompile training/monitoring functions
-        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                       reg_param=exp_config.reg_param, classes=classes,
+        loss = utl.ce_loss_given_model(net, regularizer=exp_config.cycling_regularizer,
+                                       reg_param=exp_config.cycling_reg_param, classes=classes,
                                        with_dropout=with_dropout)
-        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                               reg_param=exp_config.reg_param,
+        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.cycling_regularizer,
+                                               reg_param=exp_config.cycling_reg_param,
                                                classes=classes,
                                                is_training=False, with_dropout=with_dropout)
         accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
@@ -304,81 +356,85 @@ def run_exp(exp_config: ExpConfig) -> None:
     del dead_neurons  # Freeing memory
 
     # TODO: Add final pruning and comparison in low noise env -> Add variable for this setting in parser
-    for context in ['pruned/low noise', 'not pruned/low noise']:
-        subtask_start_time = time.time()
-        # different bs and lr
-        load_data = dataset_choice[exp_config.dataset]
-        train = load_data(split="train", is_training=True,
-                          batch_size=exp_config.end_train_batch_size,
-                          cardinality=False)
-        lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.end_lr,
-                                                                  exp_config.end_final_lr, exp_config.lr_decay_steps)
-        opt = optimizer_choice[exp_config.optimizer](lr_schedule)
-        if context == 'not pruned/low noise':
-            end_params = copy.deepcopy(initial_params)
-            end_state = copy.deepcopy(initial_state)
-            opt_state = opt.init(end_params)  # reinit optimizer state
+    if exp_config.run_low_noise:
+        for context in ['pruned/low noise', 'not pruned/low noise']:
+            subtask_start_time = time.time()
+            # different bs and lr
+            load_data = dataset_choice[exp_config.dataset]
+            train = load_data(split="train", is_training=True,
+                              batch_size=exp_config.end_train_batch_size,
+                              cardinality=False)
+            lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.end_lr,
+                                                                      exp_config.end_final_lr, exp_config.lr_decay_steps)
+            opt = optimizer_choice[exp_config.optimizer](lr_schedule)
+            if context == 'not pruned/low noise':
+                end_params = copy.deepcopy(initial_params)
+                end_state = copy.deepcopy(initial_state)
+                opt_state = opt.init(end_params)  # reinit optimizer state
 
-            architecture = pick_architecture(with_dropout)[exp_config.architecture]
-            architecture = architecture(size, classes, activation_fn=activation_fn, **drop_config)
-            net = build_models(*architecture)
-            total_neurons, total_per_layer = starting_neurons, starting_per_layer
-        else:
-            dead_neurons = scan_death_check_fn(pruned_init_params, state, test_death)
-            # Pruning the network
-            end_params, opt_state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons, opt_state)
-            end_state = initial_state
-            del dead_neurons  # Freeing memory
-            opt_state = opt.init(end_params)  # reinit optimizer state
-
-            architecture = pick_architecture(with_dropout)[exp_config.architecture]
-            architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **drop_config)
-            net = build_models(*architecture)
-            total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
-
-        # Clear previous cache
-        loss.clear_cache()
-        test_loss_fn.clear_cache()
-        accuracy_fn.clear_cache()
-        update_fn.clear_cache()
-        death_check_fn.clear_cache()
-
-        # Recompile training/monitoring functions
-        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                       reg_param=exp_config.reg_param, classes=classes,
-                                       with_dropout=with_dropout)
-        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                               reg_param=exp_config.reg_param,
-                                               classes=classes,
-                                               is_training=False, with_dropout=with_dropout)
-        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-        update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
-        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-        scan_len = train_ds_size // death_minibatch_size
-        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
-
-        print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
-                                                                scan_death_check_fn, full_train_acc_fn,
-                                                                final_accuracy_fn)
-
-        for step in range(exp_config.training_steps):
-            # Metrics and logs:
-            print_and_record_metrics(step, context, end_params, end_state, total_neurons, total_per_layer)
-            # Train step over single batch
-            if with_dropout:
-                end_params, end_state, opt_state, dropout_key = update_fn(end_params, end_state, opt_state, next(train),
-                                                                  dropout_key)
+                architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+                architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
+                net = build_models(*architecture)
+                total_neurons, total_per_layer = starting_neurons, starting_per_layer
             else:
-                end_params, end_state, opt_state = update_fn(end_params, end_state, opt_state, next(train))
+                dead_neurons = scan_death_check_fn(pruned_init_params, state, test_death)
+                # Pruning the network
+                end_state = initial_state
+                end_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(initial_params, dead_neurons,
+                                                                                          frozen_layer_lists, opt_state,
+                                                                                          end_state)
+                # end_state = initial_state
+                del dead_neurons  # Freeing memory
+                opt_state = opt.init(end_params)  # reinit optimizer state
 
-        # Print running time
-        print()
-        print(f"Running time for ends runs with context {context}: " + str(
-            timedelta(seconds=time.time() - subtask_start_time)))
-        print("----------------------------------------------")
-        print()
+                architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+                architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+                net = build_models(*architecture)
+                total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+
+            # Clear previous cache
+            loss.clear_cache()
+            test_loss_fn.clear_cache()
+            accuracy_fn.clear_cache()
+            update_fn.clear_cache()
+            death_check_fn.clear_cache()
+
+            # Recompile training/monitoring functions
+            loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                           reg_param=exp_config.reg_param, classes=classes,
+                                           with_dropout=with_dropout)
+            test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                   reg_param=exp_config.reg_param,
+                                                   classes=classes,
+                                                   is_training=False, with_dropout=with_dropout)
+            accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+            update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+            death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+            scan_len = train_ds_size // death_minibatch_size
+            scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+            final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
+            full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+
+            print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
+                                                                    scan_death_check_fn, full_train_acc_fn,
+                                                                    final_accuracy_fn)
+
+            for step in range(exp_config.training_steps):
+                # Metrics and logs:
+                print_and_record_metrics(step, context, end_params, end_state, total_neurons, total_per_layer)
+                # Train step over single batch
+                if with_dropout:
+                    end_params, end_state, opt_state, dropout_key = update_fn(end_params, end_state, opt_state, next(train),
+                                                                      dropout_key)
+                else:
+                    end_params, end_state, opt_state = update_fn(end_params, end_state, opt_state, next(train))
+
+            # Print running time
+            print()
+            print(f"Running time for ends runs with context {context}: " + str(
+                timedelta(seconds=time.time() - subtask_start_time)))
+            print("----------------------------------------------")
+            print()
 
     # Print total runtime
     print()
