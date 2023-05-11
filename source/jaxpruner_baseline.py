@@ -27,7 +27,7 @@ import utils.utils as utl
 from utils.utils import build_models
 from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality
 from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice, bn_config_choice
-from utils.config import pick_architecture
+from utils.config import pick_architecture, baseline_pruning_method_choice
 
 
 # Experience name -> for aim logger
@@ -64,7 +64,7 @@ class ExpConfig:
     with_bn: bool = False  # Add batchnorm layers or not in the models
     bn_config: str = "default"  # Different configs for bn; default have offset and scale trainable params
     size: Any = 50  # Can also be a tuple for convnets
-    regularizer: Optional[str] = None
+    regularizer: Optional[str] = "None"
     reg_param: float = 5e-4
     wd_param: Optional[float] = None
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
@@ -76,7 +76,7 @@ class ExpConfig:
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     spar_levels: Any = (0.5, 0.8)
     sparsity_distribution: str = "uniform"  # uniform or erk : available distribution in jaxpruner
-    pruning_method: str = "WMP"  # WMP or LMP; respectively weight magnitude or layer magnitude pruning
+    pruning_method: str = "WMP"  # See config.py for option
     dropout_rate: float = 0
     with_rng_seed: int = 428
     save_wanda: bool = False  # Whether to save weights and activations value or not
@@ -106,7 +106,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         bn_config_choice.keys())
     assert exp_config.sparsity_distribution in (
     "uniform", "erk"), "Implemented sparsity distribution in jaxpruner are uniform or erk rn"
-    assert exp_config.pruning_method in ("WMP", "LMP"), "Supporting only WMP or LMP algo rn"
+    assert exp_config.pruning_method in baseline_pruning_method_choice.keys(), "Supporting only the following baseline pruner" + str(
+        baseline_pruning_method_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -245,19 +246,27 @@ def run_exp(exp_config: ExpConfig) -> None:
             return {key: treemap_sparsity(_sparsity_dict[key], None) if exclusion_fn(key) else _sparsity_dict[key] for
                     key in _sparsity_dict}
 
-        if exp_config.pruning_method == "WMP":
-            pruner = jaxpruner.MagnitudePruning(
-                sparsity_distribution_fn=custom_distribution,
-                scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
-                    update_freq=500, update_start_step=int(.30*exp_config.training_steps), update_end_step=int(.80*exp_config.training_steps))
-            )
-        elif exp_config.pruning_method == "LMP":
-            pruner = utl.LayerMagnitudePruning(
-                sparsity_distribution_fn=custom_distribution,
-                scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
-                    update_freq=500, update_start_step=int(.30 * exp_config.training_steps),
-                    update_end_step=int(.80 * exp_config.training_steps))
-            )
+        _pruning_method = baseline_pruning_method_choice[exp_config.pruning_method]
+        pruner = _pruning_method(
+            sparsity_distribution_fn=custom_distribution,
+            scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
+                update_freq=500, update_start_step=int(.30 * exp_config.training_steps),
+                update_end_step=int(.80 * exp_config.training_steps))
+        )
+
+        # if exp_config.pruning_method == "WMP":
+        #     pruner = jaxpruner.GlobalMagnitudePruning(
+        #         sparsity_distribution_fn=custom_distribution,
+        #         scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
+        #             update_freq=500, update_start_step=int(.30*exp_config.training_steps), update_end_step=int(.80*exp_config.training_steps))
+        #     )
+        # elif exp_config.pruning_method == "LMP":
+        #     pruner = utl.LayerMagnitudePruning(
+        #         sparsity_distribution_fn=custom_distribution,
+        #         scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
+        #             update_freq=500, update_start_step=int(.30 * exp_config.training_steps),
+        #             update_end_step=int(.80 * exp_config.training_steps))
+        #     )
         opt = pruner.wrap_optax(opt)
 
         # Set training/monitoring functions
