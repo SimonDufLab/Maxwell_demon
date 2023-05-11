@@ -13,7 +13,7 @@ from datetime import timedelta
 import pickle
 import json
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Tuple, Any, List
+from typing import Optional, Tuple, Any, List, Dict
 from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -87,6 +87,7 @@ class ExpConfig:
     linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
     measure_linear_perf: bool = False  # Measure performance over the linear network without changing activation
     save_wanda: bool = False  # Whether to save weights and activations value or not
+    save_act_only: bool = True  # Only saving distributions with wanda, not the weights
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
     # def __post_init__(self):
@@ -214,16 +215,17 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Recording metadata about activations that will be pickled
         @dataclass
         class ActivationMeta:
-            maximum: List[float] = field(default_factory=list)
-            mean: List[float] = field(default_factory=list)
-            count: List[int] = field(default_factory=list)
+            maximum: Dict[float, List[float]] = field(default_factory=dict)
+            mean: Dict[float, List[float]] = field(default_factory=dict)
+            count: Dict[float, List[int]] = field(default_factory=dict)
         activations_meta = ActivationMeta()
 
-        # Recording params value at the end of the training as well
-        @dataclass
-        class FinalParamsMeta:
-            parameters: List[float] = field(default_factory=list)
-        params_meta = FinalParamsMeta()
+        if not exp_config.save_act_only:
+            # Recording params value at the end of the training as well
+            @dataclass
+            class FinalParamsMeta:
+                parameters: List[float] = field(default_factory=list)
+            params_meta = FinalParamsMeta()
 
     for reg_param in exp_config.reg_params:  # Vary the regularizer parameter to measure impact on overfitting
         size = exp_config.size
@@ -608,9 +610,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         activations_max, activations_mean, activations_count, _ = activations_data
         if exp_config.save_wanda:
-            activations_meta.maximum.append(activations_max)
-            activations_meta.mean.append(activations_mean)
-            activations_meta.count.append(activations_count)
+            activations_meta.maximum[reg_param] = activations_max
+            activations_meta.mean[reg_param] = activations_mean
+            activations_meta.count[reg_param] = activations_count
         activations_max, _ = ravel_pytree(activations_max)
         activations_max = jax.device_get(activations_max)
         activations_mean, _ = ravel_pytree(activations_mean)
@@ -731,10 +733,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             with open(pickle_dir_path+'activations_meta.p', 'wb') as fp:
                 pickle.dump(asdict(activations_meta), fp)  # Update by overwrite
 
-            # Pickling the final parameters value as well
-            params_meta.parameters.append(params)
-            with open(pickle_dir_path + 'params_meta.p', 'wb') as fp:
-                pickle.dump(asdict(params_meta), fp)  # Update by overwrite
+            if not exp_config.save_act_only:
+                # Pickling the final parameters value as well
+                params_meta.parameters.append(params)
+                with open(pickle_dir_path + 'params_meta.p', 'wb') as fp:
+                    pickle.dump(asdict(params_meta), fp)  # Update by overwrite
 
         # Print running time
         print()
