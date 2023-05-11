@@ -70,6 +70,8 @@ class ExpConfig:
     regularizer: Optional[str] = 'None'
     reg_param: float = 1e-4
     wd_param: Optional[float] = None
+    cycling_regularizer: Optional[str] = 'None'
+    cycling_reg_param: float = 1e-4
     init_seed: int = 41
     dynamic_pruning: bool = False
     dropout_rate: float = 0
@@ -284,6 +286,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     tol_flag = True
     dead_neurons = scan_death_check_fn(params, state, test_death)
     pruned_init_params = initial_params
+    state = initial_state
     while (cycle_step < exp_config.pruning_cycles) and tol_flag:
         subtask_start_time = time.time()
         # prune the init params
@@ -291,7 +294,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                                           frozen_layer_lists, opt_state,
                                                                                           state)
         params = copy.deepcopy(pruned_init_params)
-        state = initial_state
+        # state = initial_state
         opt_state = opt.init(params)
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
         architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
@@ -309,11 +312,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         death_check_fn.clear_cache()
 
         # Recompile training/monitoring functions
-        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                       reg_param=exp_config.reg_param, classes=classes,
+        loss = utl.ce_loss_given_model(net, regularizer=exp_config.cycling_regularizer,
+                                       reg_param=exp_config.cycling_reg_param, classes=classes,
                                        with_dropout=with_dropout)
-        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                               reg_param=exp_config.reg_param,
+        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.cycling_regularizer,
+                                               reg_param=exp_config.cycling_reg_param,
                                                classes=classes,
                                                is_training=False, with_dropout=with_dropout)
         accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
@@ -376,10 +379,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             else:
                 dead_neurons = scan_death_check_fn(pruned_init_params, state, test_death)
                 # Pruning the network
-                end_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons,
-                                                                                          frozen_layer_lists, opt_state,
-                                                                                          state)
                 end_state = initial_state
+                end_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(initial_params, dead_neurons,
+                                                                                          frozen_layer_lists, opt_state,
+                                                                                          end_state)
+                # end_state = initial_state
                 del dead_neurons  # Freeing memory
                 opt_state = opt.init(end_params)  # reinit optimizer state
 
