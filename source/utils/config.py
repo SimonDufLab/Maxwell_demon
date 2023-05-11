@@ -1,6 +1,7 @@
 """Optax optimizers configured to work with logger"""
 import jax
 import optax
+import jaxpruner
 from jax.tree_util import Partial
 
 import utils.utils
@@ -15,6 +16,16 @@ from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.resnet import resnet18
 from utils.utils import identity_fn, threlu
+
+baseline_pruning_method_choice = {
+    "WMP": jaxpruner.MagnitudePruning,
+    "GMP": jaxpruner.GlobalMagnitudePruning,
+    "LMP": utils.utils.LayerMagnitudePruning,
+    "saliency": jaxpruner.SaliencyPruning,
+    "STE_magnitude": jaxpruner.SteMagnitudePruning,
+    "SET": jaxpruner.SET,
+    "RigL": jaxpruner.RigL,
+}
 
 optimizer_choice = {
     "adam": optax.adam,
