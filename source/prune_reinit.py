@@ -104,6 +104,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
+    if exp_config.cycling_regularizer == 'None':
+        exp_config.cycling_regularizer = None
     if exp_config.wd_param == 'None':
         exp_config.wd_param = None
     assert (not (("adamw" in exp_config.optimizer) and bool(
