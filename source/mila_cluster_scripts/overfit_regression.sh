@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=overfit_regression
-#SBATCH --partition=long                           # Ask for unkillable job
-#SBATCH --cpus-per-task=2                                # Ask for 2 CPUs
-#SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=8G                                        # Ask for 10 GB of RAM
-#SBATCH --time=0:35:00                                   # The job will run for 2.5 hours
+#SBATCH --partition=long-cpu                           # Ask for unkillable job
+#SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
+#SBATCH --gres=gpu:0                                     # Ask for 1 GPU
+#SBATCH --mem=16G                                        # Ask for 10 GB of RAM
+#SBATCH --time=4:00:00                                   # The job will run for 2.5 hours
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -57,5 +57,5 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # Run experiments
 
-python source/overfit_regression.py final_smoothing=20000 size=50 noise_std=0.0
+python source/overfit_regression.py training_steps=240001 final_smoothing=40000 size=1000 noise_std=1.0 prune_reinit=True
 wait $!

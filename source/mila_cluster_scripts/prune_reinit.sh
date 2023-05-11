@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=prune_reinit
-#SBATCH --partition=main                           # Ask for unkillable job
+#SBATCH --partition=long                           # Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 4 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
 #SBATCH --mem=16G                                        # Ask for 10 GB of RAM
-#SBATCH --time=24:00:00                                  # The job will run for 24 hours
+#SBATCH --time=15:00:00                                  # The job will run for 24 hours
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -53,5 +53,8 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # Run experiments
 
-python source/prune_reinit.py training_steps=250001 optimizer=adam architecture=mlp_3 report_freq=2500 record_freq=250 full_ds_eval_freq=1000 info=base_mlp_3 init_seed=11 size=500
+#python source/prune_reinit.py training_steps=250001 optimizer=adam architecture=mlp_3 report_freq=2500 record_freq=250 full_ds_eval_freq=1000 lr_schedule=piecewise_constant info=mnist_mlp_decay end_lr=0.001 size=500 train_batch_size=8 pruning_cycles=18 init_seed=13
+#wait $!
+
+python source/prune_reinit.py training_steps=250001 optimizer=adam architecture=conv_4_2 dataset='fashion mnist' report_freq=2500 record_freq=250 full_ds_eval_freq=1000 lr_schedule=piecewise_constant info=fmnist_conv_4_2_decay_cycles end_lr=0.001 'size="(128, 512)"' train_batch_size=8 pruning_cycles=18 init_seed=11
 wait $!

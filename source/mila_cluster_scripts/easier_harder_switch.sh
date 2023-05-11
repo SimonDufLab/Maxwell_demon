@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=easier_harder_switch
-#SBATCH --partition=unkillable                           # Ask for unkillable job
-#SBATCH --cpus-per-task=2                                # Ask for 2 CPUs
+#SBATCH --partition=main                           # Ask for unkillable job
+#SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=12G                                        # Ask for 10 GB of RAM
-#SBATCH --time=1:00:00                                   # The job will run for 1 hour
+#SBATCH --mem=16G                                        # Ask for 10 GB of RAM
+#SBATCH --time=96:00:00                                   # The job will run for 1 hour
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -35,5 +35,9 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    reg_param: float = 1e-4
 
 # Run experiments
-python source/easier_harder_switch.py regularizer='l2'
+
+#python source/easier_harder_switch.py 'datasets="(cifar10, cifar10)"' 'kept_classes="(5, None)"' compare_to_partial_reset=True info=Ash_and_Adams activation=abs
+#wait $!
+
+python source/easier_harder_switch.py 'datasets="(cifar10, cifar10)"' 'kept_classes="(5, None)"' compare_to_partial_reset=False info=Ash_and_Adams architecture=resnet18 size=64 activation=abs
 wait $!

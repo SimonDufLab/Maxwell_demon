@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=controlling_overfitting
-#SBATCH --partition=main                           # Ask for unkillable job
+#SBATCH --partition=long                           # Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=16G                                        # Ask for 10 GB of RAM
-#SBATCH --time=12:00:00                                   # The job will run for 2.5 hours
+#SBATCH --mem=24G   #24G for Resnet18                                        # Ask for 10 GB of RAM
+#SBATCH --time=8:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -69,5 +69,27 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 # Run experiments
-python source/controlling_overfitting.py dataset='fashion mnist' architecture='mlp_3' size=250 lr_schedule=piecewise_constant reg_param_decay_cycles=4 zero_end_reg_param=True info=control_capacity_l2_mlp3 init_seed=70 noisy_label=0.25
+
+#python source/controlling_overfitting.py dataset='mnist' architecture='mlp_3' 'size="(300, 100)"' lr_schedule=piecewise_constant info=LeNet_acc_vs_sparsity train_batch_size=64 lr=1e-3 dynamic_pruning=True prune_after=25000 init_seed=72 noisy_label=0.0
+#wait $!
+
+#python source/controlling_overfitting.py dataset='mnist' architecture='mlp_3' 'size="(300, 100)"' lr_schedule=piecewise_constant info=LeNet_acc_vs_sparsity 'reg_params="(1.0, 1.2, 1.4, 1.6, 1.8, 2.0)"' train_batch_size=64 lr=1e-3 dynamic_pruning=True prune_after=25000 init_seed=72 noisy_label=0.0
+#wait $!
+
+#python source/controlling_overfitting.py dataset='cifar10' architecture='conv_4_2' 'size="(128, 64)"' lr_schedule=piecewise_constant reg_param_decay_cycles=4 zero_end_reg_param=True info=control_capacity_l2_conv_4_2 'reg_params="(0.0, 0.001, 0.005, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07)"' optimizer=momentum9 lr=0.001 lr_decay_steps=4 init_seed=72 noisy_label=0.25
+#wait $!
+
+#python source/controlling_overfitting.py dataset='cifar10' architecture='conv_4_2' 'size="(128, 64)"' lr_schedule=piecewise_constant reg_param_decay_cycles=4 zero_end_reg_param=True info=control_capacity_l2_conv_4_2 'reg_params="(0.14, 0.16, 0.20, 0.25, 0.3, 0.4)"' optimizer=adam lr=0.0001 lr_decay_steps=4 init_seed=72 noisy_label=0.25
+#wait $!
+
+#python source/controlling_overfitting.py dataset='cifar10' architecture='resnet18' training_steps=250001 report_freq=1000 record_freq=500 pruning_freq=2000 live_freq=50000 size=64 with_bn=True lr_schedule=piecewise_constant reg_param_decay_cycles=4 zero_end_reg_param=True info=control_capacity_l2_resnet18_vs_lr_bs 'reg_params="(0.0, 0.00001, 0.00005, 0.0001, 0.0005)"' optimizer=adam lr=0.005 lr_decay_steps=4 train_batch_size=64 augment_dataset=True init_seed=72 noisy_label=0.2 regularizer=l2
+#wait $!
+
+#python source/controlling_overfitting.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=10000 record_freq=1000 pruning_freq=10000 live_freq=5000 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 zero_end_reg_param=False info=Resnet18_acc_vs_sparsity_cdg_l2_short 'reg_params="(0.0, 0.000001, 0.000005,  0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005)"' optimizer=adam lr=0.05 train_batch_size=256 augment_dataset=True gradient_clipping=True init_seed=71 noisy_label=0.0 regularizer=cdg_l2
+#wait $!
+
+#python source/controlling_overfitting.py dataset='cifar10' architecture='resnet18' training_steps=250001 report_freq=10000 record_freq=1000 pruning_freq=10000 live_freq=250000 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 zero_end_reg_param=False info=Resnet18_acc_vs_sparsity_cdg_l2 'reg_params="(0.008, 0.01, 0.03, 0.05, 0.1, 0.5)"' optimizer=adam lr=0.002 train_batch_size=64 augment_dataset=True gradient_clipping=True init_seed=72 noisy_label=0.0 regularizer=cdg_l2
+#wait $!
+
+python source/controlling_overfitting.py dataset='cifar10' architecture='resnet18' training_steps=250000 report_freq=10000 record_freq=1000 pruning_freq=10000 live_freq=250000 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 zero_end_reg_param=False info=Resnet18_acc_vs_sparsity_testing_kaiming 'reg_params="(0, 0.0001)"' optimizer=adam lr=0.002 train_batch_size=256 augment_dataset=True gradient_clipping=True init_seed=71 noisy_label=0.0 regularizer=l2
 wait $!

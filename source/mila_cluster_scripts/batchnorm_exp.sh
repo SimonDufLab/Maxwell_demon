@@ -48,7 +48,7 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 # Run experiments
-python source/batchnorm_exp.py dataset='cifar10' regularizer=None training_steps=320001 architecture='mlp_3' size=500
+python source/batchnorm_exp.py dataset='cifar10' regularizer=None training_steps=320001 architecture='mlp_3' size=500 lr=0.01
 wait $!
 
 #python source/batchnorm_exp.py dataset='cifar10' regularizer=None training_steps=320001 architecture='conv_4_2' 'size="(256, 128)"'
