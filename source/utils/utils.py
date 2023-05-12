@@ -461,14 +461,15 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                 # print()
                 filtered_state[_identity_state_name[ind]]["w"] = filtered_state[_identity_state_name[ind]]["w"][
                     ..., neurons_state[i]]
-        for dict_key in filtered_params[_bn_layers[i]].keys():
-            # print(layer)
-            # print(_bn_layers[i])
-            filtered_params[_bn_layers[i]][dict_key] = filtered_params[_bn_layers[i]][dict_key][..., neurons_state[i]]
-            if opt_state:
-                for j, field in enumerate(filter_in_opt_state):
-                    # print(field)
-                    filter_in_opt_state[j][_bn_layers[i]][dict_key] = field[_bn_layers[i]][dict_key][..., neurons_state[i]]
+        if i in list(range(len(_bn_layers))):
+            for dict_key in filtered_params[_bn_layers[i]].keys():
+                # print(layer)
+                # print(_bn_layers[i])
+                filtered_params[_bn_layers[i]][dict_key] = filtered_params[_bn_layers[i]][dict_key][..., neurons_state[i]]
+                if opt_state:
+                    for j, field in enumerate(filter_in_opt_state):
+                        # print(field)
+                        filter_in_opt_state[j][_bn_layers[i]][dict_key] = field[_bn_layers[i]][dict_key][..., neurons_state[i]]
         # print(_bn_layers[i], jax.tree_map(jnp.shape, filtered_params[_bn_layers[i]]))
 
         # for dict_key in filtered_params[layers_name[i+1]].keys():
@@ -529,6 +530,8 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
     if opt_state:
         if state:
             return filtered_params, new_opt_state, filtered_state, tuple(new_sizes)
+        else:
+            return filtered_params, new_opt_state, tuple(new_sizes)
     else:
         if state:
             return filtered_params, filtered_state, tuple(new_sizes)
