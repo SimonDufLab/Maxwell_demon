@@ -441,15 +441,17 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             # print(shortcut_bn, jax.tree_map(jnp.shape, filtered_params[shortcut_bn]))
         if state:
             for nme in state_names:
-                filtered_state[_bn_layers[i] + nme]["average"] = filtered_state[_bn_layers[i] + nme]["average"][
-                    ..., neurons_state[i]]
-                filtered_state[_bn_layers[i] + nme]["hidden"] = filtered_state[_bn_layers[i] + nme]["hidden"][
-                    ..., neurons_state[i]]
-                if out_shortcut_flag and shcut_bn_flag:
-                    filtered_state[shortcut_bn + nme]["average"] = filtered_state[shortcut_bn + nme]["average"][
+                if i in list(range(len(_bn_layers))):
+                    filtered_state[_bn_layers[i] + nme]["average"] = filtered_state[_bn_layers[i] + nme]["average"][
                         ..., neurons_state[i]]
-                    filtered_state[shortcut_bn + nme]["hidden"] = filtered_state[shortcut_bn + nme]["hidden"][
+                    filtered_state[_bn_layers[i] + nme]["hidden"] = filtered_state[_bn_layers[i] + nme]["hidden"][
                         ..., neurons_state[i]]
+                if len(_short_bn_layers)>0:
+                    if out_shortcut_flag and shcut_bn_flag:
+                        filtered_state[shortcut_bn + nme]["average"] = filtered_state[shortcut_bn + nme]["average"][
+                            ..., neurons_state[i]]
+                        filtered_state[shortcut_bn + nme]["hidden"] = filtered_state[shortcut_bn + nme]["hidden"][
+                            ..., neurons_state[i]]
             if out_skip_flag:
                 ind = identity_skip_counter
                 if layer[location:location + 10] == "block_v1/~" or layer[location:location + 10] == "block_v2/~":
