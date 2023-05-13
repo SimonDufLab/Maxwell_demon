@@ -14,6 +14,7 @@ from models.mlp import mlp_3_dropout
 from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_2, conv_6_2_bn
 from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_act_post_bn
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
+from models.vgg16 import vgg16
 from models.resnet import resnet18
 from utils.utils import identity_fn, threlu
 
@@ -75,6 +76,7 @@ architecture_choice = {
     "conv_4_2": conv_4_2,
     "conv_4_2_ln": conv_4_2_ln,  # TODO: eventually switch to ln_architecture_choice, like bn
     "conv_6_2": conv_6_2,
+    "vgg16": None,  # TODO: Encode non-bn version of vgg16
     "resnet18": Partial(resnet18, with_bn=False),
     "resnet18_v2": Partial(resnet18, with_bn=False, version="V2"),
 }
@@ -89,6 +91,7 @@ bn_architecture_choice = {
     "conv_3_2": conv_3_2_bn,
     "conv_4_2": conv_4_2_bn,
     "conv_6_2": conv_6_2_bn,
+    "vgg16": vgg16,
     "resnet18": resnet18,
     "resnet18_v2": Partial(resnet18, version="V2"),
 }

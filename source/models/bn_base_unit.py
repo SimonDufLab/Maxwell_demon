@@ -30,12 +30,12 @@ class Linear_BN(hk.Module):
             self,
             is_training: bool,
             output_size: int,
-            with_bias: bool = True,
             bn_config: dict = base_bn_config,
-            name: Optional[str] = None):
+            with_bias: bool = True,
+            name: Optional[str] = "linBN"):
         super().__init__(name=name)
         self.is_training = is_training
-        self.bn = hk.BatchNorm(**bn_config)
+        self.bn = hk.BatchNorm(name="lin_bn", **bn_config)
         self.linear = hk.Linear(output_size, with_bias=with_bias)
 
     def __call__(self, inputs):
@@ -51,12 +51,12 @@ class Conv_BN(hk.Module):
             is_training: bool,
             output_channels: int,
             kernel_size: int,
-            with_bias: bool = True,
             bn_config: dict = base_bn_config,
-            name: Optional[str] = None):
+            with_bias: bool = True,
+            name: Optional[str] = "convBN"):
         super().__init__(name=name)
         self.is_training = is_training
-        self.bn = hk.BatchNorm(**bn_config)
+        self.bn = hk.BatchNorm(name="cv_bn", **bn_config)
         self.conv = hk.Conv2D(output_channels, kernel_size, with_bias=with_bias)
 
     def __call__(self, inputs):
