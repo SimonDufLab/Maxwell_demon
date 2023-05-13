@@ -190,6 +190,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
     scan_len = train_ds_size // death_minibatch_size
     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+    scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+        utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
     final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
     full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
@@ -202,6 +204,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
+    initial_params_count = utl.count_params(params)
 
     def get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
                                      final_accuracy_fn):
@@ -278,6 +281,19 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             params, state, opt_state = update_fn(params, state, opt_state, next(train))
 
+    final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
+    activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
+    remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+                                                    frozen_layer_lists, opt_state,
+                                                    state)[0]
+    final_params_count = utl.count_params(remaining_params)
+    del final_dead_neurons  # Freeing memory
+    log_params_sparsity_step = final_params_count / initial_params_count * 1000
+    exp_run.track(final_accuracy,
+                  name="Accuracy after convergence w/r percent*10 of params remaining",
+                  step=log_params_sparsity_step,
+                  context={"experiment phase": "noisy"})
+
     # Print running time
     print()
     print(f"Running time for run before pruning cycles: " + str(timedelta(seconds=time.time() - run_start_time)))
@@ -326,6 +342,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
         scan_len = train_ds_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+        scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+            utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
@@ -342,6 +360,19 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                           dropout_key)
             else:
                 params, state, opt_state = update_fn(params, state, opt_state, next(train))
+
+        final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
+        activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
+        remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+                                                           frozen_layer_lists, opt_state,
+                                                           state)[0]
+        final_params_count = utl.count_params(remaining_params)
+        del final_dead_neurons  # Freeing memory
+        log_params_sparsity_step = final_params_count / initial_params_count * 1000
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r percent*10 of params remaining",
+                      step=log_params_sparsity_step,
+                      context={"experiment phase": context})
 
         # Print running time
         print()
@@ -414,6 +445,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
             scan_len = train_ds_size // death_minibatch_size
             scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+            scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+                utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
             final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
             full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
@@ -430,6 +463,19 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                       dropout_key)
                 else:
                     end_params, end_state, opt_state = update_fn(end_params, end_state, opt_state, next(train))
+
+            final_accuracy = jax.device_get(final_accuracy_fn(end_params, end_state, test_eval))
+            activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(end_params, end_state, test_death)
+            remaining_params = utl.remove_dead_neurons_weights(end_params, final_dead_neurons,
+                                                               frozen_layer_lists, opt_state,
+                                                               end_state)[0]
+            final_params_count = utl.count_params(remaining_params)
+            del final_dead_neurons  # Freeing memory
+            log_params_sparsity_step = final_params_count / initial_params_count * 1000
+            exp_run.track(final_accuracy,
+                          name="Accuracy after convergence w/r percent*10 of params remaining",
+                          step=log_params_sparsity_step,
+                          context={"experiment phase": context})
 
             # Print running time
             print()
