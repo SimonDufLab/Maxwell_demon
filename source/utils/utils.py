@@ -1534,6 +1534,11 @@ def get_total_neurons(architecture, sizes):
     elif architecture == 'conv_6_2':
         if len(sizes) == 2:  # Size can be specified with 2 args
             sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], sizes[1]]
+    elif architecture == 'vgg16':
+        if len(sizes) == 2:  # Size can be specified with 2 args
+            sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], 4 * sizes[0],
+                     8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 16 * sizes[0], sizes[1],
+                     sizes[1], sizes[1]]
     elif architecture == "resnet18" or architecture == "resnet18_v2":
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes,
