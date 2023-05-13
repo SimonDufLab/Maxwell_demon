@@ -377,12 +377,20 @@ def resnet_model(blocks_per_group: Sequence[int],
     def layer_mean():
         return Partial(jnp.mean, axis=(1, 2))
 
-    train_final_layers = [
-        [layer_mean, Partial(hk.Linear, **default_fc_layer_config), Partial(Base_BN, is_training=True, name="lin_bn", bn_config=bn_config), act],
-        [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
-    test_final_layers = [
-        [layer_mean, Partial(hk.Linear, **default_fc_layer_config), Partial(Base_BN, is_training=False, name="lin_bn", bn_config=bn_config), act],
-        [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
+    if with_bn:
+        train_final_layers = [
+            [layer_mean, Partial(hk.Linear, **default_fc_layer_config), Partial(Base_BN, is_training=True, name="lin_bn", bn_config=bn_config), act],
+            [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
+        test_final_layers = [
+            [layer_mean, Partial(hk.Linear, **default_fc_layer_config), Partial(Base_BN, is_training=False, name="lin_bn", bn_config=bn_config), act],
+            [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
+    else:
+        train_final_layers = [
+            [layer_mean, Partial(hk.Linear, **default_fc_layer_config), act],
+            [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
+        test_final_layers = [
+            [layer_mean, Partial(hk.Linear, **default_fc_layer_config), act],
+            [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
 
     train_layers += train_final_layers
     test_layers += test_final_layers
