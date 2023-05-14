@@ -289,9 +289,18 @@ def run_exp(exp_config: ExpConfig) -> None:
     final_params_count = utl.count_params(remaining_params)
     del final_dead_neurons  # Freeing memory
     log_params_sparsity_step = final_params_count / initial_params_count * 1000
+    compression_ratio = initial_params_count/final_params_count
     exp_run.track(final_accuracy,
                   name="Accuracy after convergence w/r percent*10 of params remaining",
                   step=log_params_sparsity_step,
+                  context={"experiment phase": "noisy"})
+    exp_run.track(final_accuracy,
+                  name="Accuracy after convergence w/r params compression ratio",
+                  step=compression_ratio,
+                  context={"experiment phase": "noisy"})
+    exp_run.track(1-(log_params_sparsity_step/1000),
+                  name="Sparsity w/r params compression ratio",
+                  step=compression_ratio,
                   context={"experiment phase": "noisy"})
 
     # Print running time
@@ -369,9 +378,18 @@ def run_exp(exp_config: ExpConfig) -> None:
         final_params_count = utl.count_params(remaining_params)
         del final_dead_neurons  # Freeing memory
         log_params_sparsity_step = final_params_count / initial_params_count * 1000
+        compression_ratio = initial_params_count/final_params_count
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of params remaining",
                       step=log_params_sparsity_step,
+                      context={"experiment phase": context})
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r params compression ratio",
+                      step=compression_ratio,
+                      context={"experiment phase": context})
+        exp_run.track(1 - (log_params_sparsity_step / 1000),
+                      name="Sparsity w/r params compression ratio",
+                      step=compression_ratio,
                       context={"experiment phase": context})
 
         # Print running time
@@ -472,9 +490,18 @@ def run_exp(exp_config: ExpConfig) -> None:
             final_params_count = utl.count_params(remaining_params)
             del final_dead_neurons  # Freeing memory
             log_params_sparsity_step = final_params_count / initial_params_count * 1000
+            compression_ratio = initial_params_count/final_params_count
             exp_run.track(final_accuracy,
                           name="Accuracy after convergence w/r percent*10 of params remaining",
                           step=log_params_sparsity_step,
+                          context={"experiment phase": context})
+            exp_run.track(final_accuracy,
+                          name="Accuracy after convergence w/r params compression ratio",
+                          step=compression_ratio,
+                          context={"experiment phase": context})
+            exp_run.track(1 - (log_params_sparsity_step / 1000),
+                          name="Sparsity w/r params compression ratio",
+                          step=compression_ratio,
                           context={"experiment phase": context})
 
             # Print running time
