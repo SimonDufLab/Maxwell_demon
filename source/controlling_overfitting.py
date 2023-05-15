@@ -148,12 +148,12 @@ def run_exp(exp_config: ExpConfig) -> None:
     activation_fn = activation_choice[exp_config.activation]
 
     # Logger config
-    exp_run = Run(repo="./Neurips2023_main", experiment=exp_name_)
+    exp_run = Run(repo="./Neurips2023_main_2", experiment=exp_name_)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
     if exp_config.save_wanda:
         # Create pickle directory
-        pickle_dir_path = "./Neurips2023_main/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+        pickle_dir_path = "./Neurips2023_main_2/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
         os.makedirs(pickle_dir_path)
         # Dump config file in it as well
         with open(pickle_dir_path+'config.json', 'w') as fp:
@@ -601,9 +601,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
         final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
-        pruned_params, _, _, _ = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+        pruned_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
                                                                  frozen_layer_lists, opt_state,
-                                                                 state)
+                                                                 state)[0]
         final_params_count = utl.count_params(pruned_params)
         del final_dead_neurons  # Freeing memory
 
