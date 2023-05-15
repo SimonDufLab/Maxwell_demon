@@ -389,9 +389,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                     (not (step % exp_config.training_steps == 0)):
-                print("debug test?")
                 decaying_reg_param = decaying_reg_param / 10
-                if exp_config.training_steps >= (decay_cycles-1) * reg_param_decay_period:
+                if (step >= (decay_cycles-1) * reg_param_decay_period) and exp_config.zero_end_reg_param:
                     decaying_reg_param = 0
                 print("decaying reg param:")
                 print(decaying_reg_param)
