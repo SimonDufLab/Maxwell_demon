@@ -533,12 +533,12 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         if state:
             return filtered_params, new_opt_state, filtered_state, tuple(new_sizes)
         else:
-            return filtered_params, new_opt_state, tuple(new_sizes)
+            return filtered_params, new_opt_state, {}, tuple(new_sizes)
     else:
         if state:
             return filtered_params, filtered_state, tuple(new_sizes)
         else:
-            return filtered_params, tuple(new_sizes)
+            return filtered_params, {}, tuple(new_sizes)
 
 
 # def rebuild_model(new_architecture, sizes):
