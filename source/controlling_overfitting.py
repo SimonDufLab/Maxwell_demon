@@ -45,7 +45,7 @@ class ExpConfig:
     gradient_clipping: bool = False
     lr_schedule: str = "None"
     final_lr: float = 1e-6
-    lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_steps: Any = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
     train_batch_size: int = 512
     eval_batch_size: int = 512
     death_batch_size: int = 512
@@ -139,6 +139,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.epsilon_close = literal_eval(exp_config.epsilon_close)
     if type(exp_config.prune_at_end) == str:
         exp_config.prune_at_end = literal_eval(exp_config.prune_at_end)
+    if type(exp_config.lr_decay_steps) == str:
+        exp_config.lr_decay_steps = literal_eval(exp_config.lr_decay_steps)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
