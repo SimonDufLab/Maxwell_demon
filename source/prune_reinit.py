@@ -18,7 +18,7 @@ from datetime import timedelta
 import pickle
 import json
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Tuple, Any, List
+from typing import Optional, Tuple, Any, List, Union
 from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -52,7 +52,7 @@ class ExpConfig:
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     end_final_lr: float = 1e-6  # final lr used for scheduler during low noise evaluation
-    lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_steps: Any = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
     train_batch_size: int = 16
     end_train_batch_size: int = 512  # final training batch size used during low noise evaluation
     eval_batch_size: int = 512
@@ -72,6 +72,8 @@ class ExpConfig:
     wd_param: Optional[float] = None
     cycling_regularizer: Optional[str] = 'None'
     cycling_reg_param: float = 1e-4
+    rdm_reinit: bool = False  # Randomly reinit the pruned network and train, for baseline comparison
+    rewinding: bool = False  # Checkpoint early on like LTR and compare performance to complete rewinding to init
     init_seed: int = 41
     dynamic_pruning: bool = False
     dropout_rate: float = 0
@@ -113,6 +115,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.wd_param), "Set wd_param if adamw is used with a regularization loss"
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
+    if type(exp_config.lr_decay_steps) == str:
+        exp_config.lr_decay_steps = literal_eval(exp_config.lr_decay_steps)
 
     activation_fn = activation_choice[exp_config.activation]
 
@@ -197,6 +201,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Initialize
     params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+    reinit_fn = Partial(net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
     opt_state = opt.init(params)
     initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
     initial_state = copy.deepcopy(state)
@@ -205,6 +210,11 @@ def run_exp(exp_config: ExpConfig) -> None:
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
     initial_params_count = utl.count_params(params)
+
+    # Rewinding
+    def checkpoint_fn(_step):
+        return utl.get_checkpoint_step(exp_config.architecture, _step)
+    checkpoints = []
 
     def get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
                                      final_accuracy_fn):
@@ -219,6 +229,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if step % exp_config.report_freq == 0:
                     print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
                           f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
+                    print(f"current lr : {lr_schedule(step):.3f}")
                 dead_neurons = death_check_fn(params, state, next(test_death))
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
@@ -274,6 +285,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     for step in range(exp_config.training_steps):
         # Metrics and logs:
         print_and_record_metrics(step, "noisy", params, state, total_neurons, total_per_layer)
+        # record checkpoints if rewinding:
+        if exp_config.rewinding:
+            if step == checkpoint_fn(step):
+                checkpoints.append((copy.deepcopy(params), step)) # Checkpoint params and step where recorded
         # Train step over single batch
         if with_dropout:
             params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
@@ -312,6 +327,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     cycle_step = 1
     tol_flag = True
     dead_neurons = scan_death_check_fn(params, state, test_death)
+    if exp_config.rdm_reinit or exp_config.rewinding:
+        preserve_dead_state = copy.deepcopy(dead_neurons)
     pruned_init_params = initial_params
     state = initial_state
     while (cycle_step < exp_config.pruning_cycles) and tol_flag:
@@ -405,6 +422,99 @@ def run_exp(exp_config: ExpConfig) -> None:
         tol_flag = (curr_dead_amount/total_neurons) >= exp_config.cycle_tolerance
 
     del dead_neurons  # Freeing memory
+
+    contexts = []
+    if exp_config.rdm_reinit:
+        contexts.append("pruned, random reinit")
+    for chkpt in checkpoints:
+        contexts.append(f'pruned, rewinding to step {chkpt[1]}')
+
+    for i, context in enumerate(contexts):
+        subtask_start_time = time.time()
+        if "random" in context:
+            to_prune = reinit_fn(next(train))[0]  # Reinitialize params
+            checkpoints = [(None, None)] + checkpoints
+        else:
+            to_prune = checkpoints[i][0]  # Retrieving params at checkpoint i
+        opt_state = opt.init(to_prune)
+        params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(to_prune,
+                                                                              preserve_dead_state,
+                                                                              frozen_layer_lists, opt_state,
+                                                                              initial_state)
+        opt_state = opt.init(params)
+        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+        net = build_models(*architecture)
+
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+
+        # Clear previous cache
+        loss.clear_cache()
+        test_loss_fn.clear_cache()
+        accuracy_fn.clear_cache()
+        update_fn.clear_cache()
+        death_check_fn.clear_cache()
+
+        # Recompile training/monitoring functions
+        loss = utl.ce_loss_given_model(net, regularizer=exp_config.cycling_regularizer,
+                                       reg_param=exp_config.cycling_reg_param, classes=classes,
+                                       with_dropout=with_dropout)
+        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.cycling_regularizer,
+                                               reg_param=exp_config.cycling_reg_param,
+                                               classes=classes,
+                                               is_training=False, with_dropout=with_dropout)
+        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+        scan_len = train_ds_size // death_minibatch_size
+        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+        scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+            utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
+        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+
+        print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
+                                                                scan_death_check_fn, full_train_acc_fn,
+                                                                final_accuracy_fn)
+
+        for step in range(exp_config.training_steps):
+            # Metrics and logs:
+            print_and_record_metrics(step, context, params, state, total_neurons, total_per_layer)
+            # Train step over single batch
+            if with_dropout:
+                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
+                                                                  dropout_key)
+            else:
+                params, state, opt_state = update_fn(params, state, opt_state, next(train))
+
+        final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
+        activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
+        remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+                                                           frozen_layer_lists, opt_state,
+                                                           state)[0]
+        final_params_count = utl.count_params(remaining_params)
+        del final_dead_neurons  # Freeing memory
+        log_params_sparsity_step = final_params_count / initial_params_count * 1000
+        compression_ratio = initial_params_count / final_params_count
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r percent*10 of params remaining",
+                      step=log_params_sparsity_step,
+                      context={"experiment phase": context})
+        exp_run.track(final_accuracy,
+                      name="Accuracy after convergence w/r params compression ratio",
+                      step=compression_ratio,
+                      context={"experiment phase": context})
+        exp_run.track(1 - (log_params_sparsity_step / 1000),
+                      name="Sparsity w/r params compression ratio",
+                      step=compression_ratio,
+                      context={"experiment phase": context})
+
+        # Print running time
+        print()
+        print(f"Running time for context: {context}: " + str(
+            timedelta(seconds=time.time() - subtask_start_time)))
+        print("----------------------------------------------")
+        print()
 
     # TODO: Add final pruning and comparison in low noise env -> Add variable for this setting in parser
     if exp_config.run_low_noise:
@@ -510,6 +620,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 timedelta(seconds=time.time() - subtask_start_time)))
             print("----------------------------------------------")
             print()
+
 
     # Print total runtime
     print()
