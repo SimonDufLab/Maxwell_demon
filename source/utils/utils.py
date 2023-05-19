@@ -1253,6 +1253,13 @@ def constant_schedule(training_steps, base_lr, final_lr, decay_steps):
     return optax.constant_schedule(base_lr)
 
 
+def fix_step_decay(training_steps, base_lr, final_lr, decay_steps):
+    """ Decay by 1/10 lr at fixed step defined by user"""
+    scaling_factor = 0.1
+    bound_dict = {i: scaling_factor**(j+1) for j, i in enumerate(decay_steps)}
+    return optax.piecewise_constant_schedule(base_lr, bound_dict)
+
+
 def piecewise_constant_schedule(training_steps, base_lr, final_lr, decay_steps):
     scaling_factor = (final_lr/base_lr)**(1/(decay_steps-1))
     bound_dict = {int(training_steps/decay_steps*i): scaling_factor for i in range(1, decay_steps)}
@@ -1645,3 +1652,13 @@ def sequential_ds(classes, kept_classes):
     indices_sequence = np.split(indices_sequence, split)
 
     return cycle(indices_sequence)
+
+
+def get_checkpoint_step(architecture, step):
+    """ Return the iteration at which to rewind for pruned reinit. Numbers taken from LTH rewinding litterature."""
+    if "resnet18" in architecture:
+        return 500  # fix
+    elif "vgg16" in architecture:
+        return 100  # fix
+    else:
+        raise ValueError('No rewinding steps encoded for other architectures rn')

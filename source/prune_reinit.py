@@ -18,7 +18,7 @@ from datetime import timedelta
 import pickle
 import json
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Tuple, Any, List
+from typing import Optional, Tuple, Any, List, Union
 from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -52,7 +52,7 @@ class ExpConfig:
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     end_final_lr: float = 1e-6  # final lr used for scheduler during low noise evaluation
-    lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_steps: Any = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
     train_batch_size: int = 16
     end_train_batch_size: int = 512  # final training batch size used during low noise evaluation
     eval_batch_size: int = 512
@@ -115,6 +115,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.wd_param), "Set wd_param if adamw is used with a regularization loss"
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
+    if type(exp_config.lr_decay_steps) == str:
+        exp_config.lr_decay_steps = literal_eval(exp_config.lr_decay_steps)
 
     activation_fn = activation_choice[exp_config.activation]
 
@@ -210,9 +212,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     initial_params_count = utl.count_params(params)
 
     # Rewinding
-    def checkpoint_fn(step):
-        return 1000  # test
-        # pass  # Will call utl.get_checkpoint_step  # TODO: encode
+    def checkpoint_fn(_step):
+        return utl.get_checkpoint_step(exp_config.architecture, _step)
     checkpoints = []
 
     def get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
@@ -228,6 +229,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if step % exp_config.report_freq == 0:
                     print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
                           f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
+                    print(f"current lr : {lr_schedule(step):.3f}")
                 dead_neurons = death_check_fn(params, state, next(test_death))
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
