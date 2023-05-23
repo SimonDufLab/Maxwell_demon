@@ -164,6 +164,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     size = exp_config.size
     architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
     net = build_models(*architecture, with_dropout=with_dropout)
+    reinit_net = copy.deepcopy(net)
 
     optimizer = optimizer_choice[exp_config.optimizer]
     if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
@@ -201,7 +202,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Initialize
     params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-    reinit_fn = Partial(net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
+    reinit_fn = Partial(reinit_net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
     opt_state = opt.init(params)
     initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
     initial_state = copy.deepcopy(state)
