@@ -164,7 +164,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     size = exp_config.size
     architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
     net = build_models(*architecture, with_dropout=with_dropout)
-    reinit_net = copy.deepcopy(net)
+    reinit_net = build_models(*architecture, with_dropout=with_dropout)
 
     optimizer = optimizer_choice[exp_config.optimizer]
     if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
