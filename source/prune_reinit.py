@@ -9,6 +9,8 @@ import copy
 import jax
 import jax.numpy as jnp
 import optax
+import haiku as hk
+from haiku._src.dot import to_graph
 
 import matplotlib.pyplot as plt
 from aim import Run, Figure, Distribution, Image
@@ -164,7 +166,6 @@ def run_exp(exp_config: ExpConfig) -> None:
     size = exp_config.size
     architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
     net = build_models(*architecture, with_dropout=with_dropout)
-    reinit_net = build_models(*architecture, with_dropout=with_dropout)
 
     optimizer = optimizer_choice[exp_config.optimizer]
     if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
@@ -202,7 +203,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Initialize
     params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-    # reinit_fn = Partial(reinit_net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
+    reinit_params, _ = net.init(jax.random.PRNGKey(exp_config.init_seed+42), next(train))
+    # reinit_fn = Partial(net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
     opt_state = opt.init(params)
     initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
     initial_state = copy.deepcopy(state)
@@ -434,7 +436,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         subtask_start_time = time.time()
         if "random" in context:
             # to_prune = reinit_fn(next(train))[0]  # Reinitialize params
-            to_prune, _ = reinit_net.init(jax.random.PRNGKey(exp_config.init_seed+42), next(train))
+            to_prune = reinit_params
             checkpoints = [(None, None)] + checkpoints
         else:
             to_prune = checkpoints[i][0]  # Retrieving params at checkpoint i
