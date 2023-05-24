@@ -202,7 +202,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Initialize
     params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-    reinit_fn = Partial(reinit_net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
+    # reinit_fn = Partial(reinit_net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
     opt_state = opt.init(params)
     initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
     initial_state = copy.deepcopy(state)
@@ -331,7 +331,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     if exp_config.rdm_reinit or exp_config.rewinding:
         preserve_dead_state = copy.deepcopy(dead_neurons)
     pruned_init_params = initial_params
-    state = initial_state
+    state = copy.deepcopy(initial_state)
     while (cycle_step < exp_config.pruning_cycles) and tol_flag:
         subtask_start_time = time.time()
         # prune the init params
@@ -433,7 +433,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     for i, context in enumerate(contexts):
         subtask_start_time = time.time()
         if "random" in context:
-            to_prune = reinit_fn(next(train))[0]  # Reinitialize params
+            # to_prune = reinit_fn(next(train))[0]  # Reinitialize params
+            to_prune, _ = reinit_net.init(jax.random.PRNGKey(exp_config.init_seed+42), next(train))
             checkpoints = [(None, None)] + checkpoints
         else:
             to_prune = checkpoints[i][0]  # Retrieving params at checkpoint i
