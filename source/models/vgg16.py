@@ -2,19 +2,18 @@
 import haiku as hk
 import jax.nn
 from jax.tree_util import Partial
-from jax.nn import relu, tanh
+from utils.utils import ReluMod
 
 from models.bn_base_unit import Base_BN, Conv_BN, Linear_BN
 from models.dropout_units import Base_Dropout
 
 
-def vgg16(sizes, number_classes, bn_config, activation_fn=relu, with_bias=True):
+def vgg16(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bias=True):
     """Prunable VGG16 implementation.
        default sizes=(64, 4096)
     """
 
-    def act():
-        return activation_fn
+    act = activation_fn
 
     if len(sizes) == 2:  # Size can be specified with 2 args
         sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], 4 * sizes[0],

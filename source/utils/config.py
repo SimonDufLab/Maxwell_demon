@@ -4,7 +4,7 @@ import optax
 import jaxpruner
 from jax.tree_util import Partial
 
-import utils.utils
+import utils.utils as utl
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule, one_cycle_schedule, fix_step_decay
@@ -16,12 +16,11 @@ from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.vgg16 import vgg16
 from models.resnet import resnet18
-from utils.utils import identity_fn, threlu
 
 baseline_pruning_method_choice = {
     "WMP": jaxpruner.MagnitudePruning,
     "GMP": jaxpruner.GlobalMagnitudePruning,
-    "LMP": utils.utils.LayerMagnitudePruning,
+    "LMP": utl.LayerMagnitudePruning,
     "saliency": jaxpruner.SaliencyPruning,
     "STE_magnitude": jaxpruner.SteMagnitudePruning,
     "SET": jaxpruner.SET,
@@ -31,7 +30,7 @@ baseline_pruning_method_choice = {
 optimizer_choice = {
     "adam": optax.adam,
     "adamw": optax.adamw,
-    "adamw_cdg": utils.utils.adamw_cdg,
+    "adamw_cdg": utl.adamw_cdg,
     "sgd": optax.sgd,
     "noisy_sgd": optax.noisy_sgd,
     "momentum9": Partial(optax.sgd, momentum=0.9),
@@ -103,14 +102,14 @@ bn_config_choice = {
 }
 
 activation_choice = {
-    "relu": jax.nn.relu,
-    "leaky_relu": Partial(jax.nn.leaky_relu, negative_slope=0.05),  # leak = 0.05
-    "abs": jax.numpy.abs,  # Absolute value as the activation function
-    "elu": jax.nn.elu,
-    "swish": jax.nn.swish,
-    "tanh": jax.nn.tanh,
-    "linear": identity_fn,
-    "threlu": threlu,
+    "relu": utl.ReluMod,
+    "leaky_relu": utl.LeakyReluMod,  # leak = 0.05
+    "abs": utl.AbsMod,  # Absolute value as the activation function
+    "elu": utl.EluMod,
+    "swish": utl.SwishMod,
+    "tanh": utl.TanhMod,
+    "linear": utl.IdentityMod,
+    "threlu": utl.ThreluMod,
 }
 
 activations_pre_relu = {

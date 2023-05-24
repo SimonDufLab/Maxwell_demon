@@ -1528,6 +1528,74 @@ class LayerMagnitudePruning(BaseUpdater):
 
 
 ##############################
+# Activation fn as module
+# allows to implement trick to easily recover activations gradient
+##############################
+class ActivationMod(hk.Module):
+
+    def __init__(self, activation_fn:Callable, name: Optional[str] = None):
+        """ Module replacement for activation function. Allows to define a state variable (a constant) that we can
+        use to calculate gradient values w/r to activation
+        """
+        super().__init__(name=name)
+        self.activation_fn = activation_fn
+
+    def __call__(self,
+                 inputs: Any,  # Used to be jax.Array; but cluster jax version < 0.4.1 (not compatible)
+                 precision: Optional[jax.lax.Precision] = None,
+                 ) -> Any:  # Again; switch to jax.Array when version updated on cluster
+        c = hk.get_state("gate_constant", [], inputs.dtype, init=jnp.ones)
+
+        out = self.activation_fn(c*inputs)
+
+        return out
+
+    @property
+    def gate_constant(self):
+        return hk.get_state("gate_constant")
+
+
+class ReluMod(ActivationMod):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.relu, name=name)
+
+
+class LeakyReluMod(ActivationMod):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=Partial(jax.nn.leaky_relu, negative_slope=0.05), name=name)
+
+
+class AbsMod(ActivationMod):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.numpy.abs, name=name)
+
+
+class EluMod(ActivationMod):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.elu, name=name)
+
+
+class SwishMod(ActivationMod):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.swish, name=name)
+
+
+class TanhMod(ActivationMod):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.tanh, name=name)
+
+
+class IdentityMod(ActivationMod):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=identity_fn, name=name)
+
+
+class ThreluMod(ActivationMod):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=threlu, name=name)
+
+
+##############################
 # Varia
 ##############################
 def get_total_neurons(architecture, sizes):

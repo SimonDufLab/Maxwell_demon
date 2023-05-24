@@ -7,6 +7,7 @@ from jax.nn import relu
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from models.bn_base_unit import Base_BN
+from utils.utils import ReluMod
 
 from haiku.nets import ResNet
 from haiku._src.nets.resnet import check_length
@@ -114,7 +115,7 @@ class ResnetBlockV1(hk.Module):
             self,
             channels: Sequence[int],
             stride: Union[int, Sequence[int]],
-            activation_fn: Callable,
+            activation_fn: hk.Module,
             use_projection: bool,
             bottleneck: bool,
             is_training: bool,
@@ -162,7 +163,7 @@ class ResnetBlockV1(hk.Module):
             **default_block_conv_config)
 
         bn_1 = hk.BatchNorm(name="batchnorm_1", **bn_config)
-        layers = ((conv_0, bn_0), (conv_1, bn_1))
+        layers = ((conv_0, bn_0, activation_fn()), (conv_1, bn_1, activation_fn()))
 
         if bottleneck:
             conv_2 = hk.Conv2D(
@@ -175,11 +176,11 @@ class ResnetBlockV1(hk.Module):
                 **default_block_conv_config)
 
             bn_2 = hk.BatchNorm(name="batchnorm_2", scale_init=jnp.zeros, **bn_config)
-            layers = layers + ((conv_2, bn_2),)
+            layers = layers + ((conv_2, bn_2, activation_fn()),)
 
         self.layers = layers
         self.is_training = is_training
-        self.activation_fn = activation_fn
+        # self.activation_fn = activation_fn
         self.with_bn = with_bn
 
     def __call__(self, inputs):
@@ -193,16 +194,16 @@ class ResnetBlockV1(hk.Module):
         else:
             shortcut = self.identity_skip(shortcut)
 
-        for i, (conv_i, bn_i) in enumerate(self.layers):
+        for i, (conv_i, bn_i, act_i) in enumerate(self.layers):
             out = conv_i(out)
             if self.with_bn:
                 out = bn_i(out, self.is_training)
             if i < len(self.layers) - 1:  # Don't apply act right away on last layer
-                out = self.activation_fn(out)
+                out = act_i(out)
                 activations.append(out)
 
         # try:
-        out = self.activation_fn(out + shortcut)
+        out = act_i(out + shortcut)
         # except:
         #     print(out.shape)
         #     print(shortcut.shape)
@@ -271,7 +272,7 @@ class ResnetInit(hk.Module):
     def __init__(
             self,
             is_training: bool,
-            activation_fn: Callable,
+            activation_fn: hk.Module,
             conv_config: Optional[Mapping[str, FloatStrOrBool]],
             bn_config: Optional[Mapping[str, FloatStrOrBool]],
             with_bn: bool,
@@ -280,7 +281,7 @@ class ResnetInit(hk.Module):
         self.is_training = is_training
         self.bn = hk.BatchNorm(name="init_bn", **bn_config)
         self.conv = hk.Conv2D(**conv_config)
-        self.activation_fn = activation_fn
+        self.activation_fn = activation_fn()
         self.with_bn = with_bn
 
     def __call__(self, inputs):
@@ -338,15 +339,11 @@ def resnet_model(blocks_per_group: Sequence[int],
                  initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
                  strides: Sequence[int] = (1, 2, 2, 2),):
 
-    def act():
-        return activation_fn
+    act = activation_fn
 
     check_length(4, blocks_per_group, "blocks_per_group")
     check_length(4, channels_per_group, "channels_per_group")
     check_length(4, strides, "strides")
-
-    # def act():
-    #     return jax.nn.relu
 
     train_layers = [[Partial(ResnetInit, is_training=True, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn)]]
     test_layers = [[Partial(ResnetInit, is_training=False, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn)]]
@@ -413,7 +410,7 @@ default_fc_layer_config = {"with_bias": True, "w_init": kaiming_normal}
 
 def resnet18(size: Union[int, Sequence[int]],
              num_classes: int,
-             activation_fn: Callable = relu,
+             activation_fn: hk.Module = ReluMod,
              logits_config: Optional[Mapping[str, Any]] = default_logits_config,
              initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = default_initial_conv_config,
              strides: Sequence[int] = (1, 2, 2, 2),
