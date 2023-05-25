@@ -72,6 +72,8 @@ class ExpConfig:
     regularizer: Optional[str] = 'None'
     reg_param: float = 1e-4
     wd_param: Optional[float] = None
+    reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
+    zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     cycling_regularizer: Optional[str] = 'None'
     cycling_reg_param: float = 1e-4
     rdm_reinit: bool = False  # Randomly reinit the pruned network and train, for baseline comparison
@@ -214,6 +216,13 @@ def run_exp(exp_config: ExpConfig) -> None:
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
     initial_params_count = utl.count_params(params)
 
+    decaying_reg_param = copy.deepcopy(exp_config.reg_param)
+    decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
+    if decay_cycles == 2:
+        reg_param_decay_period = int(0.8 * exp_config.training_steps)
+    else:
+        reg_param_decay_period = exp_config.training_steps // decay_cycles
+
     # Rewinding
     def checkpoint_fn(_step):
         return utl.get_checkpoint_step(exp_config.architecture, _step)
@@ -286,12 +295,30 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                             scan_death_check_fn, full_train_acc_fn, final_accuracy_fn)
 
     for step in range(exp_config.training_steps):
+        # Decaying reg_param if applicable
+        if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
+                (not (step % exp_config.training_steps == 0)):
+            decaying_reg_param = decaying_reg_param / 10
+            if (step >= (decay_cycles - 1) * reg_param_decay_period) and exp_config.zero_end_reg_param:
+                decaying_reg_param = 0
+            print("decaying reg param:")
+            print(decaying_reg_param)
+            print()
+            loss.clear_cache()
+            test_loss_fn.clear_cache()
+            update_fn.clear_cache()
+            loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+                                           classes=classes, with_dropout=with_dropout)
+            test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                   reg_param=decaying_reg_param,
+                                                   classes=classes, is_training=False, with_dropout=with_dropout)
+            update_fn = utl.update_given_loss_and_optimizer(loss, opt,  with_dropout=with_dropout)
         # Metrics and logs:
         print_and_record_metrics(step, "noisy", params, state, total_neurons, total_per_layer)
         # record checkpoints if rewinding:
         if exp_config.rewinding:
             if step == checkpoint_fn(step):
-                checkpoints.append((copy.deepcopy(params), step)) # Checkpoint params and step where recorded
+                checkpoints.append((copy.deepcopy(params), step))  # Checkpoint params and step where recorded
         # Train step over single batch
         if with_dropout:
             params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
