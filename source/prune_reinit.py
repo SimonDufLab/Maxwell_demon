@@ -170,14 +170,16 @@ def run_exp(exp_config: ExpConfig) -> None:
     net = build_models(*architecture, with_dropout=with_dropout)
 
     optimizer = optimizer_choice[exp_config.optimizer]
+    opt_chain = []
+    if exp_config.gradient_clipping:
+        opt_chain.append(optax.clip(10))
     if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
         if exp_config.wd_param:  # wd_param overwrite reg_param when specified
             optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
         else:
             optimizer = Partial(optimizer, weight_decay=exp_config.reg_param)
-    opt_chain = []
-    if exp_config.gradient_clipping:
-        opt_chain.append(optax.clip(10))
+    elif exp_config.wd_param:  # TODO: Maybe exclude adamw?
+        opt_chain.append(optax.add_decayed_weights(weight_decay=exp_config.wd_param))
 
     if 'noisy' in exp_config.optimizer:
         opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
@@ -313,11 +315,14 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                    reg_param=decaying_reg_param,
                                                    classes=classes, is_training=False, with_dropout=with_dropout)
             update_fn = utl.update_given_loss_and_optimizer(loss, opt,  with_dropout=with_dropout)
+            print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
+                                                                    scan_death_check_fn, full_train_acc_fn,
+                                                                    final_accuracy_fn)
         # Metrics and logs:
         print_and_record_metrics(step, "noisy", params, state, total_neurons, total_per_layer)
         # record checkpoints if rewinding:
         if exp_config.rewinding:
-            if step == checkpoint_fn(step):
+            if step in checkpoint_fn(step):
                 checkpoints.append((copy.deepcopy(params), step))  # Checkpoint params and step where recorded
         # Train step over single batch
         if with_dropout:
