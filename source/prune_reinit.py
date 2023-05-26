@@ -469,7 +469,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         if "random" in context:
             # to_prune = reinit_fn(next(train))[0]  # Reinitialize params
             to_prune = reinit_params
-            checkpoints = [(None, None)] + checkpoints
+            checkpoints = [(None, 0)] + checkpoints
         else:
             to_prune = checkpoints[i][0]  # Retrieving params at checkpoint i
         opt_state = opt.init(to_prune)
@@ -513,7 +513,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                 scan_death_check_fn, full_train_acc_fn,
                                                                 final_accuracy_fn)
 
-        for step in range(exp_config.training_steps):
+        for step in range(exp_config.training_steps - checkpoints[i][1]):  # Substract rewind. step from training_steps
             # Metrics and logs:
             print_and_record_metrics(step, context, params, state, total_neurons, total_per_layer)
             # Train step over single batch
