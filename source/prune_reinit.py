@@ -72,6 +72,8 @@ class ExpConfig:
     regularizer: Optional[str] = 'None'
     reg_param: float = 1e-4
     wd_param: Optional[float] = None
+    reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
+    zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     cycling_regularizer: Optional[str] = 'None'
     cycling_reg_param: float = 1e-4
     rdm_reinit: bool = False  # Randomly reinit the pruned network and train, for baseline comparison
@@ -168,14 +170,16 @@ def run_exp(exp_config: ExpConfig) -> None:
     net = build_models(*architecture, with_dropout=with_dropout)
 
     optimizer = optimizer_choice[exp_config.optimizer]
+    opt_chain = []
+    if exp_config.gradient_clipping:
+        opt_chain.append(optax.clip(10))
     if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
         if exp_config.wd_param:  # wd_param overwrite reg_param when specified
             optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
         else:
             optimizer = Partial(optimizer, weight_decay=exp_config.reg_param)
-    opt_chain = []
-    if exp_config.gradient_clipping:
-        opt_chain.append(optax.clip(10))
+    elif exp_config.wd_param:  # TODO: Maybe exclude adamw?
+        opt_chain.append(optax.add_decayed_weights(weight_decay=exp_config.wd_param))
 
     if 'noisy' in exp_config.optimizer:
         opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
@@ -214,6 +218,13 @@ def run_exp(exp_config: ExpConfig) -> None:
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
     initial_params_count = utl.count_params(params)
 
+    decaying_reg_param = copy.deepcopy(exp_config.reg_param)
+    decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
+    if decay_cycles == 2:
+        reg_param_decay_period = int(0.8 * exp_config.training_steps)
+    else:
+        reg_param_decay_period = exp_config.training_steps // decay_cycles
+
     # Rewinding
     def checkpoint_fn(_step):
         return utl.get_checkpoint_step(exp_config.architecture, _step)
@@ -232,7 +243,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if step % exp_config.report_freq == 0:
                     print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
                           f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
-                    print(f"current lr : {lr_schedule(step):.3f}")
+                    print(f"current lr : {lr_schedule(step):.5f}")
                 dead_neurons = death_check_fn(params, state, next(test_death))
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
@@ -286,12 +297,32 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                             scan_death_check_fn, full_train_acc_fn, final_accuracy_fn)
 
     for step in range(exp_config.training_steps):
+        # Decaying reg_param if applicable
+        if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
+                (not (step % exp_config.training_steps == 0)):
+            decaying_reg_param = decaying_reg_param / 10
+            if (step >= (decay_cycles - 1) * reg_param_decay_period) and exp_config.zero_end_reg_param:
+                decaying_reg_param = 0
+            print(f"decaying reg param: {decaying_reg_param:.5f}")
+            print()
+            loss.clear_cache()
+            test_loss_fn.clear_cache()
+            update_fn.clear_cache()
+            loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+                                           classes=classes, with_dropout=with_dropout)
+            test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                   reg_param=decaying_reg_param,
+                                                   classes=classes, is_training=False, with_dropout=with_dropout)
+            update_fn = utl.update_given_loss_and_optimizer(loss, opt,  with_dropout=with_dropout)
+            print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
+                                                                    scan_death_check_fn, full_train_acc_fn,
+                                                                    final_accuracy_fn)
         # Metrics and logs:
         print_and_record_metrics(step, "noisy", params, state, total_neurons, total_per_layer)
         # record checkpoints if rewinding:
         if exp_config.rewinding:
-            if step == checkpoint_fn(step):
-                checkpoints.append((copy.deepcopy(params), step)) # Checkpoint params and step where recorded
+            if step in checkpoint_fn(step):
+                checkpoints.append((copy.deepcopy(params), step))  # Checkpoint params and step where recorded
         # Train step over single batch
         if with_dropout:
             params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
@@ -437,7 +468,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         if "random" in context:
             # to_prune = reinit_fn(next(train))[0]  # Reinitialize params
             to_prune = reinit_params
-            checkpoints = [(None, None)] + checkpoints
+            checkpoints = [(None, 0)] + checkpoints
         else:
             to_prune = checkpoints[i][0]  # Retrieving params at checkpoint i
         opt_state = opt.init(to_prune)
@@ -481,7 +512,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                 scan_death_check_fn, full_train_acc_fn,
                                                                 final_accuracy_fn)
 
-        for step in range(exp_config.training_steps):
+        for step in range(exp_config.training_steps - checkpoints[i][1]):  # Substract rewind. step from training_steps
             # Metrics and logs:
             print_and_record_metrics(step, context, params, state, total_neurons, total_per_layer)
             # Train step over single batch
