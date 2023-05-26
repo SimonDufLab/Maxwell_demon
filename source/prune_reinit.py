@@ -243,7 +243,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if step % exp_config.report_freq == 0:
                     print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
                           f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
-                    print(f"current lr : {lr_schedule(step):.3f}")
+                    print(f"current lr : {lr_schedule(step):.5f}")
                 dead_neurons = death_check_fn(params, state, next(test_death))
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
@@ -303,8 +303,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             decaying_reg_param = decaying_reg_param / 10
             if (step >= (decay_cycles - 1) * reg_param_decay_period) and exp_config.zero_end_reg_param:
                 decaying_reg_param = 0
-            print("decaying reg param:")
-            print(decaying_reg_param)
+            print(f"decaying reg param: {decaying_reg_param:.5f}")
             print()
             loss.clear_cache()
             test_loss_fn.clear_cache()
