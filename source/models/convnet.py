@@ -3,7 +3,7 @@ import haiku as hk
 import jax.nn
 from jax.tree_util import Partial
 from jax.nn import relu, tanh
-from utils.utils import ReluMod
+from utils.utils import ReluActivationModule
 
 from models.bn_base_unit import Base_BN, Conv_BN, Linear_BN
 from models.dropout_units import Base_Dropout
@@ -13,7 +13,7 @@ def _tanh():
     return lambda x: tanh(2 * x)
 
 
-def conv_3_2(sizes, number_classes, dim=2, activation_fn=ReluMod, with_bias=True, tanh_head=False):
+def conv_3_2(sizes, number_classes, dim=2, activation_fn=ReluActivationModule, with_bias=True, tanh_head=False):
     """ Convnet with 3 convolutional layers followed by 2 fully-connected
     """
 
@@ -44,7 +44,7 @@ def conv_3_2(sizes, number_classes, dim=2, activation_fn=ReluMod, with_bias=True
     return [layer_1, layer_2, layer_3, layer_4, layer_5],
 
 
-def conv_3_2_bn(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bias=True):
+def conv_3_2_bn(sizes, number_classes, bn_config, activation_fn=ReluActivationModule, with_bias=True):
     """ Convnet with 3 convolutional layers followed by 2 fully-connected, with BN added after
     every layer apart from the final one.
     """
@@ -72,7 +72,7 @@ def conv_3_2_bn(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bi
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, layer_5]
 
 
-def conv_4_2(sizes, number_classes, dim=2, activation_fn=ReluMod, with_bias=True, tanh_head=False):
+def conv_4_2(sizes, number_classes, dim=2, activation_fn=ReluActivationModule, with_bias=True, tanh_head=False):
     """ Convnet with 4 convolutional layers followed by 2 fully-connected
     """
 
@@ -104,7 +104,7 @@ def conv_4_2(sizes, number_classes, dim=2, activation_fn=ReluMod, with_bias=True
     return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6],
 
 
-def conv_4_2_dropout(sizes, number_classes, dim=2, activation_fn=ReluMod, dropout_rate=0, with_bias=True):
+def conv_4_2_dropout(sizes, number_classes, dim=2, activation_fn=ReluActivationModule, dropout_rate=0, with_bias=True):
     """ Dropout version of conv_4_2
     """
 
@@ -140,7 +140,7 @@ def conv_4_2_dropout(sizes, number_classes, dim=2, activation_fn=ReluMod, dropou
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, test_layer_5, layer_6]
 
 
-def conv_4_2_bn(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bias=True):
+def conv_4_2_bn(sizes, number_classes, bn_config, activation_fn=ReluActivationModule, with_bias=True):
     """ Convnet with 4 convolutional layers followed by 2 fully-connected, with BN added after
     every layer apart from the final one.
     """
@@ -170,7 +170,7 @@ def conv_4_2_bn(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bi
            [test_layer_1, test_layer_2, test_layer_3, test_layer_4, test_layer_5, layer_6]
 
 
-def conv_4_2_ln(sizes, number_classes, activation_fn=ReluMod, with_bias=True):
+def conv_4_2_ln(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True):
     """ Convnet with 4 convolutional layers followed by 2 fully-connected, with LayerNorm layers
     added after activation functions
     """
@@ -206,7 +206,7 @@ def conv_4_2_ln(sizes, number_classes, activation_fn=ReluMod, with_bias=True):
     return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6],
 
 
-def conv_6_2(sizes, number_classes, dim=2, activation_fn=ReluMod, with_bias=True):
+def conv_6_2(sizes, number_classes, dim=2, activation_fn=ReluActivationModule, with_bias=True):
     """ Convnet with 6 convolutional layers followed by 2 fully-connected
     """
 
@@ -237,7 +237,7 @@ def conv_6_2(sizes, number_classes, dim=2, activation_fn=ReluMod, with_bias=True
     return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6, layer_7, layer_8],
 
 
-def conv_6_2_bn(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bias=True):
+def conv_6_2_bn(sizes, number_classes, bn_config, activation_fn=ReluActivationModule, with_bias=True):
     """ Convnet with 6 convolutional layers followed by 2 fully-connected, with BN added after
     every layer apart from the final one.
     """
@@ -277,7 +277,7 @@ def conv_6_2_bn(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bi
 # The architecture below are to retrieve activations value pre-relu and pre-bn for visualization purposes;
 # to build histograms of those at some given time step
 ##############################
-def conv_4_2_act_pre_relu(sizes, number_classes, activation_fn=ReluMod):
+def conv_4_2_act_pre_relu(sizes, number_classes, activation_fn=ReluActivationModule):
     """ conv_4_2 slightly modified to retrieve the activation value before the relu
     """
 
@@ -299,7 +299,7 @@ def conv_4_2_act_pre_relu(sizes, number_classes, activation_fn=ReluMod):
     return [layer_1, layer_2, layer_3, layer_4, layer_5, layer_6],
 
 
-def conv_4_2_act_pre_bn(sizes, number_classes, activation_fn=ReluMod):
+def conv_4_2_act_pre_bn(sizes, number_classes, activation_fn=ReluActivationModule):
     """ conv_4_2 slightly modified to retrieve the activation value before the bn layer
     """
 
@@ -328,7 +328,7 @@ def conv_4_2_act_pre_bn(sizes, number_classes, activation_fn=ReluMod):
            [layer_1, test_layer_2, test_layer_3, test_layer_4, test_layer_5, test_layer_6]
 
 
-def conv_4_2_act_post_bn(sizes, number_classes, activation_fn=ReluMod):
+def conv_4_2_act_post_bn(sizes, number_classes, activation_fn=ReluActivationModule):
     """ conv_4_2 slightly modified to retrieve the activation value after the bn layer but before the activation
     """
 

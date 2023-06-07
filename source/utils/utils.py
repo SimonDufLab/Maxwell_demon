@@ -15,11 +15,16 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
-from typing import Union, Tuple, List, Callable
+from typing import Union, Tuple, List, Callable, Sequence
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
 from collections.abc import Iterable
 from itertools import cycle
+
+from haiku._src.dot import to_graph
+import networkx as nx
+from networkx.drawing.nx_agraph import from_agraph
+import pygraphviz as pgv
 
 from optax._src import base
 from optax._src import wrappers
@@ -1195,6 +1200,45 @@ def load_fashion_mnist_torch(is_training, batch_size, subset=None, transform=Tru
 ##############################
 # Module utilities
 ##############################
+class FancySequential(hk.Module):
+    """Apply hk.Sequential to layer's list to build the module, but retrieve the activation mapping
+    along the way"""
+    def __init__(
+            self,
+            layers: Any,
+            name: Optional[str] = None,
+            preceding_activation_name: Optional[str] = None
+    ):
+        super().__init__(name=name)
+        self.layers = tuple(layers)
+        self.activation_mapping = {}
+        self.preceding_activation_name = preceding_activation_name
+
+    def __call__(self, inputs):
+        """Calls all layers sequentially, updating the activation mapping along the way"""
+        out = inputs
+        prev_act_name = self.preceding_activation_name
+        for layer in self.layers:
+            # if i == 0:
+            #     layer_module = layer(preceding_activation_name=prev_act_name)
+            #     out = layer_module(out, *args, **kwargs)
+            #     self.activation_mapping.update(layer_module.get_activation_mapping())
+            #     prev_act_name = layer_module.get_last_activation_name()
+            # else:
+            layer_module = layer(preceding_activation_name=prev_act_name)
+            out = layer_module(out)
+            self.activation_mapping.update(layer_module.get_activation_mapping())
+            prev_act_name = layer_module.get_last_activation_name()
+        self.last_act_name = prev_act_name
+        return out
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return self.last_act_name
+
+
 def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout=False):
     """ Take as input a list of haiku modules and return 2 different transform object:
     1) First is the typical model returning the outputs
@@ -1212,6 +1256,7 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
             super().__init__(name=name)
             self.train_layers = train_layer_list
             self.test_layers = test_layer_list
+            self.activation_mapping = {}
 
         def __call__(self, x, return_activations=False, is_training=True):
             activations = []
@@ -1220,8 +1265,13 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
                 layers = self.train_layers
             else:
                 layers = self.test_layers
+            prev_activation_name = None
             for layer in layers[:-1]:  # Don't append final output in activations list
-                x = hk.Sequential([mdl() for mdl in layer])(x)
+                # x = hk.Sequential([mdl() for mdl in layer])(x)
+                layer_modules = FancySequential(layer, preceding_activation_name=prev_activation_name)
+                x = layer_modules(x)
+                self.activation_mapping.update(layer_modules.get_activation_mapping())
+                prev_activation_name = layer_modules.get_last_activation_name()
                 if return_activations:
                     if type(x) is tuple:
                         activations += x[1]
@@ -1230,20 +1280,34 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
                         activations.append(x)
                 if type(x) is tuple:
                     x = x[0]
-            x = hk.Sequential([mdl() for mdl in layers[-1]])(x)
-            if return_activations:
-                return x, activations
+            # x = hk.Sequential([mdl() for mdl in layers[-1]])(x)
+            layer_modules = FancySequential(layers[-1], preceding_activation_name=prev_activation_name)
+            x = layer_modules(x)
+            if type(x) is tuple:
+                final_output = x[0]
             else:
-                return x
+                final_output = x
+            self.activation_mapping.update(layer_modules.get_activation_mapping())
+            if return_activations:
+                if type(x) is tuple:
+                    activations += x[1]
+                return final_output, activations
+            else:
+                return final_output
+
+        def get_activation_mapping(self):
+            return self.activation_mapping
+
+    initialized_model = ModelAndActivations()
 
     def primary_model(x, return_activations=False, is_training=True):
-        return ModelAndActivations()(x, return_activations, is_training)
+        return initialized_model(x, return_activations, is_training)
 
     # return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
     if not with_dropout:
-        return hk.without_apply_rng(hk.transform_with_state(primary_model))
+        return hk.without_apply_rng(hk.transform_with_state(primary_model)), initialized_model.get_activation_mapping()
     else:
-        return hk.transform_with_state(primary_model)
+        return hk.transform_with_state(primary_model), initialized_model.get_activation_mapping()
 
 
 ##############################
@@ -1527,13 +1591,44 @@ class LayerMagnitudePruning(BaseUpdater):
         return layer_magnitudes
 
 
+def net_to_adjacency_matrix(net, x):
+    """ Use the dot representation returned by hk.experimental.to_dot to recover an adjacency matrix
+        that will be used to map neuron sparsity to weight sparsity and for pruning."""
+
+    params, state = net.init(jax.random.PRNGKey(0), x)
+
+    # New function ignoring the state
+    def model_fn_without_state(_x):
+        return net.apply(params, state, _x, return_activations=False, is_training=False)
+
+    # Now this function can be used with hk.experimental.to_dot
+    dot = hk.experimental.to_dot(model_fn_without_state)(x)
+    print(dot)
+    raise SystemExit
+    # dot = hk.experimental.to_dot(lambda rng_k, _x: net.init(rng_k, _x)[0])(jax.random.PRNGKey(0), x)
+    # dot = hk.experimental.to_dot(net.init)(jax.random.PRNGKey(0), x)
+    agraph = pgv.AGraph(string=dot)
+
+    # Convert the AGraph into a NetworkX graph
+    nx_graph = from_agraph(agraph)
+
+    # Now you can generate an adjacency matrix from the graph
+    # We will use a SciPy sparse matrix to store it
+    adjacency_matrix = nx.adjacency_matrix(nx_graph)
+
+    # If you need it as a dense NumPy array, you can do:
+    adjacency_matrix_dense = adjacency_matrix.todense()
+
+    return adjacency_matrix_dense
+
+
 ##############################
 # Activation fn as module
 # allows to implement trick to easily recover activations gradient
 ##############################
-class ActivationMod(hk.Module):
+class ActivationModule(hk.Module):
 
-    def __init__(self, activation_fn:Callable, name: Optional[str] = None):
+    def __init__(self, activation_fn: Callable, name: Optional[str] = None):
         """ Module replacement for activation function. Allows to define a state variable (a constant) that we can
         use to calculate gradient values w/r to activation
         """
@@ -1544,7 +1639,8 @@ class ActivationMod(hk.Module):
                  inputs: Any,  # Used to be jax.Array; but cluster jax version < 0.4.1 (not compatible)
                  precision: Optional[jax.lax.Precision] = None,
                  ) -> Any:  # Again; switch to jax.Array when version updated on cluster
-        c = hk.get_state("gate_constant", [], inputs.dtype, init=jnp.ones)
+        c = hk.get_state("gate_constant", inputs.shape[-1:], inputs.dtype, init=jnp.ones)  # c must have shape
+        # matching the amount of neurons
 
         out = self.activation_fn(c*inputs)
 
@@ -1555,44 +1651,67 @@ class ActivationMod(hk.Module):
         return hk.get_state("gate_constant")
 
 
-class ReluMod(ActivationMod):
+class ReluActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=jax.nn.relu, name=name)
 
 
-class LeakyReluMod(ActivationMod):
+class LeakyReluActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=Partial(jax.nn.leaky_relu, negative_slope=0.05), name=name)
 
 
-class AbsMod(ActivationMod):
+class AbsActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=jax.numpy.abs, name=name)
 
 
-class EluMod(ActivationMod):
+class EluActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=jax.nn.elu, name=name)
 
 
-class SwishMod(ActivationMod):
+class SwishActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=jax.nn.swish, name=name)
 
 
-class TanhMod(ActivationMod):
+class TanhActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=jax.nn.tanh, name=name)
 
 
-class IdentityMod(ActivationMod):
+class IdentityActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=identity_fn, name=name)
 
 
-class ThreluMod(ActivationMod):
+class ThreluActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=threlu, name=name)
+
+
+##############################
+# HK modules with activation mapping
+# used to easily build the pruning function
+##############################
+class MaxPool(hk.MaxPool):
+    """Max pool upgraded with activation mapping
+    """
+
+    def __init__(self, window_shape: Union[int, Sequence[int]], strides: Union[int, Sequence[int]], padding: str,
+               channel_axis: Optional[int] = -1, name: Optional[str] = None,
+               preceding_activation_name: Optional[str] = None, ):
+        super().__init__(window_shape=window_shape, strides=strides, padding=padding,
+                         channel_axis=channel_axis, name=name)
+        self.preceding_activations_name = preceding_activation_name
+        self.activation_mapping = {}
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return self.preceding_activations_name
 
 
 ##############################

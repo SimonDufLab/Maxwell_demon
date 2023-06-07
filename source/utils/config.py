@@ -102,14 +102,14 @@ bn_config_choice = {
 }
 
 activation_choice = {
-    "relu": utl.ReluMod,
-    "leaky_relu": utl.LeakyReluMod,  # leak = 0.05
-    "abs": utl.AbsMod,  # Absolute value as the activation function
-    "elu": utl.EluMod,
-    "swish": utl.SwishMod,
-    "tanh": utl.TanhMod,
-    "linear": utl.IdentityMod,
-    "threlu": utl.ThreluMod,
+    "relu": utl.ReluActivationModule,
+    "leaky_relu": utl.LeakyReluActivationModule,  # leak = 0.05
+    "abs": utl.AbsActivationModule,  # Absolute value as the activation function
+    "elu": utl.EluActivationModule,
+    "swish": utl.SwishActivationModule,
+    "tanh": utl.TanhActivationModule,
+    "linear": utl.IdentityActivationModule,
+    "threlu": utl.ThreluActivationModule,
 }
 
 activations_pre_relu = {

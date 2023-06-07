@@ -2,13 +2,13 @@
 import haiku as hk
 import jax.nn
 from jax.tree_util import Partial
-from utils.utils import ReluMod
+from utils.utils import ReluActivationModule
 
 from models.bn_base_unit import Base_BN, Conv_BN, Linear_BN
 from models.dropout_units import Base_Dropout
 
 
-def vgg16(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bias=True):
+def vgg16(sizes, number_classes, bn_config, activation_fn=ReluActivationModule, with_bias=True):
     """Prunable VGG16 implementation.
        default sizes=(64, 4096)
     """

@@ -2,13 +2,13 @@
 import haiku as hk
 from jax.tree_util import Partial
 from jax.nn import relu, tanh
-from utils.utils import ReluMod
+from utils.utils import ReluActivationModule
 
 from models.bn_base_unit import Linear_BN, Base_BN
 from models.dropout_units import Base_Dropout
 
 
-def mlp_3(sizes, number_classes, activation_fn=ReluMod, with_bias=True, tanh_head=False):
+def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, tanh_head=False):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units"""
     act = activation_fn
 
@@ -28,7 +28,7 @@ def mlp_3(sizes, number_classes, activation_fn=ReluMod, with_bias=True, tanh_hea
     return [layer_1, layer_2, layer_3],
 
 
-def mlp_3_dropout(sizes, number_classes, activation_fn=ReluMod, dropout_rate=0, with_bias=True):
+def mlp_3_dropout(sizes, number_classes, activation_fn=ReluActivationModule, dropout_rate=0, with_bias=True):
     """ Dropout version of mlp_3 model"""
     act = activation_fn
 
@@ -45,7 +45,7 @@ def mlp_3_dropout(sizes, number_classes, activation_fn=ReluMod, dropout_rate=0, 
     return [train_layer_1, train_layer_2, layer_3], [test_layer_1, test_layer_2, layer_3]
 
 
-def mlp_3_bn(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bias=True):
+def mlp_3_bn(sizes, number_classes, bn_config, activation_fn=ReluActivationModule, with_bias=True):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units,
     , with BN added after every layer apart from the final one"""
     act = activation_fn
@@ -70,7 +70,7 @@ def mlp_3_bn(sizes, number_classes, bn_config, activation_fn=ReluMod, with_bias=
 ##############################
 
 
-def mlp_3_act_pre_relu(sizes, number_classes, activation_fn=ReluMod):
+def mlp_3_act_pre_relu(sizes, number_classes, activation_fn=ReluActivationModule):
     """ MLP with 2 hidden units used only to retrieve activations value pre-relu"""
     act = activation_fn
 
@@ -84,7 +84,7 @@ def mlp_3_act_pre_relu(sizes, number_classes, activation_fn=ReluMod):
     return [layer_1, layer_2, layer_3],
 
 
-def mlp_3_act_pre_bn(sizes, number_classes, bn_config, activation_fn=ReluMod):
+def mlp_3_act_pre_bn(sizes, number_classes, bn_config, activation_fn=ReluActivationModule):
     """ MLP with 2 hidden units used only to retrieve activations value pre-bacthnorm"""
     act = activation_fn
 
@@ -101,7 +101,7 @@ def mlp_3_act_pre_bn(sizes, number_classes, bn_config, activation_fn=ReluMod):
     return [layer_1, train_layer_2, train_layer_3], [layer_1, test_layer_2, test_layer_3]
 
 
-def mlp_3_act_post_bn(sizes, number_classes, bn_config, activation_fn=ReluMod):
+def mlp_3_act_post_bn(sizes, number_classes, bn_config, activation_fn=ReluActivationModule):
     """ MLP with 2 hidden units used only to retrieve activations value post-bacthnorm"""
     act = activation_fn
 
@@ -121,7 +121,7 @@ def mlp_3_act_post_bn(sizes, number_classes, bn_config, activation_fn=ReluMod):
 ##############################
 # Architecture for regression (scalar outputs)
 ##############################
-def mlp_3_reg(sizes, activation_fn=ReluMod, with_bias=True):
+def mlp_3_reg(sizes, activation_fn=ReluActivationModule, with_bias=True):
     """ Build a MLP with 2 hidden layers similar to popular LeNet
     Designed for regression tasks: 1 output"""
     act = activation_fn
