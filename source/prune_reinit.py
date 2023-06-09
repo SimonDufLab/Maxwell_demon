@@ -222,6 +222,12 @@ def run_exp(exp_config: ExpConfig) -> None:
     print(acti_map.keys())
     print(params.keys())
     print(set(params.keys()).issubset(acti_map.keys()))
+    print()
+    print(jax.tree_map(jnp.shape, params))
+    dead_neurons = scan_death_check_fn(params, state, test_death)
+    remaining_params = utl.remove_dead_neurons_weights(params, dead_neurons,
+                                                       frozen_layer_lists, opt_state,
+                                                       state)[0]
     raise SystemExit
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)

@@ -491,6 +491,8 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             current_state = jnp.repeat(neurons_state[i].reshape(1, -1), to_repeat, axis=0).flatten()
             # print(neurons_state[i])
             # print(current_state)
+            # print(_layers_name[i])
+            # print(_layers_name[i + 1])
         else:
             current_state = neurons_state[i]
         filtered_params[_layers_name[i+1]]['w'] = filtered_params[_layers_name[i+1]]['w'][..., current_state, :]
@@ -533,6 +535,110 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
 
     new_sizes = [int(jnp.sum(layer)) for layer in neurons_state]
     # print(list(filtered_params.keys()))
+
+    if opt_state:
+        if state:
+            return filtered_params, new_opt_state, filtered_state, tuple(new_sizes)
+        else:
+            return filtered_params, new_opt_state, {}, tuple(new_sizes)
+    else:
+        if state:
+            return filtered_params, filtered_state, tuple(new_sizes)
+        else:
+            return filtered_params, {}, tuple(new_sizes)
+
+
+def prune_params_state_optstate(params, activation_mapping, neurons_state, activation_order, opt_state=None, state=None):
+    """Given the current params and the neuron state mapping returns a
+     filtered params dict (and its associated optimizer state) with dead weights
+      removed and the new size of the layers (that is, # of conv filters or # of
+       neurons in fully connected layer, etc.)"""
+    filtered_params = copy.deepcopy(params)
+
+    neurons_state_dict = {activation_order[i]: neurons_state[i] for i in range(len(neurons_state))}
+
+    if opt_state:
+        flag_opt = False
+        if len(opt_state) == 1:
+            opt_state = opt_state[0]
+            flag_opt = True
+        field_names = list(opt_state[0]._fields)
+        if 'count' in field_names:
+            field_names.remove('count')
+        filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
+
+    if state:
+        filtered_state = copy.deepcopy(state)
+
+    for layer_name, mapping_info in activation_mapping.items():
+        preceding = mapping_info.get('preceding')
+        following = mapping_info.get('following')
+
+        # If there are preceding neurons, prune incoming connections
+        if preceding is not None:
+            preceding_neurons_state = jnp.logical_not(neurons_state_dict[preceding])
+            # upscaling_factor = preceding_neurons_state.size  # TODO: Is this still necessary? For what model?
+            # if upscaling_factor == 0:
+            #     to_repeat = 1
+            # else:
+            #     to_repeat = filtered_params[layer_name]['w'].shape[-2] // upscaling_factor
+            # if to_repeat > 1:
+            #     current_state = jnp.repeat(preceding_neurons_state.reshape(1, -1), to_repeat, axis=0).flatten()
+            # else:
+            #     current_state = preceding_neurons_state
+            if layer_name in filtered_params.keys():
+                for dict_key in filtered_params[layer_name].keys():
+                    filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][
+                        ..., preceding_neurons_state, :]
+                    if opt_state:
+                        for j, field in enumerate(filter_in_opt_state):
+                            filter_in_opt_state[j][layer_name][dict_key] = field[layer_name][dict_key][
+                                ..., preceding_neurons_state, :]
+            if layer_name in filtered_state.keys():
+                filtered_state[layer_name]["w"] = filtered_state[layer_name]["w"][
+                    ..., preceding_neurons_state, :]
+
+        # If there are following neurons, prune outgoing connections
+        if following is not None:
+            following_neurons_state = jnp.logical_not(neurons_state_dict[following])
+            if layer_name in filtered_params.keys():
+                dict_key = "w"  # Not pruning bias based on previous connections
+                filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][
+                    ..., following_neurons_state]
+                if opt_state:
+                    for j, field in enumerate(filter_in_opt_state):
+                        filter_in_opt_state[j][layer_name][dict_key] = field[layer_name][dict_key][
+                            ..., following_neurons_state]
+            if layer_name in filtered_state.keys():
+                filtered_state[layer_name]["w"] = filtered_state[layer_name]["w"][
+                    ..., following_neurons_state]
+
+        # If there is state to prune
+        if state and following is not None:  # This is for BN layers, no preceding connections for BN
+            if f"{layer_name}/~/var_ema" in state:
+                filtered_state[f"{layer_name}/~/var_ema"]["average"] = \
+                filtered_state[f"{layer_name}/~/var_ema"]["average"][..., following_neurons_state]
+                filtered_state[f"{layer_name}/~/var_ema"]["hidden"] = \
+                filtered_state[f"{layer_name}/~/var_ema"]["hidden"][..., following_neurons_state]
+            if f"{layer_name}/~/mean_ema" in state:
+                filtered_state[f"{layer_name}/~/mean_ema"]["average"] = \
+                filtered_state[f"{layer_name}/~/mean_ema"]["average"][..., following_neurons_state]
+                filtered_state[f"{layer_name}/~/mean_ema"]["hidden"] = \
+                filtered_state[f"{layer_name}/~/mean_ema"]["hidden"][..., following_neurons_state]
+
+    if opt_state:
+        cp_state = copy.copy(opt_state)
+        filtered_opt_state = cp_state[0]
+        empty_state = cp_state[1:]
+        for j, field in enumerate(field_names):
+            filtered_opt_state = filtered_opt_state._replace(**{field: filter_in_opt_state[j]})
+
+        if flag_opt:
+            new_opt_state = ((filtered_opt_state,) + empty_state,)
+        else:
+            new_opt_state = (filtered_opt_state,)
+
+    new_sizes = [int(jnp.sum(state)) for state in neurons_state_dict.values()]  #TODO: check if correcly ordered, may need to send list with frozen order
 
     if opt_state:
         if state:
