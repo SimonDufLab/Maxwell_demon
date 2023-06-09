@@ -165,7 +165,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     classes = dataset_target_cardinality[exp_config.dataset]  # Retrieving the number of classes in dataset
     size = exp_config.size
     architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-    net, activation_mapping = build_models(*architecture, with_dropout=with_dropout)
+    net, raw_net = build_models(*architecture, with_dropout=with_dropout)
     # for i in hk.experimental.eval_summary(net)(next(train)):
     #     print(i.module_details.module.module_name)
     # raise SystemExit
@@ -216,7 +216,12 @@ def run_exp(exp_config: ExpConfig) -> None:
     # # Visualize NN with tabulate
     # print(hk.experimental.tabulate(net.init)(next(train)))
     # raise SystemExit
-    print(activation_mapping)
+    acti_map = utl.get_activation_mapping(raw_net, next(train))
+    print(acti_map)
+    print()
+    print(acti_map.keys())
+    print(params.keys())
+    print(set(params.keys()).issubset(acti_map.keys()))
     raise SystemExit
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)

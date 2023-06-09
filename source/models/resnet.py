@@ -222,7 +222,7 @@ class ResnetBlockV1(hk.Module):
         out = act_i(out + shortcut)
         self.activation_mapping[skip_layer_name] = {"preceding": self.preceding_activation_name,
                                                     "following": self.last_act_name}
-        if self.with_bn:
+        if self.with_bn and self.use_projection:
             self.activation_mapping[skip_bn_name] = {"preceding": self.preceding_activation_name,
                                                      "following": self.last_act_name}
         # except:

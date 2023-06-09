@@ -1200,35 +1200,35 @@ def load_fashion_mnist_torch(is_training, batch_size, subset=None, transform=Tru
 ##############################
 # Module utilities
 ##############################
-class FancySequential(hk.Module):
+class FancySequential:
     """Apply hk.Sequential to layer's list to build the module, but retrieve the activation mapping
     along the way"""
     def __init__(
             self,
             layers: Any,
-            name: Optional[str] = None,
+            name: Optional[str] = "",
             preceding_activation_name: Optional[str] = None
     ):
-        super().__init__(name=name)
+        # super().__init__(name=name)
         self.layers = tuple(layers)
         self.activation_mapping = {}
         self.preceding_activation_name = preceding_activation_name
 
-    def __call__(self, inputs):
+    def __call__(self, inputs, *args, **kwargs):
         """Calls all layers sequentially, updating the activation mapping along the way"""
         out = inputs
         prev_act_name = self.preceding_activation_name
-        for layer in self.layers:
-            # if i == 0:
-            #     layer_module = layer(preceding_activation_name=prev_act_name)
-            #     out = layer_module(out, *args, **kwargs)
-            #     self.activation_mapping.update(layer_module.get_activation_mapping())
-            #     prev_act_name = layer_module.get_last_activation_name()
-            # else:
-            layer_module = layer(preceding_activation_name=prev_act_name)
-            out = layer_module(out)
-            self.activation_mapping.update(layer_module.get_activation_mapping())
-            prev_act_name = layer_module.get_last_activation_name()
+        for i, layer in enumerate(self.layers):
+            if i == 0:
+                layer_module = layer(preceding_activation_name=prev_act_name)
+                out = layer_module(out, *args, **kwargs)
+                self.activation_mapping.update(layer_module.get_activation_mapping())
+                prev_act_name = layer_module.get_last_activation_name()
+            else:
+                layer_module = layer(preceding_activation_name=prev_act_name)
+                out = layer_module(out)
+                self.activation_mapping.update(layer_module.get_activation_mapping())
+                prev_act_name = layer_module.get_last_activation_name()
         self.last_act_name = prev_act_name
         return out
 
@@ -1298,16 +1298,14 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
         def get_activation_mapping(self):
             return self.activation_mapping
 
-    initialized_model = ModelAndActivations()
-
     def primary_model(x, return_activations=False, is_training=True):
-        return initialized_model(x, return_activations, is_training)
+        return ModelAndActivations()(x, return_activations, is_training)
 
     # return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
     if not with_dropout:
-        return hk.without_apply_rng(hk.transform_with_state(primary_model)), initialized_model.get_activation_mapping()
+        return hk.without_apply_rng(hk.transform_with_state(primary_model)), ModelAndActivations
     else:
-        return hk.transform_with_state(primary_model), initialized_model.get_activation_mapping()
+        return hk.transform_with_state(primary_model), ModelAndActivations
 
 
 ##############################
@@ -1712,6 +1710,39 @@ class MaxPool(hk.MaxPool):
 
     def get_last_activation_name(self):
         return self.preceding_activations_name
+
+
+def get_activation_mapping(net, inputs):
+    import jax.numpy as jnp
+
+    # Assuming your model takes an input of shape (batch_size, height, width, channels)
+    dummy_input = jnp.ones((1, 224, 224, 3))
+
+    def model_fn(x):
+        model = net()
+        output = model(x)
+        activation_fn_mapping = model.get_activation_mapping()
+        parent_name = model.name
+        return output, activation_fn_mapping, parent_name
+
+    model_transformed = hk.transform_with_state(model_fn)
+
+    params, state = model_transformed.init(jax.random.PRNGKey(42), inputs)
+    (output, activation_mapping, parent_name), state = model_transformed.apply(params, state, jax.random.PRNGKey(42), inputs)
+
+    def prepend_parent_name_to_string(s):
+        if isinstance(s, str):
+            return parent_name + '/' + s
+        return s
+
+    new_activation_mapping = {}
+
+    for key, value in activation_mapping.items():
+        new_key = parent_name + '/' + key
+        new_value = jax.tree_map(prepend_parent_name_to_string, value)
+        new_activation_mapping[new_key] = new_value
+
+    return new_activation_mapping
 
 
 ##############################
