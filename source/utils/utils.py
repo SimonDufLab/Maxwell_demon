@@ -18,6 +18,7 @@ from torchvision import datasets, transforms
 from typing import Union, Tuple, List, Callable, Sequence
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
+from collections import OrderedDict
 from collections.abc import Iterable
 from itertools import cycle
 
@@ -548,14 +549,30 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             return filtered_params, {}, tuple(new_sizes)
 
 
-def prune_params_state_optstate(params, activation_mapping, neurons_state, activation_order, opt_state=None, state=None):
+class NeuronStates(OrderedDict):
+    def __init__(self, keys, activations_list=None):
+        # Initialize the neuron state dictionary with all values set to None.
+        # Take as input the state keys, which is also ordered.
+        keys = [s for s in keys if "activation_module" in s]
+        super().__init__({key: None for key in keys})
+        if activations_list:
+            self.update_from_ordered_list(activations_list)
+
+    def update_from_ordered_list(self, activations_list):
+        _neuron_state = {key: value for key, value in zip(self.keys(), activations_list)}
+
+        self.update(_neuron_state)
+
+
+def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: OrderedDict, opt_state=None, state=None):
     """Given the current params and the neuron state mapping returns a
      filtered params dict (and its associated optimizer state) with dead weights
       removed and the new size of the layers (that is, # of conv filters or # of
        neurons in fully connected layer, etc.)"""
     filtered_params = copy.deepcopy(params)
 
-    neurons_state_dict = {activation_order[i]: neurons_state[i] for i in range(len(neurons_state))}
+    assert not all(value is None for value in list(
+        neurons_state_dict.keys())), "neurons state dictionary needs to be updated before attempting to prune"
 
     if opt_state:
         flag_opt = False
@@ -577,23 +594,25 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state, activ
         # If there are preceding neurons, prune incoming connections
         if preceding is not None:
             preceding_neurons_state = jnp.logical_not(neurons_state_dict[preceding])
-            # upscaling_factor = preceding_neurons_state.size  # TODO: Is this still necessary? For what model?
-            # if upscaling_factor == 0:
-            #     to_repeat = 1
-            # else:
-            #     to_repeat = filtered_params[layer_name]['w'].shape[-2] // upscaling_factor
-            # if to_repeat > 1:
-            #     current_state = jnp.repeat(preceding_neurons_state.reshape(1, -1), to_repeat, axis=0).flatten()
-            # else:
-            #     current_state = preceding_neurons_state
+
             if layer_name in filtered_params.keys():
-                for dict_key in filtered_params[layer_name].keys():
-                    filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][
-                        ..., preceding_neurons_state, :]
-                    if opt_state:
-                        for j, field in enumerate(filter_in_opt_state):
-                            filter_in_opt_state[j][layer_name][dict_key] = field[layer_name][dict_key][
-                                ..., preceding_neurons_state, :]
+                dict_key = "w"  # Not pruning bias based on previous connections
+                upscaling_factor = preceding_neurons_state.size  # TODO: Is this still necessary? For what model?
+                if upscaling_factor == 0:
+                    to_repeat = 1
+                else:
+                    to_repeat = filtered_params[layer_name][dict_key].shape[-2] // upscaling_factor
+                if to_repeat > 1:
+                    preceding_neurons_state = jnp.repeat(preceding_neurons_state.reshape(1, -1), to_repeat,
+                                                         axis=0).flatten()
+                # else:
+                #     current_state = preceding_neurons_state
+                filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][
+                    ..., preceding_neurons_state, :]
+                if opt_state:
+                    for j, field in enumerate(filter_in_opt_state):
+                        filter_in_opt_state[j][layer_name][dict_key] = field[layer_name][dict_key][
+                            ..., preceding_neurons_state, :]
             if layer_name in filtered_state.keys():
                 filtered_state[layer_name]["w"] = filtered_state[layer_name]["w"][
                     ..., preceding_neurons_state, :]
@@ -602,16 +621,17 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state, activ
         if following is not None:
             following_neurons_state = jnp.logical_not(neurons_state_dict[following])
             if layer_name in filtered_params.keys():
-                dict_key = "w"  # Not pruning bias based on previous connections
-                filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][
-                    ..., following_neurons_state]
-                if opt_state:
-                    for j, field in enumerate(filter_in_opt_state):
-                        filter_in_opt_state[j][layer_name][dict_key] = field[layer_name][dict_key][
-                            ..., following_neurons_state]
+                for dict_key in filtered_params[layer_name].keys():
+                    filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][
+                        ..., following_neurons_state]
+                    if opt_state:
+                        for j, field in enumerate(filter_in_opt_state):
+                            filter_in_opt_state[j][layer_name][dict_key] = field[layer_name][dict_key][
+                                ..., following_neurons_state]
             if layer_name in filtered_state.keys():
-                filtered_state[layer_name]["w"] = filtered_state[layer_name]["w"][
-                    ..., following_neurons_state]
+                for dict_key in filtered_state[layer_name].keys():
+                    filtered_state[layer_name][dict_key] = filtered_state[layer_name][dict_key][
+                        ..., following_neurons_state]
 
         # If there is state to prune
         if state and following is not None:  # This is for BN layers, no preceding connections for BN
@@ -638,7 +658,7 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state, activ
         else:
             new_opt_state = (filtered_opt_state,)
 
-    new_sizes = [int(jnp.sum(state)) for state in neurons_state_dict.values()]  #TODO: check if correcly ordered, may need to send list with frozen order
+    new_sizes = [int(jnp.sum(jnp.logical_not(state))) for state in neurons_state_dict.values()]
 
     if opt_state:
         if state:
@@ -1819,19 +1839,15 @@ class MaxPool(hk.MaxPool):
 
 
 def get_activation_mapping(net, inputs):
-    import jax.numpy as jnp
 
-    # Assuming your model takes an input of shape (batch_size, height, width, channels)
-    dummy_input = jnp.ones((1, 224, 224, 3))
-
-    def model_fn(x):
-        model = net()
+    def model_fn(_net, x):
+        model = _net()
         output = model(x)
         activation_fn_mapping = model.get_activation_mapping()
         parent_name = model.name
         return output, activation_fn_mapping, parent_name
 
-    model_transformed = hk.transform_with_state(model_fn)
+    model_transformed = hk.transform_with_state(Partial(model_fn, net))
 
     params, state = model_transformed.init(jax.random.PRNGKey(42), inputs)
     (output, activation_mapping, parent_name), state = model_transformed.apply(params, state, jax.random.PRNGKey(42), inputs)

@@ -206,11 +206,13 @@ class ResnetBlockV1(hk.Module):
             conv_name = block_name+conv_i.name
             self.activation_mapping[conv_name] = {"preceding": prev_act_name,
                                                   "following": block_name + act_i.name}
+            self.activation_mapping[block_name + act_i.name] = {"preceding": None,
+                                                                "following": block_name + act_i.name}
             out = conv_i(out)
             if self.with_bn:
                 out = bn_i(out, self.is_training)
                 bn_name = block_name+bn_i.name
-                self.activation_mapping[bn_name] = {"preceding": prev_act_name,
+                self.activation_mapping[bn_name] = {"preceding": None,
                                                     "following": block_name + act_i.name}
             prev_act_name = block_name + act_i.name
             if i < len(self.layers) - 1:  # Don't apply act right away on last layer
@@ -223,7 +225,7 @@ class ResnetBlockV1(hk.Module):
         self.activation_mapping[skip_layer_name] = {"preceding": self.preceding_activation_name,
                                                     "following": self.last_act_name}
         if self.with_bn and self.use_projection:
-            self.activation_mapping[skip_bn_name] = {"preceding": self.preceding_activation_name,
+            self.activation_mapping[skip_bn_name] = {"preceding": None,
                                                      "following": self.last_act_name}
         # except:
         #     print(out.shape)
@@ -325,9 +327,11 @@ class ResnetInit(hk.Module):
         conv_name = block_name + self.conv.name
         self.activation_mapping[conv_name] = {"preceding": self.preceding_activation_name,
                                               "following": block_name + self.activation_fn.name}
+        self.activation_mapping[block_name + self.activation_fn.name] = {"preceding": None,
+                                                                         "following": block_name + self.activation_fn.name}
         if self.with_bn:
             bn_name = block_name + self.bn.name
-            self.activation_mapping[bn_name] = {"preceding": self.preceding_activation_name,
+            self.activation_mapping[bn_name] = {"preceding": None,
                                                 "following": block_name + self.activation_fn.name}
         self.last_act_name = block_name + self.activation_fn.name
 
@@ -411,9 +415,11 @@ class LinearBlock(hk.Module):
         fc_name = block_name + self.fc_layer.name
         self.activation_mapping[fc_name] = {"preceding": self.preceding_activation_name,
                                             "following": block_name + self.activation_layer.name}
+        self.activation_mapping[block_name + self.activation_layer.name] = {"preceding": None,
+                                                                            "following": block_name + self.activation_layer.name}
         if self.with_bn:
             bn_name = block_name + self.bn_layer.name
-            self.activation_mapping[bn_name] = {"preceding": self.preceding_activation_name,
+            self.activation_mapping[bn_name] = {"preceding": None,
                                                 "following": block_name + self.activation_layer.name}
         logits_name = block_name + self.logits_layer.name
         self.activation_mapping[logits_name] = {"preceding": block_name + self.activation_layer.name,

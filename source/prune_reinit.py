@@ -207,6 +207,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Initialize
     params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
     reinit_params, _ = net.init(jax.random.PRNGKey(exp_config.init_seed+42), next(train))
+    activation_layer_order = list(state.keys())
+    neuron_states = utl.NeuronStates(activation_layer_order)
+    acti_map = utl.get_activation_mapping(raw_net, next(train))
     # reinit_fn = Partial(net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
     opt_state = opt.init(params)
     initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
@@ -216,19 +219,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     # # Visualize NN with tabulate
     # print(hk.experimental.tabulate(net.init)(next(train)))
     # raise SystemExit
-    acti_map = utl.get_activation_mapping(raw_net, next(train))
-    print(acti_map)
-    print()
-    print(acti_map.keys())
-    print(params.keys())
-    print(set(params.keys()).issubset(acti_map.keys()))
-    print()
-    print(jax.tree_map(jnp.shape, params))
-    dead_neurons = scan_death_check_fn(params, state, test_death)
-    remaining_params = utl.remove_dead_neurons_weights(params, dead_neurons,
-                                                       frozen_layer_lists, opt_state,
-                                                       state)[0]
-    raise SystemExit
+    # print(acti_map)
+    # raise SystemExit
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
     total_neurons, total_per_layer = starting_neurons, starting_per_layer
@@ -252,7 +244,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if step % exp_config.report_freq == 0:
                     print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
                           f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
-                    print(f"current lr : {lr_schedule(step):.3f}")
+                    # print(f"current lr : {lr_schedule(step):.3f}")
                 dead_neurons = death_check_fn(params, state, next(test_death))
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
@@ -311,7 +303,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # record checkpoints if rewinding:
         if exp_config.rewinding:
             if step == checkpoint_fn(step):
-                checkpoints.append((copy.deepcopy(params), step)) # Checkpoint params and step where recorded
+                checkpoints.append((copy.deepcopy(params), step))  # Checkpoint params and step where recorded
         # Train step over single batch
         if with_dropout:
             params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
@@ -321,9 +313,13 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
     activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
-    remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
-                                                    frozen_layer_lists, opt_state,
-                                                    state)[0]
+    # remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+    #                                                 frozen_layer_lists, opt_state,
+    #                                                 state)[0]
+    neuron_states.update_from_ordered_list(final_dead_neurons)
+    remaining_params = utl.prune_params_state_optstate(params, acti_map,
+                                                       neuron_states, opt_state,
+                                                       state)[0]
     final_params_count = utl.count_params(remaining_params)
     del final_dead_neurons  # Freeing memory
     log_params_sparsity_step = final_params_count / initial_params_count * 1000
@@ -351,22 +347,33 @@ def run_exp(exp_config: ExpConfig) -> None:
     tol_flag = True
     dead_neurons = scan_death_check_fn(params, state, test_death)
     if exp_config.rdm_reinit or exp_config.rewinding:
-        preserve_dead_state = copy.deepcopy(dead_neurons)
+        preserve_dead_state = utl.NeuronStates(activation_layer_order, dead_neurons)
+        preserve_acti_map = copy.deepcopy(acti_map)
     pruned_init_params = initial_params
     state = copy.deepcopy(initial_state)
     while (cycle_step < exp_config.pruning_cycles) and tol_flag:
         subtask_start_time = time.time()
         # prune the init params
-        pruned_init_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons,
-                                                                                          frozen_layer_lists, opt_state,
-                                                                                          state)
+        # pruned_init_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons,
+        #                                                                                   frozen_layer_lists, opt_state,
+        #                                                                                   state)
+        # neuron_states.update_from_ordered_list(dead_neurons)
+        pruned_init_params, opt_state, state, new_sizes = utl.prune_params_state_optstate(pruned_init_params, acti_map,
+                                                           neuron_states, opt_state,
+                                                           state)
         params = copy.deepcopy(pruned_init_params)
         # state = initial_state
         opt_state = opt.init(params)
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
         architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
-        net = build_models(*architecture)
+        net, raw_net = build_models(*architecture)
+        # neuron_states = utl.NeuronStates(state.keys())
+        # acti_map = utl.get_activation_mapping(raw_net, next(train))
         del dead_neurons  # Freeing memory
+        # print([sum(jnp.logical_not(lst)) for lst in dead_neurons])
+        # print(jax.tree_map(jnp.shape, params))
+        # print()
+        # print(jax.tree_map(jnp.shape, state))
 
         context = f'noisy pruning cycle {cycle_step}'
         total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
@@ -412,9 +419,14 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
         activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
-        remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
-                                                           frozen_layer_lists, opt_state,
+        # remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+        #                                                    frozen_layer_lists, opt_state,
+        #                                                    state)[0]
+        neuron_states.update_from_ordered_list(final_dead_neurons)
+        remaining_params = utl.prune_params_state_optstate(params, acti_map,
+                                                           neuron_states, opt_state,
                                                            state)[0]
+
         final_params_count = utl.count_params(remaining_params)
         del final_dead_neurons  # Freeing memory
         log_params_sparsity_step = final_params_count / initial_params_count * 1000
@@ -461,14 +473,21 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             to_prune = checkpoints[i][0]  # Retrieving params at checkpoint i
         opt_state = opt.init(to_prune)
-        params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(to_prune,
-                                                                              preserve_dead_state,
-                                                                              frozen_layer_lists, opt_state,
-                                                                              initial_state)
+        # print(jax.tree_map(jnp.shape, to_prune))
+        # print(preserve_dead_state)  # TODO: Order problem...
+        # params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(to_prune,
+        #                                                                       preserve_dead_state,
+        #                                                                       frozen_layer_lists, opt_state,
+        #                                                                       initial_state)
+        params, opt_state, state, new_sizes = utl.prune_params_state_optstate(to_prune, preserve_acti_map,
+                                                           preserve_dead_state, opt_state,
+                                                           initial_state)
         opt_state = opt.init(params)
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
         architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
-        net = build_models(*architecture)
+        net, raw_net = build_models(*architecture)
+        # neuron_states = utl.NeuronStates(state.keys())
+        # acti_map = utl.get_activation_mapping(raw_net, next(train))
 
         total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
@@ -513,8 +532,12 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
         activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
-        remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
-                                                           frozen_layer_lists, opt_state,
+        # remaining_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+        #                                                    frozen_layer_lists, opt_state,
+        #                                                    state)[0]
+        neuron_states.update_from_ordered_list(final_dead_neurons)
+        remaining_params = utl.prune_params_state_optstate(params, acti_map,
+                                                           neuron_states, opt_state,
                                                            state)[0]
         final_params_count = utl.count_params(remaining_params)
         del final_dead_neurons  # Freeing memory
@@ -559,14 +582,20 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
                 architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-                net = build_models(*architecture)
+                net, raw_net = build_models(*architecture)
+                # neuron_states = utl.NeuronStates(state.keys())
+                # acti_map = utl.get_activation_mapping(raw_net, next(train))
                 total_neurons, total_per_layer = starting_neurons, starting_per_layer
             else:
                 dead_neurons = scan_death_check_fn(pruned_init_params, state, test_death)
                 # Pruning the network
                 end_state = initial_state
-                end_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(initial_params, dead_neurons,
-                                                                                          frozen_layer_lists, opt_state,
+                # end_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(initial_params, dead_neurons,
+                #                                                                           frozen_layer_lists, opt_state,
+                #                                                                           end_state)
+                neuron_states.update_from_ordered_list(dead_neurons)
+                end_params, opt_state, state, new_sizes = utl.prune_params_state_optstate(initial_params, acti_map,
+                                                                                          neuron_states, opt_state,
                                                                                           end_state)
                 # end_state = initial_state
                 del dead_neurons  # Freeing memory
@@ -574,7 +603,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
                 architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
-                net = build_models(*architecture)
+                net, raw_net = build_models(*architecture)
+                # neuron_states = utl.NeuronStates(state.keys())
+                # acti_map = utl.get_activation_mapping(raw_net, next(train))
                 total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
             # Clear previous cache
@@ -618,8 +649,12 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             final_accuracy = jax.device_get(final_accuracy_fn(end_params, end_state, test_eval))
             activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(end_params, end_state, test_death)
-            remaining_params = utl.remove_dead_neurons_weights(end_params, final_dead_neurons,
-                                                               frozen_layer_lists, opt_state,
+            # remaining_params = utl.remove_dead_neurons_weights(end_params, final_dead_neurons,
+            #                                                    frozen_layer_lists, opt_state,
+            #                                                    end_state)[0]
+            neuron_states.update_from_ordered_list(final_dead_neurons)
+            remaining_params = utl.prune_params_state_optstate(end_params, acti_map,
+                                                               neuron_states, opt_state,
                                                                end_state)[0]
             final_params_count = utl.count_params(remaining_params)
             del final_dead_neurons  # Freeing memory
