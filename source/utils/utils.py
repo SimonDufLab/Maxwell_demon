@@ -22,10 +22,10 @@ from collections import OrderedDict
 from collections.abc import Iterable
 from itertools import cycle
 
-from haiku._src.dot import to_graph
-import networkx as nx
-from networkx.drawing.nx_agraph import from_agraph
-import pygraphviz as pgv
+# from haiku._src.dot import to_graph
+# import networkx as nx
+# from networkx.drawing.nx_agraph import from_agraph
+# import pygraphviz as pgv
 
 from optax._src import base
 from optax._src import wrappers
@@ -1715,35 +1715,35 @@ class LayerMagnitudePruning(BaseUpdater):
         return layer_magnitudes
 
 
-def net_to_adjacency_matrix(net, x):
-    """ Use the dot representation returned by hk.experimental.to_dot to recover an adjacency matrix
-        that will be used to map neuron sparsity to weight sparsity and for pruning."""
-
-    params, state = net.init(jax.random.PRNGKey(0), x)
-
-    # New function ignoring the state
-    def model_fn_without_state(_x):
-        return net.apply(params, state, _x, return_activations=False, is_training=False)
-
-    # Now this function can be used with hk.experimental.to_dot
-    dot = hk.experimental.to_dot(model_fn_without_state)(x)
-    print(dot)
-    raise SystemExit
-    # dot = hk.experimental.to_dot(lambda rng_k, _x: net.init(rng_k, _x)[0])(jax.random.PRNGKey(0), x)
-    # dot = hk.experimental.to_dot(net.init)(jax.random.PRNGKey(0), x)
-    agraph = pgv.AGraph(string=dot)
-
-    # Convert the AGraph into a NetworkX graph
-    nx_graph = from_agraph(agraph)
-
-    # Now you can generate an adjacency matrix from the graph
-    # We will use a SciPy sparse matrix to store it
-    adjacency_matrix = nx.adjacency_matrix(nx_graph)
-
-    # If you need it as a dense NumPy array, you can do:
-    adjacency_matrix_dense = adjacency_matrix.todense()
-
-    return adjacency_matrix_dense
+# def net_to_adjacency_matrix(net, x):
+#     """ Use the dot representation returned by hk.experimental.to_dot to recover an adjacency matrix
+#         that will be used to map neuron sparsity to weight sparsity and for pruning."""
+#
+#     params, state = net.init(jax.random.PRNGKey(0), x)
+#
+#     # New function ignoring the state
+#     def model_fn_without_state(_x):
+#         return net.apply(params, state, _x, return_activations=False, is_training=False)
+#
+#     # Now this function can be used with hk.experimental.to_dot
+#     dot = hk.experimental.to_dot(model_fn_without_state)(x)
+#     print(dot)
+#     raise SystemExit
+#     # dot = hk.experimental.to_dot(lambda rng_k, _x: net.init(rng_k, _x)[0])(jax.random.PRNGKey(0), x)
+#     # dot = hk.experimental.to_dot(net.init)(jax.random.PRNGKey(0), x)
+#     agraph = pgv.AGraph(string=dot)
+#
+#     # Convert the AGraph into a NetworkX graph
+#     nx_graph = from_agraph(agraph)
+#
+#     # Now you can generate an adjacency matrix from the graph
+#     # We will use a SciPy sparse matrix to store it
+#     adjacency_matrix = nx.adjacency_matrix(nx_graph)
+#
+#     # If you need it as a dense NumPy array, you can do:
+#     adjacency_matrix_dense = adjacency_matrix.todense()
+#
+#     return adjacency_matrix_dense
 
 
 ##############################
