@@ -214,12 +214,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     opt_state = opt.init(params)
     initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
     initial_state = copy.deepcopy(state)
-    frozen_layer_lists = utl.extract_layer_lists(params)
+    # frozen_layer_lists = utl.extract_layer_lists(params)
 
     # # Visualize NN with tabulate
     # print(hk.experimental.tabulate(net.init)(next(train)))
-    # raise SystemExit
-    # print(acti_map)
     # raise SystemExit
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
@@ -357,7 +355,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         # pruned_init_params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(pruned_init_params, dead_neurons,
         #                                                                                   frozen_layer_lists, opt_state,
         #                                                                                   state)
-        # neuron_states.update_from_ordered_list(dead_neurons)
         pruned_init_params, opt_state, state, new_sizes = utl.prune_params_state_optstate(pruned_init_params, acti_map,
                                                            neuron_states, opt_state,
                                                            state)
@@ -367,13 +364,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
         architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
         net, raw_net = build_models(*architecture)
-        # neuron_states = utl.NeuronStates(state.keys())
-        # acti_map = utl.get_activation_mapping(raw_net, next(train))
         del dead_neurons  # Freeing memory
-        # print([sum(jnp.logical_not(lst)) for lst in dead_neurons])
-        # print(jax.tree_map(jnp.shape, params))
-        # print()
-        # print(jax.tree_map(jnp.shape, state))
 
         context = f'noisy pruning cycle {cycle_step}'
         total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
@@ -473,8 +464,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             to_prune = checkpoints[i][0]  # Retrieving params at checkpoint i
         opt_state = opt.init(to_prune)
-        # print(jax.tree_map(jnp.shape, to_prune))
-        # print(preserve_dead_state)  # TODO: Order problem...
         # params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(to_prune,
         #                                                                       preserve_dead_state,
         #                                                                       frozen_layer_lists, opt_state,
@@ -486,8 +475,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
         architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
         net, raw_net = build_models(*architecture)
-        # neuron_states = utl.NeuronStates(state.keys())
-        # acti_map = utl.get_activation_mapping(raw_net, next(train))
 
         total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
@@ -583,8 +570,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                 architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
                 architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
                 net, raw_net = build_models(*architecture)
-                # neuron_states = utl.NeuronStates(state.keys())
-                # acti_map = utl.get_activation_mapping(raw_net, next(train))
                 total_neurons, total_per_layer = starting_neurons, starting_per_layer
             else:
                 dead_neurons = scan_death_check_fn(pruned_init_params, state, test_death)
@@ -679,7 +664,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                 timedelta(seconds=time.time() - subtask_start_time)))
             print("----------------------------------------------")
             print()
-
 
     # Print total runtime
     print()
