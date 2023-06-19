@@ -1997,8 +1997,8 @@ def sequential_ds(classes, kept_classes):
 def get_checkpoint_step(architecture, step):
     """ Return the iteration at which to rewind for pruned reinit. Numbers taken from LTH rewinding litterature."""
     if "resnet18" in architecture:
-        return 500  # fix
+        return [500, 2000, 10000]  # fix
     elif "vgg16" in architecture:
-        return 100  # fix
+        return [100]  # fix
     else:
         raise ValueError('No rewinding steps encoded for other architectures rn')
