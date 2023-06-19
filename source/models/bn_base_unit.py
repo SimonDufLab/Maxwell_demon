@@ -8,16 +8,17 @@ from typing import Optional
 base_bn_config = {"create_scale": True, "create_offset": True, "decay_rate": 0.999}
 
 
-class Base_BN(hk.Module):
+class Base_BN:#(hk.Module):
     """Simply a BN layer, with is_training option pre-specified"""
     def __init__(
             self,
             is_training: bool,
             bn_config: dict = base_bn_config,
             name: Optional[str] = None):
-        super().__init__(name=name)
+        # super().__init__(name=name)
+        self.name = name
         self.is_training = is_training
-        self.bn = hk.BatchNorm(**bn_config)
+        self.bn = hk.BatchNorm(name=name, **bn_config)
 
     def __call__(self, x):
         x = self.bn(x, is_training=self.is_training)

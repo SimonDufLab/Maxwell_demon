@@ -241,13 +241,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             classes = exp_config.kept_classes
         architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-        net = build_models(*architecture, with_dropout=with_dropout)
+        net, raw_net = build_models(*architecture, with_dropout=with_dropout)
 
         if exp_config.measure_linear_perf:
             lin_act_fn = activation_choice["linear"]
             lin_architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
             lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **net_config)
-            lin_net = build_models(*lin_architecture, with_dropout=with_dropout)
+            lin_net, raw_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
         optimizer = optimizer_choice[exp_config.optimizer]
         if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
@@ -296,15 +296,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
         init_state = copy.deepcopy(state)
         opt_state = opt.init(params)
-        frozen_layer_lists = utl.extract_layer_lists(params)
-        # print(frozen_layer_lists)
-        # print()
-        # print("state")
-        # print(jax.tree_map(jnp.shape, state))
-        # print()
-        # print("opt_state")
-        # print(jax.tree_map(jnp.shape, opt_state))
-        # raise SystemExit
+        # frozen_layer_lists = utl.extract_layer_lists(params)
+        activation_layer_order = list(state.keys())
+        neuron_states = utl.NeuronStates(activation_layer_order)
+        acti_map = utl.get_activation_mapping(raw_net, next(train))
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
@@ -312,7 +307,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         total_neurons, total_per_layer = starting_neurons, starting_per_layer
         init_total_neurons = copy.copy(total_neurons)
         init_total_per_layer = copy.copy(total_per_layer)
-
         initial_params_count = utl.count_params(params)
 
         decaying_reg_param = copy.deepcopy(reg_param)
@@ -494,13 +488,17 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 if exp_config.dynamic_pruning and step >= exp_config.prune_after:
                     # Pruning the network
-                    params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons,
-                                                                                          frozen_layer_lists, opt_state,
+                    # params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons,
+                    #                                                                       frozen_layer_lists, opt_state,
+                    #                                                                       state)
+                    neuron_states.update_from_ordered_list(dead_neurons)
+                    params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
+                                                                                          neuron_states, opt_state,
                                                                                           state)
                     architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
                         exp_config.architecture]
                     architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
-                    net = build_models(*architecture)
+                    net, raw_net = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
                     # for _layer_name in params.keys():
                     #     if "logit" in _layer_name:
@@ -559,7 +557,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 activation_fn = activation_choice["linear"]
                 architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
                 architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-                net = build_models(*architecture, with_dropout=with_dropout)
+                net, raw_net = build_models(*architecture, with_dropout=with_dropout)
 
                 # Reset training/monitoring functions
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
@@ -603,9 +601,13 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
         final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
-        pruned_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
-                                                                 frozen_layer_lists, opt_state,
-                                                                 state)[0]
+        # pruned_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
+        #                                                          frozen_layer_lists, opt_state,
+        #                                                          state)[0]
+        neuron_states.update_from_ordered_list(final_dead_neurons)
+        pruned_params = utl.prune_params_state_optstate(params, acti_map,
+                                                           neuron_states, opt_state,
+                                                           state)[0]
         final_params_count = utl.count_params(pruned_params)
         del final_dead_neurons  # Freeing memory
 
@@ -640,12 +642,12 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         exp_run.track(jax.device_get(avg_final_live_neurons),
                       name="On average, live neurons after convergence w/r reg param", step=log_step)
-        exp_run.track(jax.device_get(avg_final_live_neurons / total_neurons),
+        exp_run.track(jax.device_get(avg_final_live_neurons / init_total_neurons),
                       name="Average live neurons ratio after convergence w/r reg param", step=log_step)
         total_live_neurons = total_neurons - final_dead_neurons_count
         exp_run.track(jax.device_get(total_live_neurons),
                       name="Live neurons after convergence w/r reg param", step=log_step)
-        exp_run.track(jax.device_get(total_live_neurons/total_neurons),
+        exp_run.track(jax.device_get(total_live_neurons/init_total_neurons),
                       name="Live neurons ratio after convergence w/r reg param", step=log_step)
         exp_run.track(jax.device_get(reg_param),  # Logging true reg_param value to display with aim metrics
                       name="Reg param w/r reg param", step=log_step)

@@ -15,11 +15,17 @@ import torch
 from torch.utils.data import DataLoader
 from torch.utils.data import Dataset, Subset
 from torchvision import datasets, transforms
-from typing import Union, Tuple, List, Callable
+from typing import Union, Tuple, List, Callable, Sequence
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
+from collections import OrderedDict
 from collections.abc import Iterable
 from itertools import cycle
+
+from haiku._src.dot import to_graph
+import networkx as nx
+from networkx.drawing.nx_agraph import from_agraph
+import pygraphviz as pgv
 
 from optax._src import base
 from optax._src import wrappers
@@ -486,6 +492,8 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
             current_state = jnp.repeat(neurons_state[i].reshape(1, -1), to_repeat, axis=0).flatten()
             # print(neurons_state[i])
             # print(current_state)
+            # print(_layers_name[i])
+            # print(_layers_name[i + 1])
         else:
             current_state = neurons_state[i]
         filtered_params[_layers_name[i+1]]['w'] = filtered_params[_layers_name[i+1]]['w'][..., current_state, :]
@@ -528,6 +536,129 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
 
     new_sizes = [int(jnp.sum(layer)) for layer in neurons_state]
     # print(list(filtered_params.keys()))
+
+    if opt_state:
+        if state:
+            return filtered_params, new_opt_state, filtered_state, tuple(new_sizes)
+        else:
+            return filtered_params, new_opt_state, {}, tuple(new_sizes)
+    else:
+        if state:
+            return filtered_params, filtered_state, tuple(new_sizes)
+        else:
+            return filtered_params, {}, tuple(new_sizes)
+
+
+class NeuronStates(OrderedDict):
+    def __init__(self, keys, activations_list=None):
+        # Initialize the neuron state dictionary with all values set to None.
+        # Take as input the state keys, which is also ordered.
+        keys = [s for s in keys if "activation_module" in s]
+        super().__init__({key: None for key in keys})
+        if activations_list:
+            self.update_from_ordered_list(activations_list)
+
+    def update_from_ordered_list(self, activations_list):
+        _neuron_state = {key: value for key, value in zip(self.keys(), activations_list)}
+
+        self.update(_neuron_state)
+
+
+def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: OrderedDict, opt_state=None, state=None):
+    """Given the current params and the neuron state mapping returns a
+     filtered params dict (and its associated optimizer state) with dead weights
+      removed and the new size of the layers (that is, # of conv filters or # of
+       neurons in fully connected layer, etc.)"""
+    filtered_params = copy.deepcopy(params)
+
+    assert not all(value is None for value in list(
+        neurons_state_dict.keys())), "neurons state dictionary needs to be updated before attempting to prune"
+
+    if opt_state:
+        flag_opt = False
+        if len(opt_state) == 1:
+            opt_state = opt_state[0]
+            flag_opt = True
+        field_names = list(opt_state[0]._fields)
+        if 'count' in field_names:
+            field_names.remove('count')
+        filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
+
+    if state:
+        filtered_state = copy.deepcopy(state)
+
+    for layer_name, mapping_info in activation_mapping.items():
+        preceding = mapping_info.get('preceding')
+        following = mapping_info.get('following')
+
+        # If there are preceding neurons, prune incoming connections
+        if preceding is not None:
+            preceding_neurons_state = jnp.logical_not(neurons_state_dict[preceding])
+
+            if layer_name in filtered_params.keys():
+                dict_key = "w"  # Not pruning bias based on previous connections
+                upscaling_factor = preceding_neurons_state.size  # TODO: Is this still necessary? For what model?
+                if upscaling_factor == 0:
+                    to_repeat = 1
+                else:
+                    to_repeat = filtered_params[layer_name][dict_key].shape[-2] // upscaling_factor
+                if to_repeat > 1:
+                    preceding_neurons_state = jnp.repeat(preceding_neurons_state.reshape(1, -1), to_repeat,
+                                                         axis=0).flatten()
+                # else:
+                #     current_state = preceding_neurons_state
+                filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][
+                    ..., preceding_neurons_state, :]
+                if opt_state:
+                    for j, field in enumerate(filter_in_opt_state):
+                        filter_in_opt_state[j][layer_name][dict_key] = field[layer_name][dict_key][
+                            ..., preceding_neurons_state, :]
+            if layer_name in filtered_state.keys():
+                filtered_state[layer_name]["w"] = filtered_state[layer_name]["w"][
+                    ..., preceding_neurons_state, :]
+
+        # If there are following neurons, prune outgoing connections
+        if following is not None:
+            following_neurons_state = jnp.logical_not(neurons_state_dict[following])
+            if layer_name in filtered_params.keys():
+                for dict_key in filtered_params[layer_name].keys():
+                    filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][
+                        ..., following_neurons_state]
+                    if opt_state:
+                        for j, field in enumerate(filter_in_opt_state):
+                            filter_in_opt_state[j][layer_name][dict_key] = field[layer_name][dict_key][
+                                ..., following_neurons_state]
+            if layer_name in filtered_state.keys():
+                for dict_key in filtered_state[layer_name].keys():
+                    filtered_state[layer_name][dict_key] = filtered_state[layer_name][dict_key][
+                        ..., following_neurons_state]
+
+        # If there is state to prune
+        if state and following is not None:  # This is for BN layers, no preceding connections for BN
+            if f"{layer_name}/~/var_ema" in state:
+                filtered_state[f"{layer_name}/~/var_ema"]["average"] = \
+                filtered_state[f"{layer_name}/~/var_ema"]["average"][..., following_neurons_state]
+                filtered_state[f"{layer_name}/~/var_ema"]["hidden"] = \
+                filtered_state[f"{layer_name}/~/var_ema"]["hidden"][..., following_neurons_state]
+            if f"{layer_name}/~/mean_ema" in state:
+                filtered_state[f"{layer_name}/~/mean_ema"]["average"] = \
+                filtered_state[f"{layer_name}/~/mean_ema"]["average"][..., following_neurons_state]
+                filtered_state[f"{layer_name}/~/mean_ema"]["hidden"] = \
+                filtered_state[f"{layer_name}/~/mean_ema"]["hidden"][..., following_neurons_state]
+
+    if opt_state:
+        cp_state = copy.copy(opt_state)
+        filtered_opt_state = cp_state[0]
+        empty_state = cp_state[1:]
+        for j, field in enumerate(field_names):
+            filtered_opt_state = filtered_opt_state._replace(**{field: filter_in_opt_state[j]})
+
+        if flag_opt:
+            new_opt_state = ((filtered_opt_state,) + empty_state,)
+        else:
+            new_opt_state = (filtered_opt_state,)
+
+    new_sizes = [int(jnp.sum(jnp.logical_not(state))) for state in neurons_state_dict.values()]
 
     if opt_state:
         if state:
@@ -1195,6 +1326,45 @@ def load_fashion_mnist_torch(is_training, batch_size, subset=None, transform=Tru
 ##############################
 # Module utilities
 ##############################
+class FancySequential:
+    """Apply hk.Sequential to layer's list to build the module, but retrieve the activation mapping
+    along the way"""
+    def __init__(
+            self,
+            layers: Any,
+            name: Optional[str] = "",
+            preceding_activation_name: Optional[str] = None
+    ):
+        # super().__init__(name=name)
+        self.layers = tuple(layers)
+        self.activation_mapping = {}
+        self.preceding_activation_name = preceding_activation_name
+
+    def __call__(self, inputs, *args, **kwargs):
+        """Calls all layers sequentially, updating the activation mapping along the way"""
+        out = inputs
+        prev_act_name = self.preceding_activation_name
+        for i, layer in enumerate(self.layers):
+            if i == 0:
+                layer_module = layer(preceding_activation_name=prev_act_name)
+                out = layer_module(out, *args, **kwargs)
+                self.activation_mapping.update(layer_module.get_activation_mapping())
+                prev_act_name = layer_module.get_last_activation_name()
+            else:
+                layer_module = layer(preceding_activation_name=prev_act_name)
+                out = layer_module(out)
+                self.activation_mapping.update(layer_module.get_activation_mapping())
+                prev_act_name = layer_module.get_last_activation_name()
+        self.last_act_name = prev_act_name
+        return out
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return self.last_act_name
+
+
 def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout=False):
     """ Take as input a list of haiku modules and return 2 different transform object:
     1) First is the typical model returning the outputs
@@ -1212,6 +1382,7 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
             super().__init__(name=name)
             self.train_layers = train_layer_list
             self.test_layers = test_layer_list
+            self.activation_mapping = {}
 
         def __call__(self, x, return_activations=False, is_training=True):
             activations = []
@@ -1220,8 +1391,13 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
                 layers = self.train_layers
             else:
                 layers = self.test_layers
+            prev_activation_name = None
             for layer in layers[:-1]:  # Don't append final output in activations list
-                x = hk.Sequential([mdl() for mdl in layer])(x)
+                # x = hk.Sequential([mdl() for mdl in layer])(x)
+                layer_modules = FancySequential(layer, preceding_activation_name=prev_activation_name)
+                x = layer_modules(x)
+                self.activation_mapping.update(layer_modules.get_activation_mapping())
+                prev_activation_name = layer_modules.get_last_activation_name()
                 if return_activations:
                     if type(x) is tuple:
                         activations += x[1]
@@ -1230,20 +1406,32 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
                         activations.append(x)
                 if type(x) is tuple:
                     x = x[0]
-            x = hk.Sequential([mdl() for mdl in layers[-1]])(x)
-            if return_activations:
-                return x, activations
+            # x = hk.Sequential([mdl() for mdl in layers[-1]])(x)
+            layer_modules = FancySequential(layers[-1], preceding_activation_name=prev_activation_name)
+            x = layer_modules(x)
+            if type(x) is tuple:
+                final_output = x[0]
             else:
-                return x
+                final_output = x
+            self.activation_mapping.update(layer_modules.get_activation_mapping())
+            if return_activations:
+                if type(x) is tuple:
+                    activations += x[1]
+                return final_output, activations
+            else:
+                return final_output
+
+        def get_activation_mapping(self):
+            return self.activation_mapping
 
     def primary_model(x, return_activations=False, is_training=True):
         return ModelAndActivations()(x, return_activations, is_training)
 
     # return hk.without_apply_rng(hk.transform(typical_model)), hk.without_apply_rng(hk.transform(secondary_model))
     if not with_dropout:
-        return hk.without_apply_rng(hk.transform_with_state(primary_model))
+        return hk.without_apply_rng(hk.transform_with_state(primary_model)), ModelAndActivations
     else:
-        return hk.transform_with_state(primary_model)
+        return hk.transform_with_state(primary_model), ModelAndActivations
 
 
 ##############################
@@ -1525,6 +1713,158 @@ class LayerMagnitudePruning(BaseUpdater):
 
         layer_magnitudes = jax.tree_map(sum_and_broadcast, params)
         return layer_magnitudes
+
+
+def net_to_adjacency_matrix(net, x):
+    """ Use the dot representation returned by hk.experimental.to_dot to recover an adjacency matrix
+        that will be used to map neuron sparsity to weight sparsity and for pruning."""
+
+    params, state = net.init(jax.random.PRNGKey(0), x)
+
+    # New function ignoring the state
+    def model_fn_without_state(_x):
+        return net.apply(params, state, _x, return_activations=False, is_training=False)
+
+    # Now this function can be used with hk.experimental.to_dot
+    dot = hk.experimental.to_dot(model_fn_without_state)(x)
+    print(dot)
+    raise SystemExit
+    # dot = hk.experimental.to_dot(lambda rng_k, _x: net.init(rng_k, _x)[0])(jax.random.PRNGKey(0), x)
+    # dot = hk.experimental.to_dot(net.init)(jax.random.PRNGKey(0), x)
+    agraph = pgv.AGraph(string=dot)
+
+    # Convert the AGraph into a NetworkX graph
+    nx_graph = from_agraph(agraph)
+
+    # Now you can generate an adjacency matrix from the graph
+    # We will use a SciPy sparse matrix to store it
+    adjacency_matrix = nx.adjacency_matrix(nx_graph)
+
+    # If you need it as a dense NumPy array, you can do:
+    adjacency_matrix_dense = adjacency_matrix.todense()
+
+    return adjacency_matrix_dense
+
+
+##############################
+# Activation fn as module
+# allows to implement trick to easily recover activations gradient
+##############################
+class ActivationModule(hk.Module):
+
+    def __init__(self, activation_fn: Callable, name: Optional[str] = None):
+        """ Module replacement for activation function. Allows to define a state variable (a constant) that we can
+        use to calculate gradient values w/r to activation
+        """
+        super().__init__(name=name)
+        self.activation_fn = activation_fn
+
+    def __call__(self,
+                 inputs: Any,  # Used to be jax.Array; but cluster jax version < 0.4.1 (not compatible)
+                 precision: Optional[jax.lax.Precision] = None,
+                 ) -> Any:  # Again; switch to jax.Array when version updated on cluster
+        c = hk.get_state("gate_constant", inputs.shape[-1:], inputs.dtype, init=jnp.ones)  # c must have shape
+        # matching the amount of neurons
+
+        out = self.activation_fn(c*inputs)
+
+        return out
+
+    @property
+    def gate_constant(self):
+        return hk.get_state("gate_constant")
+
+
+class ReluActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.relu, name=name)
+
+
+class LeakyReluActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=Partial(jax.nn.leaky_relu, negative_slope=0.05), name=name)
+
+
+class AbsActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.numpy.abs, name=name)
+
+
+class EluActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.elu, name=name)
+
+
+class SwishActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.swish, name=name)
+
+
+class TanhActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.tanh, name=name)
+
+
+class IdentityActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=identity_fn, name=name)
+
+
+class ThreluActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=threlu, name=name)
+
+
+##############################
+# HK modules with activation mapping
+# used to easily build the pruning function
+##############################
+class MaxPool(hk.MaxPool):
+    """Max pool upgraded with activation mapping
+    """
+
+    def __init__(self, window_shape: Union[int, Sequence[int]], strides: Union[int, Sequence[int]], padding: str,
+               channel_axis: Optional[int] = -1, name: Optional[str] = None,
+               preceding_activation_name: Optional[str] = None, ):
+        super().__init__(window_shape=window_shape, strides=strides, padding=padding,
+                         channel_axis=channel_axis, name=name)
+        self.preceding_activations_name = preceding_activation_name
+        self.activation_mapping = {}
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return self.preceding_activations_name
+
+
+def get_activation_mapping(net, inputs):
+
+    def model_fn(_net, x):
+        model = _net()
+        output = model(x)
+        activation_fn_mapping = model.get_activation_mapping()
+        parent_name = model.name
+        return output, activation_fn_mapping, parent_name
+
+    model_transformed = hk.transform_with_state(Partial(model_fn, net))
+
+    params, state = model_transformed.init(jax.random.PRNGKey(42), inputs)
+    (output, activation_mapping, parent_name), state = model_transformed.apply(params, state, jax.random.PRNGKey(42), inputs)
+
+    def prepend_parent_name_to_string(s):
+        if isinstance(s, str):
+            return parent_name + '/' + s
+        return s
+
+    new_activation_mapping = {}
+
+    for key, value in activation_mapping.items():
+        new_key = parent_name + '/' + key
+        new_value = jax.tree_map(prepend_parent_name_to_string, value)
+        new_activation_mapping[new_key] = new_value
+
+    return new_activation_mapping
 
 
 ##############################
