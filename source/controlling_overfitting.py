@@ -384,9 +384,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             #                                                     with_dropout=with_dropout)
 
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
-                    (not (step % exp_config.training_steps == 0)):
+                    (not (step % (exp_config.training_steps-1) == 0)):
                 decaying_reg_param = decaying_reg_param / 10
-                if (step >= (decay_cycles-1) * reg_param_decay_period) and exp_config.zero_end_reg_param:
+                if (step >= ((decay_cycles-1) * reg_param_decay_period)) and exp_config.zero_end_reg_param:
                     decaying_reg_param = 0
                 print("decaying reg param:")
                 print(decaying_reg_param)
