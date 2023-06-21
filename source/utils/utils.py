@@ -1618,7 +1618,7 @@ def mask_next_layer_filters(params, next_layers, previous_smallest_filter_indice
     """Remove the kernel weights associated to filters that were pruned in the previous layer
 
     Args:
-        params: The params to prune, a dictionnary of type hk.params
+        params: The params to prune, a dictionary of type hk.params
         next_layers: The layers to prune, a list where first one is a conv layer and then associate bn layers if any
         previous_smallest_filter_indices: The index of the kernel weights to prune
     """

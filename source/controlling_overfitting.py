@@ -513,6 +513,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     update_fn.clear_cache()
                     death_check_fn.clear_cache()
                     # scan_death_check_fn.clear_cache()
+                    # scan_death_check_fn_with_activations_data.clear_cache()
                     # eps_death_check_fn.clear_cache()  # No more cache
                     # eps_scan_death_check_fn.clear_cache()  # No more cache
                     # Recompile training/monitoring functions
