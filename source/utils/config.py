@@ -5,6 +5,7 @@ import jaxpruner
 from jax.tree_util import Partial
 
 import utils.utils as utl
+import utils.scores as scores
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule, one_cycle_schedule, fix_step_decay
@@ -127,6 +128,10 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
     "fashion mnist": 10,
     "cifar10": 10,
     "cifar100": 100
+}
+
+pruning_criterion_choice = {
+    "earlycrop": (scores.early_crop_score, scores.test_earlycrop_pruning_step),
 }
 
 

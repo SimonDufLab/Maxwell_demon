@@ -20,20 +20,25 @@ def recombine_state_dicts(d1, d2):
     return {**d1, **d2}
 
 
-def score_to_neuron_mask(desired_sparsity, score_dict, score_to_neuron_mapping):
-    """ Transform the score dictionnary over the activations module state parameters to a mask over neurons"""
+def score_to_neuron_mask(desired_sparsity, score_dict):
+    """ Transform the score dictionary over the activations module state parameters to a mask over neurons"""
     flat_scores, _ = ravel_pytree(score_dict)
     split_value = jnp.percentile(flat_scores, desired_sparsity*100)
 
     gate_bool_mask = jax.tree_map(lambda x: x < split_value, score_dict)  # True for dead neurons
 
-    pass  # TODO: map the mask over the gate to a mask over all layer neurons
+    return gate_bool_mask
 
 
 ##############################
 # Structured pruning
 ##############################
-def early_crop_score(params, state, model, test_loss, dataloader, scan_len, with_dropout=False):
+
+
+##############################
+# Structured scores
+##############################
+def early_crop_score(params, state, test_loss, dataloader, scan_len, with_dropout=False):
     """ Calculate the score used by early crop method: https://arxiv.org/pdf/2206.10451.pdf
 
     Try to preserve the gradient flow by scoring each node via a gating constant parameter, stored in state"""
@@ -51,8 +56,12 @@ def early_crop_score(params, state, model, test_loss, dataloader, scan_len, with
         _state = recombine_state_dicts(_gate_states, rest)
         return test_loss(params, _state, _batch)
 
-    def pre_score_fn(_gate_states, _batch_grad, _batch):
+    # def pre_score_fn(_gate_states, _batch_grad, _batch):
+    def pre_score_fn(_batch_grad, _gate_states, _batch):
         gate_grad = jax.grad(loss_wr_gate)(gate_states, _batch)
+        _batch_grad = jax.flatten_util.ravel_pytree(_batch_grad)[0]
+        gate_grad = jax.flatten_util.ravel_pytree(gate_grad)[0]
+
         return jnp.sum(gate_grad*_batch_grad)
 
     def batch_grad(_batch):
@@ -61,11 +70,39 @@ def early_crop_score(params, state, model, test_loss, dataloader, scan_len, with
 
     def gate_grad_fn(_batch):
         gate_batch_grad = batch_grad(_batch)
-        batch_score = jax.grad(pre_score_fn)(gate_states, gate_batch_grad, _batch)
+        # batch_score = jax.grad(pre_score_fn)(gate_states, gate_batch_grad, _batch)
+        batch_score = jax.grad(pre_score_fn)(gate_batch_grad, gate_states, _batch)
+
         return batch_score
 
     score = gate_grad_fn(next(dataloader))
     for i in range(scan_len-1):
         curr_score = gate_grad_fn(next(dataloader))
         score = jax.tree_map(jnp.add, score, curr_score)
-    return jax.tree_map(jnp.abs, score)  # Return abs of score
+    abs_total_score = jax.tree_map(jnp.abs, score)  # Return abs of score
+
+    return {top_key: list(low_dict.values())[0] for top_key, low_dict in abs_total_score.items()}  # Remove inner dict
+
+
+##############################
+# When to prune
+##############################
+# @jax.jit
+def test_earlycrop_pruning_step(target_density, curr_weights, init_weights, prev_dist):
+    """ Implment the earlycrop pruning time score: : https://arxiv.org/pdf/2206.10451.pdf
+
+        Tries to detect when training phase enter lazy kernel regime by measuring the relative weight change
+        between two epochs.
+
+        target_density: in [0, 1]; defines the threshold (th)
+        curr_weights: parameters at current epoch
+        init_weights: initial params
+        prev_dist: Euclidean distance between params at initialization and from previous epoch"""
+
+    th = 1 - target_density
+
+    curr_dist = jnp.linalg.norm(jax.flatten_util.ravel_pytree(jax.tree_map(jnp.subtract, curr_weights, init_weights))[0])
+    norm_factor = jnp.linalg.norm(jax.flatten_util.ravel_pytree(init_weights)[0])
+
+    return 0 < (jnp.abs(curr_dist-prev_dist)/(norm_factor + 1e-6)) < th, curr_dist
+    # return (jnp.abs(curr_dist - prev_dist) / (norm_factor + 1e-6)) < th, curr_dist  # TODO: erase after debugging
