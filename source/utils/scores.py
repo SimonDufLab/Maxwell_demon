@@ -56,8 +56,8 @@ def early_crop_score(params, state, test_loss, dataloader, scan_len, with_dropou
         _state = recombine_state_dicts(_gate_states, rest)
         return test_loss(params, _state, _batch)
 
-    # def pre_score_fn(_gate_states, _batch_grad, _batch):
-    def pre_score_fn(_batch_grad, _gate_states, _batch):
+    def pre_score_fn(_gate_states, _batch_grad, _batch):
+    # def pre_score_fn(_batch_grad, _gate_states, _batch):
         gate_grad = jax.grad(loss_wr_gate)(gate_states, _batch)
         _batch_grad = jax.flatten_util.ravel_pytree(_batch_grad)[0]
         gate_grad = jax.flatten_util.ravel_pytree(gate_grad)[0]
@@ -68,10 +68,16 @@ def early_crop_score(params, state, test_loss, dataloader, scan_len, with_dropou
         gate_grad = jax.grad(loss_wr_gate)(gate_states, _batch)
         return gate_grad
 
+    # forward-over-reverse hvp
+    def hvp(f, primals, tangents):
+        return jax.jvp(jax.grad(f), primals, tangents)[1]
+
     def gate_grad_fn(_batch):
         gate_batch_grad = batch_grad(_batch)
         # batch_score = jax.grad(pre_score_fn)(gate_states, gate_batch_grad, _batch)
-        batch_score = jax.grad(pre_score_fn)(gate_batch_grad, gate_states, _batch)
+        # batch_score = jax.grad(pre_score_fn)(gate_batch_grad, gate_states, _batch)
+        partial_fn = Partial(loss_wr_gate, _batch=_batch)
+        batch_score = hvp(partial_fn, (gate_states,), (gate_batch_grad,))
 
         return batch_score
 
