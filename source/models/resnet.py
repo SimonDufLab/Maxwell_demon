@@ -447,7 +447,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                  initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
                  strides: Sequence[int] = (1, 2, 2, 2),):
 
-    act = activation_fn
+    # act = activation_fn
 
     check_length(4, blocks_per_group, "blocks_per_group")
     check_length(4, channels_per_group, "channels_per_group")
@@ -497,10 +497,10 @@ def resnet_model(blocks_per_group: Sequence[int],
     #         [layer_mean, Partial(hk.Linear, **default_fc_layer_config), act],
     #         [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
 
-    train_layers.append([Partial(LinearBlock, is_training=True, num_classes=num_classes, activation_fn=act,
+    train_layers.append([Partial(LinearBlock, is_training=True, num_classes=num_classes, activation_fn=activation_fn,
                                  fc_config=default_fc_layer_config, logits_config=logits_config, bn_config=bn_config,
                                  with_bn=with_bn)])
-    test_layers.append([Partial(LinearBlock, is_training=False, num_classes=num_classes, activation_fn=act,
+    test_layers.append([Partial(LinearBlock, is_training=False, num_classes=num_classes, activation_fn=activation_fn,
                                 fc_config=default_fc_layer_config, logits_config=logits_config, bn_config=bn_config,
                                 with_bn=with_bn)])
 

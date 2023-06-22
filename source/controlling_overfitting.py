@@ -6,6 +6,7 @@ import optax
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow as tf
 from aim import Run, Distribution
 import os
 import time
@@ -100,7 +101,7 @@ cs = ConfigStore.instance()
 cs.store(name=exp_name+"_config", node=ExpConfig)
 
 # Using tf on CPU for data loading
-# tf.config.experimental.set_visible_devices([], "GPU")
+tf.config.experimental.set_visible_devices([], "GPU")
 
 
 @hydra.main(version_base=None, config_name=exp_name+"_config")
@@ -206,12 +207,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
 
-    # Recording over all widths
-    live_neurons = []
-    avg_live_neurons = []
-    std_live_neurons = []
-    size_arr = []
-    f_acc = []
+    # # Recording over all widths
+    # live_neurons = []
+    # avg_live_neurons = []
+    # std_live_neurons = []
+    # size_arr = []
+    # f_acc = []
 
     if exp_config.save_wanda:
         # Recording metadata about activations that will be pickled
@@ -267,7 +268,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                       exp_config.final_lr, exp_config.lr_decay_steps)
             opt_chain.append(optimizer(lr_schedule))
         opt = optax.chain(*opt_chain)
-        accuracies_log = []
 
         # Set training/monitoring functions
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
@@ -416,7 +416,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                 dead_neurons = death_check_fn(params, state, test_death_batch)
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
-                accuracies_log.append(test_accuracy)
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
                 exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
@@ -595,7 +594,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
         final_train_acc = jax.device_get(full_train_acc_fn(params, state, train_eval))
-        size_arr.append(starting_neurons)
+        # size_arr.append(starting_neurons)
 
         activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
         # final_dead_neurons = scan_death_check_fn(params, test_death)
@@ -637,7 +636,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         batches_final_live_neurons = jnp.stack(batches_final_live_neurons)
 
         avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
-        std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
+        # std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
 
         log_step = reg_param*1e8
 
@@ -716,10 +715,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
                       context={"reg param": utl.size_to_string(reg_param)})
 
-        live_neurons.append(total_neurons - final_dead_neurons_count)
-        avg_live_neurons.append(avg_final_live_neurons)
-        std_live_neurons.append(std_final_live_neurons)
-        f_acc.append(final_accuracy)
+        # live_neurons.append(total_neurons - final_dead_neurons_count)
+        # avg_live_neurons.append(avg_final_live_neurons)
+        # std_live_neurons.append(std_final_live_neurons)
+        # f_acc.append(final_accuracy)
 
         # Making sure compiled fn cache was cleared
         loss.clear_cache()
