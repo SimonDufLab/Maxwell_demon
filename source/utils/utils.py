@@ -738,6 +738,12 @@ def create_full_accuracy_fn(accuracy_fn, scan_len):
     return full_accuracy_fn
 
 
+def exclude_bn_params(dict_params):
+    substrings = ['batchnorm', 'bn']
+
+    return {k: v for k, v in dict_params.items() if all(sub not in k for sub in substrings)}
+
+
 def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False,
                             mask_head=False, reduce_head_gap=False):
     """ Build the cross-entropy loss given the model"""
@@ -748,15 +754,19 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
+                params = exclude_bn_params(params)
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "lasso":
             def reg_fn(params, activations=None):
+                params = exclude_bn_params(params)
                 return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
+                params = exclude_bn_params(params)
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_lasso":
             def reg_fn(params, activations=None):
+                params = exclude_bn_params(params)
                 return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2_act":
             def reg_fn(params, activations):
@@ -835,22 +845,26 @@ def mse_loss_given_model(model, regularizer=None, reg_param=1e-4, is_training=Tr
         assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
-                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(params))
+                params = exclude_bn_params(params)
+                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "lasso":
             def reg_fn(params, activations=None):
-                return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(params))
+                params = exclude_bn_params(params)
+                return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
-                return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_leaves(params))
+                params = exclude_bn_params(params)
+                return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_lasso":
             def reg_fn(params, activations=None):
-                return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_leaves(params))
+                params = exclude_bn_params(params)
+                return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2_act":
             def reg_fn(params, activations):
-                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_leaves(activations))
+                return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(activations))
         if regularizer == "cdg_lasso_act":
             def reg_fn(params, activations):
-                return 0.5 * sum(jnp.sum(jnp.abs(p)) for p in jax.tree_leaves(activations))
+                return 0.5 * sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(activations))
     else:
         def reg_fn(params, activations=None):
             return 0
@@ -858,7 +872,7 @@ def mse_loss_given_model(model, regularizer=None, reg_param=1e-4, is_training=Tr
     @jax.jit
     def _loss(params: hk.Params, state: hk.State, batch: Batch) -> Union[jnp.ndarray, Any]:
         (outputs, activations), state = model.apply(params, state, x=batch, return_activations=True,
-                                                   is_training=is_training)
+                                                    is_training=is_training)
         targets = batch[1]
 
         # calculate mse across the batch
