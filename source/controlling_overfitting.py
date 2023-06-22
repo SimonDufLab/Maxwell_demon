@@ -6,12 +6,14 @@ import optax
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow as tf
 from aim import Run, Distribution
 import os
 import time
 from datetime import timedelta
 import pickle
 import json
+import gc
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Tuple, Any, List, Dict
 from ast import literal_eval
@@ -55,7 +57,7 @@ class ExpConfig:
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
-    noisy_label: float = 0.25  # ratio (between [0,1]) of labels to randomly (uniformly) flip
+    noisy_label: float = 0.0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     permuted_img_ratio: float = 0  # ratio ([0,1]) of training image in training ds to randomly permute their pixels
     gaussian_img_ratio: float = 0  # ratio ([0,1]) of img to replace by gaussian noise; same mean and variance as ds
     architecture: str = "mlp_3"
@@ -100,7 +102,7 @@ cs = ConfigStore.instance()
 cs.store(name=exp_name+"_config", node=ExpConfig)
 
 # Using tf on CPU for data loading
-# tf.config.experimental.set_visible_devices([], "GPU")
+tf.config.experimental.set_visible_devices([], "GPU")
 
 
 @hydra.main(version_base=None, config_name=exp_name+"_config")
@@ -206,12 +208,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
 
-    # Recording over all widths
-    live_neurons = []
-    avg_live_neurons = []
-    std_live_neurons = []
-    size_arr = []
-    f_acc = []
+    # # Recording over all widths
+    # live_neurons = []
+    # avg_live_neurons = []
+    # std_live_neurons = []
+    # size_arr = []
+    # f_acc = []
 
     if exp_config.save_wanda:
         # Recording metadata about activations that will be pickled
@@ -229,10 +231,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 parameters: List[float] = field(default_factory=list)
             params_meta = FinalParamsMeta()
 
+    size = exp_config.size
+
     for reg_param in exp_config.reg_params:  # Vary the regularizer parameter to measure impact on overfitting
-        size = exp_config.size
         # Time the subrun for the different sizes
         subrun_start_time = time.time()
+        gc.collect()
 
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
@@ -267,7 +271,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                       exp_config.final_lr, exp_config.lr_decay_steps)
             opt_chain.append(optimizer(lr_schedule))
         opt = optax.chain(*opt_chain)
-        accuracies_log = []
 
         # Set training/monitoring functions
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
@@ -293,7 +296,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
 
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-        initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
+        # initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
         init_state = copy.deepcopy(state)
         opt_state = opt.init(params)
         # frozen_layer_lists = utl.extract_layer_lists(params)
@@ -322,6 +325,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             add_steps = 0
 
         for step in range(exp_config.training_steps + add_steps):
+            # gc.collect()
             if step == exp_config.training_steps and bool(add_steps):
                 print("Entered pruning phase")
                 #  Reset optimizer:
@@ -416,7 +420,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                 dead_neurons = death_check_fn(params, state, test_death_batch)
                 # Record some metrics
                 dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
-                accuracies_log.append(test_accuracy)
                 exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
                 exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
@@ -595,7 +598,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
         final_train_acc = jax.device_get(full_train_acc_fn(params, state, train_eval))
-        size_arr.append(starting_neurons)
+        # size_arr.append(starting_neurons)
 
         activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
         # final_dead_neurons = scan_death_check_fn(params, test_death)
@@ -637,7 +640,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         batches_final_live_neurons = jnp.stack(batches_final_live_neurons)
 
         avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
-        std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
+        # std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
 
         log_step = reg_param*1e8
 
@@ -699,13 +702,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of params remaining",
                       step=log_params_sparsity_step)
-        if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
-            params_vec, _ = ravel_pytree(params)
-            initial_params_vec, _ = ravel_pytree(initial_params)
-            exp_run.track(
-                jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
-                name="Relative change in norm of weights from init after convergence w/r reg param",
-                step=log_step)
+        # if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
+        #     params_vec, _ = ravel_pytree(params)
+        #     initial_params_vec, _ = ravel_pytree(initial_params)
+        #     exp_run.track(
+        #         jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
+        #         name="Relative change in norm of weights from init after convergence w/r reg param",
+        #         step=log_step)
         activations_max_dist = Distribution(activations_max, bin_count=100)
         exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
                       context={"reg param": utl.size_to_string(reg_param)})
@@ -716,10 +719,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
                       context={"reg param": utl.size_to_string(reg_param)})
 
-        live_neurons.append(total_neurons - final_dead_neurons_count)
-        avg_live_neurons.append(avg_final_live_neurons)
-        std_live_neurons.append(std_final_live_neurons)
-        f_acc.append(final_accuracy)
+        # live_neurons.append(total_neurons - final_dead_neurons_count)
+        # avg_live_neurons.append(avg_final_live_neurons)
+        # std_live_neurons.append(std_final_live_neurons)
+        # f_acc.append(final_accuracy)
 
         # Making sure compiled fn cache was cleared
         loss.clear_cache()
