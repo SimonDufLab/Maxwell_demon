@@ -13,6 +13,7 @@ import time
 from datetime import timedelta
 import pickle
 import json
+import gc
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Tuple, Any, List, Dict
 from ast import literal_eval
@@ -56,7 +57,7 @@ class ExpConfig:
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
-    noisy_label: float = 0.25  # ratio (between [0,1]) of labels to randomly (uniformly) flip
+    noisy_label: float = 0.0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     permuted_img_ratio: float = 0  # ratio ([0,1]) of training image in training ds to randomly permute their pixels
     gaussian_img_ratio: float = 0  # ratio ([0,1]) of img to replace by gaussian noise; same mean and variance as ds
     architecture: str = "mlp_3"
@@ -230,10 +231,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 parameters: List[float] = field(default_factory=list)
             params_meta = FinalParamsMeta()
 
+    size = exp_config.size
+
     for reg_param in exp_config.reg_params:  # Vary the regularizer parameter to measure impact on overfitting
-        size = exp_config.size
         # Time the subrun for the different sizes
         subrun_start_time = time.time()
+        gc.collect()
 
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
@@ -293,7 +296,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
 
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-        initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
+        # initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
         init_state = copy.deepcopy(state)
         opt_state = opt.init(params)
         # frozen_layer_lists = utl.extract_layer_lists(params)
@@ -322,6 +325,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             add_steps = 0
 
         for step in range(exp_config.training_steps + add_steps):
+            # gc.collect()
             if step == exp_config.training_steps and bool(add_steps):
                 print("Entered pruning phase")
                 #  Reset optimizer:
@@ -698,13 +702,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of params remaining",
                       step=log_params_sparsity_step)
-        if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
-            params_vec, _ = ravel_pytree(params)
-            initial_params_vec, _ = ravel_pytree(initial_params)
-            exp_run.track(
-                jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
-                name="Relative change in norm of weights from init after convergence w/r reg param",
-                step=log_step)
+        # if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
+        #     params_vec, _ = ravel_pytree(params)
+        #     initial_params_vec, _ = ravel_pytree(initial_params)
+        #     exp_run.track(
+        #         jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
+        #         name="Relative change in norm of weights from init after convergence w/r reg param",
+        #         step=log_step)
         activations_max_dist = Distribution(activations_max, bin_count=100)
         exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
                       context={"reg param": utl.size_to_string(reg_param)})
