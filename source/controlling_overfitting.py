@@ -7,6 +7,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import tensorflow as tf
+tf.config.experimental.set_visible_devices([], "GPU")
 from aim import Run, Distribution
 import os
 import time
@@ -25,6 +26,7 @@ from jax.flatten_util import ravel_pytree
 from jax.tree_util import Partial
 
 import utils.utils as utl
+import utils.scores as scr
 from utils.utils import build_models
 from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality
 from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice, bn_config_choice
@@ -43,6 +45,7 @@ class ExpConfig:
     record_freq: int = 250
     pruning_freq: int = 1000
     live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
+    record_gate_grad_stat: bool = False  # Record in logger info about gradient magnitude per layer throughout training
     lr: float = 1e-3
     gradient_clipping: bool = False
     lr_schedule: str = "None"
@@ -102,7 +105,7 @@ cs = ConfigStore.instance()
 cs.store(name=exp_name+"_config", node=ExpConfig)
 
 # Using tf on CPU for data loading
-tf.config.experimental.set_visible_devices([], "GPU")
+# tf.config.experimental.set_visible_devices([], "GPU")
 
 
 @hydra.main(version_base=None, config_name=exp_name+"_config")
@@ -303,6 +306,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         activation_layer_order = list(state.keys())
         neuron_states = utl.NeuronStates(activation_layer_order)
         acti_map = utl.get_activation_mapping(raw_net, next(train))
+        if exp_config.record_gate_grad_stat:
+            gate_grad = utl.NeuronStates(activation_layer_order)
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
@@ -477,6 +482,15 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # if decay_cycles > 1:  # Don't record, aim metric don't support y value smaller than 0.001 ...
                 #     exp_run.track(decaying_reg_param, name="Current reg_param value", step=step,
                 #                   context={"reg param": utl.size_to_string(reg_param)})
+
+                if exp_config.record_gate_grad_stat:
+                    snap_score = scr.snap_score(params, state, test_loss_fn, train_eval, 5)  # Avg on 5 minibatches
+                    gate_grad.update(snap_score)
+                    for i, layer_gate_grad in enumerate(gate_grad.values()):  # Ordered dict retrieves layers in order
+                        exp_run.track(jnp.mean(layer_gate_grad),
+                                      name=f"Average gate gradients magnitude in layer {i}; whole training dataset",
+                                      step=step,
+                                      context={"reg param": utl.size_to_string(reg_param)})
 
                 if exp_config.measure_linear_perf:
                     # Record performance over full validation set of the NN for relu and decaying_reg_paramlinear activations

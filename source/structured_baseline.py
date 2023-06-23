@@ -339,7 +339,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             pruned_flag, step_test_carry = pruning_step_test_fn(exp_config.pruning_density, params, initial_params, step_test_carry)
             if pruned_flag:  # Performs pruning
                 print(f"Performing pruning at step {step}")
-                neuron_scores = pruning_score_fn(params, state, test_loss_fn, test_eval, test_size//eval_size)
+                neuron_scores = pruning_score_fn(params, state, test_loss_fn, train_eval, train_ds_size//eval_size)
                 neuron_states.update(scr.score_to_neuron_mask(exp_config.pruning_density, neuron_scores))
                 params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params,
                                                                                       acti_map,

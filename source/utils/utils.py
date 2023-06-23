@@ -738,7 +738,14 @@ def create_full_accuracy_fn(accuracy_fn, scan_len):
     return full_accuracy_fn
 
 
-def exclude_bn_params(dict_params):
+def exclude_bn_scale_from_params(dict_params):
+    def exclude_scale(sub_dict):
+        return {k: v for k, v in sub_dict.items() if "scale" not in k}
+
+    return {k: exclude_scale(v) for k, v in dict_params.items()}
+
+
+def exclude_bn_params(dict_params):  # Not a good idea, offset is equivalent to a bias parameter
     substrings = ['batchnorm', 'bn']
 
     return {k: v for k, v in dict_params.items() if all(sub not in k for sub in substrings)}
@@ -754,19 +761,19 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
-                params = exclude_bn_params(params)
+                # params = exclude_bn_scale_from_params(params)
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "lasso":
             def reg_fn(params, activations=None):
-                params = exclude_bn_params(params)
+                # params = exclude_bn_scale_from_params(params)
                 return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
-                params = exclude_bn_params(params)
+                # params = exclude_bn_scale_from_params(params)
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_lasso":
             def reg_fn(params, activations=None):
-                params = exclude_bn_params(params)
+                # params = exclude_bn_scale_from_params(params)
                 return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2_act":
             def reg_fn(params, activations):
@@ -845,19 +852,19 @@ def mse_loss_given_model(model, regularizer=None, reg_param=1e-4, is_training=Tr
         assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
-                params = exclude_bn_params(params)
+                # params = exclude_bn_scale_from_params(params)
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "lasso":
             def reg_fn(params, activations=None):
-                params = exclude_bn_params(params)
+                # params = exclude_bn_scale_from_params(params)
                 return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
-                params = exclude_bn_params(params)
+                # params = exclude_bn_scale_from_params(params)
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_lasso":
             def reg_fn(params, activations=None):
-                params = exclude_bn_params(params)
+                # params = exclude_bn_scale_from_params(params)
                 return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2_act":
             def reg_fn(params, activations):
@@ -1914,6 +1921,7 @@ def get_total_neurons(architecture, sizes):
                      8 * sizes, 8 * sizes,
                      8 * sizes, 8 * sizes,
                      4 * sizes,
+                     # 2*sizes,
                      ]
     else:
         raise NotImplementedError("get_size not implemented for current architecture")
