@@ -38,6 +38,27 @@ def score_to_neuron_mask(desired_sparsity, score_dict):
 ##############################
 # Structured scores
 ##############################
+def snap_score(params, state, test_loss, dataloader, scan_len, with_dropout=False):
+    """Equivalent to gate saliency score; i.e. the derivative w.r. to gate constant"""
+    gate_states, rest = split_state(state)
+
+    def loss_wr_gate(_gate_states, _batch):
+        _state = recombine_state_dicts(_gate_states, rest)
+        return test_loss(params, _state, _batch)
+
+    def grad_fn(_batch):
+        gate_grad = jax.grad(loss_wr_gate)(gate_states, _batch)
+        return gate_grad
+
+    score = grad_fn(next(dataloader))
+    for i in range(scan_len - 1):
+        curr_score = grad_fn(next(dataloader))
+        score = jax.tree_map(jnp.add, score, curr_score)
+    abs_total_score = jax.tree_map(jnp.abs, score)  # Return abs of score
+
+    return {top_key: list(low_dict.values())[0] for top_key, low_dict in abs_total_score.items()}  # Remove inner dict
+
+
 def early_crop_score(params, state, test_loss, dataloader, scan_len, with_dropout=False):
     """ Calculate the score used by early crop method: https://arxiv.org/pdf/2206.10451.pdf
 
