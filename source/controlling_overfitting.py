@@ -5,6 +5,7 @@ import copy
 import optax
 import jax
 import jax.numpy as jnp
+import haiku as hk
 import numpy as np
 import tensorflow as tf
 tf.config.experimental.set_visible_devices([], "GPU")
@@ -240,6 +241,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     for reg_param in exp_config.reg_params:  # Vary the regularizer parameter to measure impact on overfitting
         # Time the subrun for the different sizes
         subrun_start_time = time.time()
+        jax.clear_backends()
         gc.collect()
 
         # Make the network and optimiser
@@ -319,6 +321,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         init_total_neurons = copy.copy(total_neurons)
         init_total_per_layer = copy.copy(total_per_layer)
         initial_params_count = utl.count_params(params)
+
+        # Visualize NN with tabulate
+        # print(hk.experimental.tabulate(net.init)(next(train)))
+        # raise SystemExit
 
         decaying_reg_param = copy.deepcopy(reg_param)
         decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)

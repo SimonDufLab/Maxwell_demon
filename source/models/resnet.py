@@ -407,7 +407,8 @@ class LinearBlock(hk.Module):
     def __call__(self, inputs):
         activations = []
         block_name = self.name + "/~/"
-        x = jnp.mean(inputs, axis=(1, 2))  # Kind of average pooling layer
+        # x = jnp.mean(inputs, axis=(1, 2))  # Kind of average pooling layer
+        x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
         x = self.fc_layer(x)
         if self.with_bn:
             x = self.bn_layer(x)
