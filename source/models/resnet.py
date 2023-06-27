@@ -396,10 +396,13 @@ class LinearBlock(hk.Module):
         self.activation_mapping = {}
         self.preceding_activation_name = preceding_activation_name
         self.with_bn = with_bn
-        self.fc_layer = hk.Linear(**fc_config)
+        self.fc_layer = hk.Linear(**fc_config[0])
+        # self.fc_layer2 = hk.Linear(**fc_config[1])
         self.bn_layer = Base_BN(is_training=is_training, bn_config=bn_config, name="lin_bn")
+        # self.bn_layer2 = Base_BN(is_training=is_training, bn_config=bn_config, name="lin_bn2")
         self.logits_layer = hk.Linear(num_classes, **logits_config)  # TODO: de-hardencode the outputs_dim
         self.activation_layer = activation_fn()
+        # self.activation_layer2 = activation_fn()
 
     def __call__(self, inputs):
         activations = []
@@ -410,6 +413,11 @@ class LinearBlock(hk.Module):
             x = self.bn_layer(x)
         x = self.activation_layer(x)
         activations.append(x)
+        # x = self.fc_layer2(x)
+        # if self.with_bn:
+        #     x = self.bn_layer2(x)
+        # x = self.activation_layer2(x)
+        # activations.append(x)
         x = self.logits_layer(x)
 
         fc_name = block_name + self.fc_layer.name
@@ -417,13 +425,21 @@ class LinearBlock(hk.Module):
                                             "following": block_name + self.activation_layer.name}
         self.activation_mapping[block_name + self.activation_layer.name] = {"preceding": None,
                                                                             "following": block_name + self.activation_layer.name}
+        # self.activation_mapping[block_name+self.fc_layer2.name] = {"preceding": block_name + self.activation_layer.name,
+        #                                                          "following": block_name + self.activation_layer2.name}
+        # self.activation_mapping[block_name + self.activation_layer2.name] = {"preceding": None,
+        #                                                                     "following": block_name + self.activation_layer2.name}
         if self.with_bn:
             bn_name = block_name + self.bn_layer.name
             self.activation_mapping[bn_name] = {"preceding": None,
                                                 "following": block_name + self.activation_layer.name}
+        #     self.activation_mapping[block_name + self.bn_layer2.name] = {"preceding": None,
+        #                                                                  "following": block_name + self.activation_layer2.name}
         logits_name = block_name + self.logits_layer.name
         self.activation_mapping[logits_name] = {"preceding": block_name + self.activation_layer.name,
                                                 "following": None}
+        # self.activation_mapping[logits_name] = {"preceding": self.preceding_activation_name,
+        #                                         "following": None}
         return x, activations
 
     def get_activation_mapping(self):
@@ -498,10 +514,10 @@ def resnet_model(blocks_per_group: Sequence[int],
     #         [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
 
     train_layers.append([Partial(LinearBlock, is_training=True, num_classes=num_classes, activation_fn=activation_fn,
-                                 fc_config=default_fc_layer_config, logits_config=logits_config, bn_config=bn_config,
+                                 fc_config=(default_fc_layer_config, default_fc2_layer_config), logits_config=logits_config, bn_config=bn_config,
                                  with_bn=with_bn)])
     test_layers.append([Partial(LinearBlock, is_training=False, num_classes=num_classes, activation_fn=activation_fn,
-                                fc_config=default_fc_layer_config, logits_config=logits_config, bn_config=bn_config,
+                                fc_config=(default_fc_layer_config, default_fc2_layer_config), logits_config=logits_config, bn_config=bn_config,
                                 with_bn=with_bn)])
 
     # train_layers += train_final_layers
@@ -521,6 +537,7 @@ default_initial_conv_config = {"kernel_shape": 7,
                                "w_init": kaiming_normal}
 default_block_conv_config = {"w_init": kaiming_normal}
 default_fc_layer_config = {"with_bias": True, "w_init": kaiming_normal}
+default_fc2_layer_config = {"with_bias": True, "w_init": kaiming_normal}
 
 
 def resnet18(size: Union[int, Sequence[int]],
@@ -539,10 +556,14 @@ def resnet18(size: Union[int, Sequence[int]],
         init_conv_size = size
         sizes = [[size*i]*4 for i in [1, 2, 4, 8]]
         fc_size = 4 * size
+        # fc2_size = 2*size
     else:
         init_conv_size = size[0]
         fc_size = size[-1]
+        # fc2_size = size[-1]
         sizes = size[1:-1]
+        # sizes = size[1:-2]
+        # sizes = size[1:]
         sizes = [sizes[i:i+4] for i in range(0, 16, 4)]
 
     resnet_config = {
@@ -554,6 +575,7 @@ def resnet18(size: Union[int, Sequence[int]],
                     }
     default_initial_conv_config["output_channels"] = init_conv_size
     default_fc_layer_config["output_size"] = fc_size
+    # default_fc2_layer_config["output_size"] = fc2_size
 
     if version == "V1":
         resnet_block_type = ResnetBlockV1
