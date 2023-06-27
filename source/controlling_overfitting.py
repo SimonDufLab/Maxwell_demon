@@ -46,6 +46,7 @@ class ExpConfig:
     pruning_freq: int = 1000
     live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     record_gate_grad_stat: bool = False  # Record in logger info about gradient magnitude per layer throughout training
+    mod_via_gate_grad: bool = False  # Use gate gradients to rescale weight gradients if True -> shitty, don't use
     lr: float = 1e-3
     gradient_clipping: bool = False
     lr_schedule: str = "None"
@@ -281,8 +282,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
                                             classes=classes, is_training=False, with_dropout=with_dropout)
         accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                        exp_config.noise_live_only, with_dropout=with_dropout)
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
         # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
         #                                                  epsilon=exp_config.epsilon_close, avg=exp_config.avg_for_eps)
@@ -308,6 +307,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         acti_map = utl.get_activation_mapping(raw_net, next(train))
         if exp_config.record_gate_grad_stat:
             gate_grad = utl.NeuronStates(activation_layer_order)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                        exp_config.noise_live_only, with_dropout=with_dropout,
+                                                        modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                        acti_map=acti_map)
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
@@ -358,7 +361,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        reg_param=pruning_reg_param,
                                                        classes=classes, is_training=False, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                                exp_config.noise_live_only, with_dropout=with_dropout)
+                                                                exp_config.noise_live_only, with_dropout=with_dropout,
+                                                                modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                                acti_map=acti_map)
             # if step == exp_config.training_steps+(add_steps//2) and bool(add_steps):  # Use one_cycle opt instead to reduce lr
             #     print("Ending pruning phase")  # Removing agressive reg_param at the end and decay lr
             #     #  Reset optimizer:
@@ -390,7 +395,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             #     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
             #                                                     exp_config.noise_imp,
             #                                                     exp_config.noise_live_only,
-            #                                                     with_dropout=with_dropout)
+            #                                                     with_dropout=with_dropout, modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+            #                                                         acti_map=acti_map)
 
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                     (not (step % (exp_config.training_steps-1) == 0)):
@@ -409,7 +415,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                     reg_param=decaying_reg_param,
                                                     classes=classes, is_training=False, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                                exp_config.noise_live_only, with_dropout=with_dropout)
+                                                                exp_config.noise_live_only, with_dropout=with_dropout,
+                                                                modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                                acti_map=acti_map)
 
             if step % exp_config.record_freq == 0:
                 train_loss = test_loss_fn(params, state, next(train_eval))
@@ -544,7 +552,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
                                                                     exp_config.noise_imp, exp_config.noise_live_only,
-                                                                    with_dropout=with_dropout)
+                                                                    with_dropout=with_dropout,
+                                                                    modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                                    acti_map=acti_map)
                     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                     # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                     #                                                  epsilon=exp_config.epsilon_close,
@@ -585,7 +595,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                     classes=classes, is_training=False, with_dropout=with_dropout)
                 accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                                exp_config.noise_live_only, with_dropout=with_dropout)
+                                                                exp_config.noise_live_only, with_dropout=with_dropout,
+                                                                modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                                acti_map=acti_map)
                 death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                 # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                 #                                                  epsilon=exp_config.epsilon_close,

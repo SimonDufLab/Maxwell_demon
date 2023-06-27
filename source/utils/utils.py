@@ -22,6 +22,8 @@ from collections import OrderedDict
 from collections.abc import Iterable
 from itertools import cycle
 
+import utils.scores as scr
+
 # from haiku._src.dot import to_graph
 # import networkx as nx
 # from networkx.drawing.nx_agraph import from_agraph
@@ -901,8 +903,30 @@ def grad_normalisation_per_layer(param_leaf):
 
 
 def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only=False,
-                                    norm_grad=False, with_dropout=False, return_grad=False):
+                                    norm_grad=False, with_dropout=False, return_grad=False,
+                                    modulate_via_gate_grad=False, acti_map=None):
     """Learning rule (stochastic gradient descent)."""
+
+    if modulate_via_gate_grad:
+        assert bool(acti_map), "activation mapping must be given for gradients modulation via gate gradients to work"
+
+    def modulated_grad_from_gate_stat(params, state, batch):
+        gate_states, rest = scr.split_state(state)
+
+        def _loss(_params, _gate_states, _rest, _batch):
+            _state = scr.recombine_state_dicts(_gate_states, _rest)
+            return loss(_params, _state, _batch)
+
+        (grads, gate_grads), new_state = jax.grad(_loss, argnums=(0, 1), has_aux=True)(params, gate_states, rest, batch)
+        gate_grads = jax.tree_map(jnp.abs, gate_grads)
+        gate_grads = {top_key: list(low_dict.values())[0] for top_key, low_dict in gate_grads.items()}
+        max_in_gate_grad = jnp.max(ravel_pytree(jax.tree_map(jnp.mean, gate_grads))[0])
+        scaling_factors = jax.tree_map(lambda x: (max_in_gate_grad/(jnp.mean(x)+1e-8)), gate_grads)  # Avoid division by 0
+        for key, val in grads.items():
+            scale_by = acti_map[key]["following"]
+            if scale_by:
+                grads[key] = jax.tree_map(lambda x: jnp.clip(x*scaling_factors[scale_by], -10.0, 10.0), val)  # clip grad
+        return grads, new_state
 
     if with_dropout:
         assert not return_grad, 'return_grad option not coded yet with dropout'
@@ -910,7 +934,10 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
         @jax.jit
         def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _drop_key) -> Tuple[
             hk.Params, Any, OptState, jax.random.PRNGKeyArray]:
-            grads, (new_state, next_drop_key) = jax.grad(loss, has_aux=True)(_params, _state, _batch, _drop_key)
+            if modulate_via_gate_grad:
+                sys.exit("Gradient modulation via gate grad not implemented for dropout yet")
+            else:
+                grads, (new_state, next_drop_key) = jax.grad(loss, has_aux=True)(_params, _state, _batch, _drop_key)
             if norm_grad:
                 grads = jax.tree_map(grad_normalisation_per_layer, grads)
             updates, _opt_state = optimizer.update(grads, _opt_state, _params)
@@ -923,7 +950,10 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
                             _batch: Batch) -> Tuple[dict, hk.Params, Any, OptState]:
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                    if modulate_via_gate_grad:
+                        grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
@@ -934,7 +964,10 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
                             _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                    if modulate_via_gate_grad:
+                        grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     # try:
@@ -955,7 +988,10 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
                             _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                    if modulate_via_gate_grad:
+                        grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     key, next_key = jax.random.split(_key)
                     flat_grads, unravel_fn = ravel_pytree(grads)
                     added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
@@ -970,7 +1006,10 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
                             _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                    if modulate_via_gate_grad:
+                        grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     key, next_key = jax.random.split(_key)
                     flat_updates, unravel_fn = ravel_pytree(updates)
