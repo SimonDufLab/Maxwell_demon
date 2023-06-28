@@ -1192,8 +1192,10 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         noisy_ratio = max(noisy_label, permuted_img_ratio, gaussian_img_ratio)
         split1 = split + '[:' + str(int(noisy_ratio*100)) + '%]'
         split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
-        ds1, ds_info = tfds.load(dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True)
-        ds2 = tfds.load(dataset, split=split2, as_supervised=True, data_dir="./data")
+        split1 = tfds.split_for_jax_process(split1, drop_remainder=True)
+        split2 = tfds.split_for_jax_process(split2, drop_remainder=True)
+        ds1, ds_info = tfds.load(dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds2 = tfds.load(dataset, split=split2, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         sample_from = np.arange(ds_info.features["label"].num_classes - 1)
         if subset is not None:
             ds1 = ds1.filter(filter_fn)  # Only take the randomly selected subset
@@ -1208,7 +1210,8 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             ds1 = ds1.map(map_gaussian_img(ds1))
         ds = ds1.concatenate(ds2)
     else:
-        ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data")
+        split = tfds.split_for_jax_process(split, drop_remainder=True)
+        ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
@@ -1229,26 +1232,31 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     #     if data_augmentation:
     #         ds = ds.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
     #     # ds = ds.take(batch_size).cache().repeat()
-    # ds = ds.cache()
+    ds = ds.cache()
     ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
-    ds = ds.repeat()
+    # ds = ds.repeat()
     if other_bs:
+        ds1 = ds.batch(batch_size)
         if is_training:  # Only ds1 takes into account 'is_training' flag
             # ds1 = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
-            ds1 = ds.batch(batch_size)
+            # ds1 = ds.batch(batch_size)
             if data_augmentation:
                 ds1 = ds1.map(lambda x, y: (augment_tf_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
-        else:
-            ds1 = ds.batch(batch_size)
-        if data_augmentation:  # Resize as well during test if data augmentation
-            ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
-        ds1 = ds1.prefetch(tf.data.AUTOTUNE)
+                ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
+            # ds1 = ds1.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
+        # else:
+        #     ds1 = ds.batch(batch_size)
+        ds1 = ds1.repeat()
+        # if data_augmentation:  # Resize as well during test if data augmentation
+        #     ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
+        # ds1 = ds1.prefetch(tf.data.AUTOTUNE)
         all_ds = [ds1]
         for bs in other_bs:
             ds2 = ds.batch(bs)
             if data_augmentation:  # Resize as well for proper evaluation if data augmented
                 ds2 = ds2.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
-            ds2 = ds2.prefetch(tf.data.AUTOTUNE)
+            ds2 = ds2.repeat()
+            # ds2 = ds2.prefetch(tf.data.AUTOTUNE)
             all_ds.append(ds2)
 
         if (subset is not None) and transform:
@@ -1260,17 +1268,20 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         else:
             return tf_iterators
     else:
+        ds = ds.batch(batch_size)
         if is_training:
             # ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
-            ds = ds.batch(batch_size)
+            # ds = ds.batch(batch_size)
             if data_augmentation:
                 ds = ds.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
                 ds = ds.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
+            # ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
         else:
-            ds = ds.batch(batch_size)
+            # ds = ds.batch(batch_size)
             if data_augmentation:
                 ds = ds.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
-        ds = ds.prefetch(tf.data.AUTOTUNE)
+        ds = ds.repeat()
+        # ds = ds.prefetch(tf.data.AUTOTUNE)
 
         if (subset is not None) and transform:
             tf_iterator = tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
@@ -1988,14 +1999,16 @@ def abs_mean_except_last_dim(tree_leaf):
 def clear_caches():
     """Just in case for future needs, clear whole cache associated to jax
     Taken from: https://github.com/google/jax/issues/10828"""
-    process = psutil.Process()
-    # if process.memory_info().vms > 4 * 2**30:  # >4GB memory usage
     for module_name, module in sys.modules.items():
         if module_name.startswith("jax"):
-            for obj_name in dir(module):
-                obj = getattr(module, obj_name)
-                if hasattr(obj, "cache_clear"):
-                    obj.cache_clear()
+            if module_name not in ["jax.interpreters.partial_eval"]:
+                for obj_name in dir(module):
+                    obj = getattr(module, obj_name)
+                    if hasattr(obj, "cache_clear"):
+                        try:
+                            obj.cache_clear()
+                        except:
+                            pass
     gc.collect()
 
 
