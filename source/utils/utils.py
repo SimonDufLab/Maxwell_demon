@@ -1192,8 +1192,10 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         noisy_ratio = max(noisy_label, permuted_img_ratio, gaussian_img_ratio)
         split1 = split + '[:' + str(int(noisy_ratio*100)) + '%]'
         split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
-        ds1, ds_info = tfds.load(dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True)
-        ds2 = tfds.load(dataset, split=split2, as_supervised=True, data_dir="./data")
+        split1 = tfds.split_for_jax_process(split1, drop_remainder=True)
+        split2 = tfds.split_for_jax_process(split2, drop_remainder=True)
+        ds1, ds_info = tfds.load(dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
+        ds2 = tfds.load(dataset, split=split2, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
         sample_from = np.arange(ds_info.features["label"].num_classes - 1)
         if subset is not None:
             ds1 = ds1.filter(filter_fn)  # Only take the randomly selected subset
@@ -1208,7 +1210,8 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             ds1 = ds1.map(map_gaussian_img(ds1))
         ds = ds1.concatenate(ds2)
     else:
-        ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data")
+        split = tfds.split_for_jax_process(split, drop_remainder=True)
+        ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
@@ -1988,14 +1991,16 @@ def abs_mean_except_last_dim(tree_leaf):
 def clear_caches():
     """Just in case for future needs, clear whole cache associated to jax
     Taken from: https://github.com/google/jax/issues/10828"""
-    process = psutil.Process()
-    # if process.memory_info().vms > 4 * 2**30:  # >4GB memory usage
     for module_name, module in sys.modules.items():
         if module_name.startswith("jax"):
-            for obj_name in dir(module):
-                obj = getattr(module, obj_name)
-                if hasattr(obj, "cache_clear"):
-                    obj.cache_clear()
+            if module_name not in ["jax.interpreters.partial_eval"]:
+                for obj_name in dir(module):
+                    obj = getattr(module, obj_name)
+                    if hasattr(obj, "cache_clear"):
+                        try:
+                            obj.cache_clear()
+                        except:
+                            pass
     gc.collect()
 
 
