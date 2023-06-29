@@ -72,6 +72,7 @@ class ExpConfig:
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     pruning_criterion: Optional[str] = None
     pruning_density: float = 0.0
+    modulate_target_density: bool = True  # Not in paper but in code, modify the threshold calculation
     pruning_args: Any = None
     init_seed: int = 41
     dropout_rate: float = 0
@@ -260,6 +261,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         reg_param_decay_period = exp_config.training_steps // decay_cycles
 
+    target_density_for_th = exp_config.pruning_density
+
     def get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
                                      final_accuracy_fn):
         def print_and_record_metrics(step, params, state, total_neurons, total_per_layer):
@@ -336,7 +339,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                     final_accuracy_fn)
 
         if not pruned_flag and (step % steps_per_epoch == 0):
-            pruned_flag, step_test_carry = pruning_step_test_fn(exp_config.pruning_density, params, initial_params, step_test_carry)
+            if step == steps_per_epoch and exp_config.modulate_target_density:  # First epoch
+                target_density_for_th = scr.modulate_target_density(exp_config.pruning_density, params, initial_params)
+            pruned_flag, step_test_carry = pruning_step_test_fn(target_density_for_th, params, initial_params, step_test_carry)
             if pruned_flag:  # Performs pruning
                 print(f"Performing pruning at step {step}")
                 neuron_scores = pruning_score_fn(params, state, test_loss_fn, train_eval, train_ds_size//eval_size)
