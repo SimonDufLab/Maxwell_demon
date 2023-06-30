@@ -132,6 +132,8 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
 
 pruning_criterion_choice = {
     "earlycrop": (scores.early_crop_score, scores.test_earlycrop_pruning_step),
+    "earlysnap": (scores.snap_score, scores.test_earlycrop_pruning_step),
+    "snap": (scores.snap_score, scores.prune_before_training),
 }
 
 

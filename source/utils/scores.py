@@ -145,7 +145,11 @@ def early_crop_score(params, state, test_loss, dataloader, scan_len, with_dropou
 ##############################
 # When to prune
 ##############################
-# @jax.jit
+def prune_before_training(target_density, curr_weights, init_weights, prev_dist):
+    """Always return true, so pruning is done at step 0, before beginning training"""
+    return True, 0.0
+
+
 def test_earlycrop_pruning_step(target_density, curr_weights, init_weights, prev_dist):
     """ Implement the EarlyCrop pruning time score: : https://arxiv.org/pdf/2206.10451.pdf
 
