@@ -341,7 +341,11 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         if not pruned_flag and (step % steps_per_epoch == 0):
             if step == steps_per_epoch and exp_config.modulate_target_density:  # First epoch
+                initial_params = copy.deepcopy(params)
+            if step == 2*steps_per_epoch and exp_config.modulate_target_density:  # Second epoch
+                print(f"old th: {target_density_for_th:.4f}")
                 target_density_for_th = scr.modulate_target_density(exp_config.pruning_density, params, initial_params)
+                print(f"new th: {target_density_for_th:.4f}")
             pruned_flag, step_test_carry = pruning_step_test_fn(target_density_for_th, params, initial_params, step_test_carry)
             if pruned_flag:  # Performs pruning
                 print(f"Performing pruning at step {step}")
