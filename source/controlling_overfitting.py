@@ -586,22 +586,6 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         for step in range(exp_config.training_steps + add_steps):
             # Record metrics and prune model if needed:
-            # if (step > 0) and (step % steps_per_epoch == 0):
-            #     # Clear data_loader cache
-            #     train_ds_size, train, train_eval, test_death = load_data(split="train", is_training=True,
-            #                                                              batch_size=exp_config.train_batch_size,
-            #                                                              other_bs=[eval_size, death_minibatch_size],
-            #                                                              subset=kept_indices,
-            #                                                              cardinality=True,
-            #                                                              noisy_label=exp_config.noisy_label,
-            #                                                              permuted_img_ratio=exp_config.permuted_img_ratio,
-            #                                                              gaussian_img_ratio=exp_config.gaussian_img_ratio,
-            #                                                              augment_dataset=exp_config.augment_dataset,
-            #                                                              normalize=exp_config.normalize_inputs)
-            #     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size,
-            #                                      subset=kept_indices,
-            #                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
-            #                                      normalize=exp_config.normalize_inputs)
             (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
              accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
              update_fn) = record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params,

@@ -4,6 +4,8 @@ import jax.numpy as jnp
 from jax.flatten_util import ravel_pytree
 from jax.tree_util import Partial
 
+import utils.utils as utl
+
 
 ##############################
 # Utilities
@@ -33,6 +35,35 @@ def score_to_neuron_mask(desired_sparsity, score_dict):
 ##############################
 # Structured pruning
 ##############################
+def iterative_single_shot_pruning(target_density, params, state, opt_state, acti_map, neuron_states,
+                                  pruning_score_fn, get_architecture, test_loss_fn, get_test_loss_fn,
+                                  dataset, num_batches=10, start=0.5, pruning_steps=5):
+    """Introduced by https://arxiv.org/pdf/2006.00896.pdf
+    Iteratively applies the pruning criterion until the target density is obtained. All pruning is done at the same
+    time step, so this it still single-shot pruning
+    """
+    if target_density <= start or pruning_steps == 1:
+        steps = [target_density]
+    else:
+        steps = [target_density - (target_density - start) * (0.5 ** i) for i in range(pruning_steps + 1)] + [
+            target_density]
+    pruned = [0] + steps
+    iterative_pruning_densities = [(steps[i] - pruned[i])/(1-pruned[i]+1e-8) for i in range(len(steps))]
+
+    for density in iterative_pruning_densities:
+        neuron_scores = pruning_score_fn(params, state, test_loss_fn, dataset, num_batches)
+        neuron_states.update(score_to_neuron_mask(density, neuron_scores))
+        params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params,
+                                                                              acti_map,
+                                                                              neuron_states,
+                                                                              opt_state,
+                                                                              state)
+
+        architecture = get_architecture(new_sizes)
+        net, raw_net = utl.build_models(*architecture)
+        test_loss_fn = get_test_loss_fn(net)
+
+    return neuron_states, params, opt_state, state, new_sizes
 
 
 ##############################
@@ -114,9 +145,13 @@ def early_crop_score(params, state, test_loss, dataloader, scan_len, with_dropou
 ##############################
 # When to prune
 ##############################
-# @jax.jit
+def prune_before_training(target_density, curr_weights, init_weights, prev_dist):
+    """Always return true, so pruning is done at step 0, before beginning training"""
+    return True, 0.0
+
+
 def test_earlycrop_pruning_step(target_density, curr_weights, init_weights, prev_dist):
-    """ Implment the earlycrop pruning time score: : https://arxiv.org/pdf/2206.10451.pdf
+    """ Implement the EarlyCrop pruning time score: : https://arxiv.org/pdf/2206.10451.pdf
 
         Tries to detect when training phase enter lazy kernel regime by measuring the relative weight change
         between two epochs.
@@ -133,3 +168,15 @@ def test_earlycrop_pruning_step(target_density, curr_weights, init_weights, prev
 
     return 0 < (jnp.abs(curr_dist-prev_dist)/(norm_factor + 1e-6)) < th, curr_dist
     # return (jnp.abs(curr_dist - prev_dist) / (norm_factor + 1e-6)) < th, curr_dist  # TODO: erase after debugging
+
+
+def modulate_target_density(target_density, weights_epoch_1, init_weights):
+    """ While EarlyCrop paper say they use 1-\rho for threshold calculation about when to prune, the implementation
+    is modulated by the weights displacement between epoch 1 and initialisation divided by initialisation norm.
+    See: https://github.com/johnrachwan123/Early-Cropression-via-Gradient-Flow-Preservation/blob/ab078b84f80e2905807926967945f6bdbe3294c1/Image%20Classification/models/trainers/DefaultTrainer.py#L256"""
+
+    displacement = jnp.linalg.norm(jax.flatten_util.ravel_pytree(jax.tree_map(jnp.subtract, weights_epoch_1,
+                                                                              init_weights))[0])
+    init_norm = jnp.linalg.norm(jax.flatten_util.ravel_pytree(init_weights)[0])
+    return 1 - ((displacement/init_norm) * jnp.minimum(1-target_density-0.1, 0.99))
+
