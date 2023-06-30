@@ -72,6 +72,7 @@ class ExpConfig:
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     pruning_criterion: Optional[str] = None
     pruning_density: float = 0.0
+    pruning_steps: int = 1  # Number of steps for single shot iterative pruning
     modulate_target_density: bool = True  # Not in paper but in code, modify the threshold calculation
     pruning_args: Any = None
     init_seed: int = 41
@@ -344,13 +345,24 @@ def run_exp(exp_config: ExpConfig) -> None:
             pruned_flag, step_test_carry = pruning_step_test_fn(target_density_for_th, params, initial_params, step_test_carry)
             if pruned_flag:  # Performs pruning
                 print(f"Performing pruning at step {step}")
-                neuron_scores = pruning_score_fn(params, state, test_loss_fn, train_eval, train_ds_size//eval_size)
-                neuron_states.update(scr.score_to_neuron_mask(exp_config.pruning_density, neuron_scores))
-                params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params,
-                                                                                      acti_map,
-                                                                                      neuron_states,
-                                                                                      opt_state,
-                                                                                      state)
+                _architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+                    exp_config.architecture]
+                _architecture = Partial(_architecture, num_classes=classes, activation_fn=activation_fn, **net_config)
+                _get_loss_test_fn = Partial(utl.ce_loss_given_model, regularizer=exp_config.regularizer,
+                                            reg_param=decaying_reg_param,
+                                            classes=classes,
+                                            is_training=False, with_dropout=with_dropout)
+                # neuron_scores = pruning_score_fn(params, state, test_loss_fn, train_eval, train_ds_size//eval_size)
+                # neuron_states.update(scr.score_to_neuron_mask(exp_config.pruning_density, neuron_scores))
+                # params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params,
+                #                                                                       acti_map,
+                #                                                                       neuron_states,
+                #                                                                       opt_state,
+                #                                                                       state)
+
+                neuron_states, params, opt_state, state, new_sizes = scr.iterative_single_shot_pruning(
+                    exp_config.pruning_density, params, state, opt_state, acti_map, neuron_states, pruning_score_fn,
+                    _architecture, test_loss_fn, _get_loss_test_fn, train_eval, pruning_steps=exp_config.pruning_steps)
 
                 # Build pruned net
                 architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[

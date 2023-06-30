@@ -35,7 +35,8 @@ def score_to_neuron_mask(desired_sparsity, score_dict):
 ##############################
 # Structured pruning
 ##############################
-def iterative_single_shot_pruning(target_density, params, state, opt_state, acti_map, neuron_states, pruning_score_fn, test_loss_fn,
+def iterative_single_shot_pruning(target_density, params, state, opt_state, acti_map, neuron_states,
+                                  pruning_score_fn, get_architecture, test_loss_fn, get_test_loss_fn,
                                   dataset, num_batches=10, start=0.5, pruning_steps=5):
     """Introduced by https://arxiv.org/pdf/2006.00896.pdf
     Iteratively applies the pruning criterion until the target density is obtained. All pruning is done at the same
@@ -58,15 +59,9 @@ def iterative_single_shot_pruning(target_density, params, state, opt_state, acti
                                                                               opt_state,
                                                                               state)
 
-        # Build pruned net
-        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
-            exp_config.architecture]
-        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
-        net, raw_net = build_models(*architecture)
-        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                               reg_param=decaying_reg_param,
-                                               classes=classes,
-                                               is_training=False, with_dropout=with_dropout)
+        architecture = get_architecture(new_sizes)
+        net, raw_net = utl.build_models(*architecture)
+        test_loss_fn = get_test_loss_fn(net)
 
     return neuron_states, params, opt_state, state, new_sizes
 
