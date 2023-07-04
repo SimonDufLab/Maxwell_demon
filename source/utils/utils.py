@@ -964,6 +964,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
                             _batch: Batch, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState]:
                     if modulate_via_gate_grad:
+                        grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
                     grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
