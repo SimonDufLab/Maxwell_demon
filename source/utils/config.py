@@ -68,6 +68,10 @@ lr_scheduler_choice = {
     'one_cycle': one_cycle_schedule
 }
 
+reg_param_scheduler_choice = {
+    'one_cycle': optax.cosine_onecycle_schedule
+}
+
 # Return the desired architecture along with a bool indicating if there is a
 # is_training flag for this specific model
 architecture_choice = {
