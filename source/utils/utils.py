@@ -789,7 +789,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
 
     if is_training and with_dropout:
         @jax.jit
-        def _loss(params: hk.Params, state: hk.State, batch: Batch, dropout_key: Any) -> Union[jnp.ndarray, Any]:
+        def _loss(params: hk.Params, state: hk.State, batch: Batch, dropout_key: Any, _reg_param: float = reg_param) -> Union[jnp.ndarray, Any]:
             next_dropout_key, rng = jax.random.split(dropout_key)
             (logits, activations), state = model.apply(params, state, rng, batch, return_activations=True, is_training=is_training)
             labels = jax.nn.one_hot(batch[1], classes)
@@ -807,7 +807,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             else:
                 gap = 0
 
-            loss = softmax_xent + reg_param * reg_fn(params, activations) + gap
+            loss = softmax_xent + _reg_param * reg_fn(params, activations) + gap
 
             return loss, (state, next_dropout_key)
 
@@ -819,7 +819,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             model_apply_fn = model.apply
 
         @jax.jit
-        def _loss(params: hk.Params, state: hk.State, batch: Batch) -> Union[jnp.ndarray, Any]:
+        def _loss(params: hk.Params, state: hk.State, batch: Batch, _reg_param: float = reg_param) -> Union[jnp.ndarray, Any]:
             (logits, activations), state = model_apply_fn(params, state, x=batch, return_activations=True, is_training=is_training)
             labels = jax.nn.one_hot(batch[1], classes)
 
@@ -837,7 +837,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             else:
                 gap = 0
 
-            loss = softmax_xent + reg_param * reg_fn(params, activations) + gap
+            loss = softmax_xent + _reg_param * reg_fn(params, activations) + gap
 
             if is_training:
                 return loss, state
@@ -879,7 +879,7 @@ def mse_loss_given_model(model, regularizer=None, reg_param=1e-4, is_training=Tr
             return 0
 
     @jax.jit
-    def _loss(params: hk.Params, state: hk.State, batch: Batch) -> Union[jnp.ndarray, Any]:
+    def _loss(params: hk.Params, state: hk.State, batch: Batch, _reg_param: float = reg_param) -> Union[jnp.ndarray, Any]:
         (outputs, activations), state = model.apply(params, state, x=batch, return_activations=True,
                                                     is_training=is_training)
         targets = batch[1]
@@ -887,7 +887,7 @@ def mse_loss_given_model(model, regularizer=None, reg_param=1e-4, is_training=Tr
         # calculate mse across the batch
         mse = jnp.mean(jnp.square(outputs-targets))
 
-        loss = mse + reg_param * reg_fn(params, activations)
+        loss = mse + _reg_param * reg_fn(params, activations)
 
         if is_training:
             return loss, state
@@ -932,12 +932,16 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
         assert not return_grad, 'return_grad option not coded yet with dropout'
 
         @jax.jit
-        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _drop_key) -> Tuple[
+        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _drop_key, reg_param: Optional[float]=None) -> Tuple[
             hk.Params, Any, OptState, jax.random.PRNGKeyArray]:
             if modulate_via_gate_grad:
                 sys.exit("Gradient modulation via gate grad not implemented for dropout yet")
             else:
-                grads, (new_state, next_drop_key) = jax.grad(loss, has_aux=True)(_params, _state, _batch, _drop_key)
+                if reg_param:
+                    grads, (new_state, next_drop_key) = jax.grad(loss, has_aux=True)(_params, _state, _batch, _drop_key,
+                                                                                     reg_param)
+                else:
+                    grads, (new_state, next_drop_key) = jax.grad(loss, has_aux=True)(_params, _state, _batch, _drop_key)
             if norm_grad:
                 grads = jax.tree_map(grad_normalisation_per_layer, grads)
             updates, _opt_state = optimizer.update(grads, _opt_state, _params)
@@ -949,11 +953,14 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
             if return_grad:
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
-                            _batch: Batch) -> Tuple[dict, hk.Params, Any, OptState]:
+                            _batch: Batch, reg_param: Optional[float] = None) -> Tuple[dict, hk.Params, Any, OptState]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
                     else:
-                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                        if reg_param:
+                            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, reg_param)
+                        else:
+                            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
@@ -963,11 +970,14 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
             else:
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
-                            _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
+                            _batch: Batch, reg_param: Optional[float] = None) -> Tuple[hk.Params, Any, OptState]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
                     else:
-                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                        if reg_param:
+                            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, reg_param)
+                        else:
+                            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     # try:
@@ -987,11 +997,14 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
             if noise_live_only:
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
-                            _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
+                            _key: Any, reg_param: Optional[float] = None) -> Tuple[hk.Params, Any, OptState, Any]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
                     else:
-                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                        if reg_param:
+                            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, reg_param)
+                        else:
+                            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     key, next_key = jax.random.split(_key)
                     flat_grads, unravel_fn = ravel_pytree(grads)
                     added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
@@ -1005,11 +1018,14 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
             else:
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
-                            _key: Any) -> Tuple[hk.Params, Any, OptState, Any]:
+                            _key: Any, reg_param: Optional[float] = None) -> Tuple[hk.Params, Any, OptState, Any]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
                     else:
-                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
+                        if reg_param:
+                            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, reg_param)
+                        else:
+                            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     key, next_key = jax.random.split(_key)
                     flat_updates, unravel_fn = ravel_pytree(updates)
