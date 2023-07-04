@@ -31,6 +31,7 @@ import utils.scores as scr
 from utils.utils import build_models
 from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality
 from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice, bn_config_choice
+from utils.config import reg_param_scheduler_choice
 from utils.config import pick_architecture
 
 
@@ -75,6 +76,7 @@ class ExpConfig:
     wd_param: Optional[float] = None
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
+    reg_param_schedule: Optional[str] = None  # Schedule for reg_param, priority over reg_param_decay_cycles flag
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
@@ -127,11 +129,15 @@ def run_exp(exp_config: ExpConfig) -> None:
         lr_scheduler_choice.keys())
     assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
         bn_config_choice.keys())
+    assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
+        regularizer_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
     if exp_config.wd_param == 'None':
         exp_config.wd_param = None
+    if exp_config.reg_param_schedule == 'None':
+        exp_config.reg_param_schedule = None
     if exp_config.prune_at_end == 'None':
         exp_config.prune_at_end = None
     assert (not (("adamw" in exp_config.optimizer) and bool(
@@ -264,6 +270,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             loss.clear_cache()
             test_loss_fn.clear_cache()
             update_fn.clear_cache()
+            decaying_reg_param = pruning_reg_param
             loss = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg, reg_param=pruning_reg_param,
                                            classes=classes, with_dropout=with_dropout)
             test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg,
@@ -275,7 +282,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                             acti_map=acti_map)
 
         if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
-                (not (step % (exp_config.training_steps - 1) == 0)):
+                (not (step % (exp_config.training_steps - 1) == 0)) and (not exp_config.reg_param_schedule):
             decaying_reg_param = decaying_reg_param / 10
             if (step >= ((decay_cycles - 1) * reg_param_decay_period)) and exp_config.zero_end_reg_param:
                 decaying_reg_param = 0
@@ -297,10 +304,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                             acti_map=acti_map)
 
         if step % exp_config.record_freq == 0:
-            train_loss = test_loss_fn(params, state, next(train_eval))
+            train_loss = test_loss_fn(params, state, next(train_eval), _reg_param=decaying_reg_param)
             train_accuracy = accuracy_fn(params, state, next(train_eval))
             test_accuracy = accuracy_fn(params, state, next(test_eval))
-            test_loss = test_loss_fn(params, state, next(test_eval))
+            test_loss = test_loss_fn(params, state, next(test_eval), _reg_param=decaying_reg_param)
             train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
             # Periodically print classification accuracy on train & test sets.
             if step % exp_config.report_freq == 0:
@@ -579,12 +586,18 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             reg_param_decay_period = exp_config.training_steps // decay_cycles
 
+        if exp_config.reg_param_schedule:
+            reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](exp_config.training_steps, reg_param)
+
         if exp_config.prune_at_end:
             pruning_reg_param, pruning_lr, add_steps = exp_config.prune_at_end
         else:
             add_steps = 0
 
         for step in range(exp_config.training_steps + add_steps):
+            # Upate decaying reg_param if needed:
+            if exp_config.reg_param_schedule and step < exp_config.training_steps:
+                decaying_reg_param = reg_sched(step)
             # Record metrics and prune model if needed:
             (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
              accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
@@ -594,15 +607,17 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                    final_accuracy_fn, update_fn)  # Ugly, but cache is cleared
             # Train step over single batch
             if with_dropout:
-                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train), dropout_key)
+                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train), dropout_key,
+                                                                  _reg_param=decaying_reg_param)
             else:
                 if not exp_config.add_noise:
-                    params, state, opt_state = update_fn(params, state, opt_state, next(train))
+                    params, state, opt_state = update_fn(params, state, opt_state, next(train),
+                                                         _reg_param=decaying_reg_param)
                 else:
                     noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
                     noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
                     params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train), noise_var,
-                                                                    noise_key)
+                                                                    noise_key, _reg_param=decaying_reg_param)
 
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
