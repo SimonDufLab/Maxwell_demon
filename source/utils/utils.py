@@ -565,6 +565,9 @@ class NeuronStates(OrderedDict):
 
         self.update(_neuron_state)
 
+    def invert_state(self):
+        return {key: jnp.logical_not(value) for key, value in self.items()}
+
 
 def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: OrderedDict, opt_state=None, state=None):
     """Given the current params and the neuron state mapping returns a
@@ -2080,3 +2083,12 @@ def get_checkpoint_step(architecture, step):
         return [100]  # fix
     else:
         raise ValueError('No rewinding steps encoded for other architectures rn')
+
+
+def avg_neuron_magnitude_in_layer(layer_params):
+    if 'b' in layer_params.keys():
+        def conca_and_norm(arr1, arr2):
+            return jnp.linalg.norm(jnp.concatenate([arr1, arr2], axis=None))
+        return jnp.mean(jax.vmap(conca_and_norm, in_axes=(1, 0))(layer_params["w"], layer_params['b']))
+    else:
+        return jnp.mean(jax.vmap(jnp.linalg.norm, in_axes=1)(layer_params["w"]))

@@ -175,8 +175,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     reinit_params, _ = net.init(jax.random.PRNGKey(exp_config.init_seed + 42), next(train))
     activation_layer_order = list(state.keys())
     neuron_states = utl.NeuronStates(activation_layer_order)
+    ordered_layer_list = list(params.keys())
     acti_map = utl.get_activation_mapping(raw_net, next(train))
-    print(acti_map)
     # reinit_fn = Partial(net.init, jax.random.PRNGKey(exp_config.init_seed + 42))  # Checkpoint initial init function
     opt_state = opt.init(params)
     initial_params = copy.deepcopy(params)  # We need to keep a copy of the initial params for later reset
@@ -239,6 +239,45 @@ def run_exp(exp_config: ExpConfig) -> None:
                 test_acc_whole_ds = jax.device_get(final_accuracy_fn(params, state, test_eval))
                 exp_run.track(test_acc_whole_ds, name="Test accuracy; whole eval dataset",
                               step=step)
+                # Record magnitude metrics for live and dead neurons
+                neuron_states.update_from_ordered_list(dead_neurons)
+                _acti_map = {key: {"preceding": None, 'following': acti_map[key]["following"]} for key in acti_map.keys()}
+                live_params = utl.prune_params_state_optstate(params, _acti_map,
+                                                                   neuron_states, opt_state,
+                                                                   state)[0]
+                dead_params = utl.prune_params_state_optstate(params, _acti_map,
+                                                                   neuron_states.invert_state(), opt_state,
+                                                                   state)[0]
+                full_params_norm = jnp.linalg.norm(ravel_pytree(params)[0])
+                live_params_norm = jnp.linalg.norm(ravel_pytree(live_params)[0])
+                dead_params_norm = jnp.linalg.norm(ravel_pytree(dead_params)[0])
+                exp_run.track(
+                    jax.device_get(full_params_norm),
+                    name="Weights magnitude",
+                    step=step, context={"Params subset": "All"})
+                exp_run.track(
+                    jax.device_get(live_params_norm),
+                    name="Weights magnitude",
+                    step=step, context={"Params subset": "Live"})
+                exp_run.track(
+                    jax.device_get(dead_params_norm),
+                    name="Weights magnitude",
+                    step=step, context={"Params subset": "Dead"})
+                for i, key in enumerate(ordered_layer_list[:-1]):
+                    exp_run.track(
+                        jax.device_get(utl.avg_neuron_magnitude_in_layer(params[key])),
+                        name=f"Average neuron magnitude in layer {i}",
+                        step=step, context={"Params subset": "All"})
+                    exp_run.track(
+                        jax.device_get(utl.avg_neuron_magnitude_in_layer(live_params[key])),
+                        name=f"Average neuron magnitude in layer {i}",
+                        step=step, context={"Params subset": "Live"})
+                    exp_run.track(
+                        jax.device_get(utl.avg_neuron_magnitude_in_layer(dead_params[key])),
+                        name=f"Average neuron magnitude in layer {i}",
+                        step=step, context={"Params subset": "Dead"})
+
+
         return print_and_record_metrics
 
     print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
@@ -277,6 +316,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     print(f"Running time for whole experiment: " + str(timedelta(seconds=time.time() - run_start_time)))
     print("----------------------------------------------")
     print()
+
 
 if __name__ == "__main__":
     run_exp()
