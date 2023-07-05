@@ -1174,14 +1174,20 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
                     other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
-                    gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False):  # -> Generator[Batch, None, None]:
+                    gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False,
+                    reduced_ds_size: Optional[int] = None):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
     def filter_fn(image, label):
         return tf.reduce_any(subset == int(label))
-
-    if noisy_label or permuted_img_ratio or gaussian_img_ratio:
+    if reduced_ds_size:
+        _split = split + '[:' + str(int(reduced_ds_size)) + ']'
+        ds = tfds.load(dataset, split=_split, as_supervised=True, data_dir="./data",
+                       read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        if subset is not None:
+            ds = ds.filter(filter_fn)  # Only take the randomly selected subset
+    elif noisy_label or permuted_img_ratio or gaussian_img_ratio:
         assert (noisy_label >= 0) and (noisy_label <= 1), "noisy label ratio must be between 0 and 1"
         assert (permuted_img_ratio >= 0) and (permuted_img_ratio <= 1), "permuted_img ratio must be between 0 and 1"
         assert (gaussian_img_ratio >= 0) and (gaussian_img_ratio <= 1), "gaussian_img ratio must be between 0 and 1"
@@ -1206,7 +1212,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             ds1 = ds1.map(map_gaussian_img(ds1))
         ds = ds1.concatenate(ds2)
     else:
-        split = tfds.split_for_jax_process(split, drop_remainder=True)
+        # split = tfds.split_for_jax_process(split, drop_remainder=True)
         ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
@@ -1293,11 +1299,13 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
 
 
 def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False, normalize: bool = False):
+                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False,
+                  normalize: bool = False, reduced_ds_size: Optional[int] = None):
     return load_tf_dataset("mnist", split=split, is_training=is_training, batch_size=batch_size,
                            other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
                            noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
-                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset, normalize=normalize)
+                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset,
+                           normalize=normalize, reduced_ds_size=reduced_ds_size)
 
 
 def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,

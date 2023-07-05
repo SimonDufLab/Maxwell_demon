@@ -62,7 +62,7 @@ class ExpConfig:
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
-    normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
+    normalize_inputs: bool = False  # Subtract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     architecture: str = "mlp_3"
     with_bias: bool = True  # Use bias or not in the Linear and Conv layers (option set for whole NN)
