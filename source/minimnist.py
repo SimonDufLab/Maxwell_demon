@@ -44,6 +44,7 @@ class ExpConfig:
     train_batch_size: int = 32
     full_batch_size: int = 1000
     optimizer: str = "adam"
+    noisy_part_of_signal_only: bool = False  # Take grad to be full-batch gradient minus minibatch gradient
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
     dataset_size: Optional[int] = None  # How many example to keep from training dataset (to quickly overfit)
@@ -161,7 +162,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                            classes=classes, is_training=False, with_dropout=with_dropout)
     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-    update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+    if not exp_config.noisy_part_of_signal_only:
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+    else:
+        update_fn = utl.update_from_noise(loss, opt, with_dropout=with_dropout)
     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
     scan_len = train_ds_size // death_minibatch_size
     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
@@ -277,7 +281,6 @@ def run_exp(exp_config: ExpConfig) -> None:
                         name=f"Average neuron magnitude in layer {i}",
                         step=step, context={"Params subset": "Dead"})
 
-
         return print_and_record_metrics
 
     print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
@@ -287,7 +290,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Metrics and logs:
         print_and_record_metrics(step, params, state, total_neurons, total_per_layer)
         # Train step over single batch
-        params, state, opt_state = update_fn(params, state, opt_state, next(train))
+        if not exp_config.noisy_part_of_signal_only:
+            params, state, opt_state = update_fn(params, state, opt_state, next(train))
+        else:
+            params, state, opt_state = update_fn(params, state, opt_state, next(train), next(train_eval))
 
     final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
     activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)

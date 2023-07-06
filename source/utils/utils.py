@@ -955,7 +955,8 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                             _batch: Batch, _reg_param: float = 0.0) -> Tuple[dict, hk.Params, Any, OptState]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
@@ -968,7 +969,8 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                             _batch: Batch, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     # try:
@@ -991,7 +993,8 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                             _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     key, next_key = jax.random.split(_key)
                     flat_grads, unravel_fn = ravel_pytree(grads)
                     added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
@@ -1008,7 +1011,8 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                             _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     key, next_key = jax.random.split(_key)
                     flat_updates, unravel_fn = ravel_pytree(updates)
@@ -1016,6 +1020,25 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     noisy_updates = unravel_fn(a*flat_updates + b*added_noise)
                     new_params = optax.apply_updates(_params, noisy_updates)
                     return new_params, new_state, _opt_state, next_key
+
+    return _update
+
+
+def update_from_noise(loss, optimizer, with_dropout=False):
+    """Modified version of update above that trains only on noisy part of signal (true grad - noisy grad)
+       Solely used for small experiments meant to support theoretical assumptions"""
+
+    if with_dropout:
+        sys.exit("Dropout not supported yet for noisy training")
+
+    @jax.jit
+    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                _noisy_batch: Batch, _full_batch: Batch, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState]:
+        noisy_grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _noisy_batch, _reg_param)
+        true_grads, _ = jax.grad(loss, has_aux=True)(_params, _state, _full_batch, _reg_param)
+        updates, _opt_state = optimizer.update(jax.tree_map(jnp.subtract, true_grads, noisy_grads), _opt_state, _params)
+        new_params = optax.apply_updates(_params, updates)
+        return new_params, new_state, _opt_state
 
     return _update
 
