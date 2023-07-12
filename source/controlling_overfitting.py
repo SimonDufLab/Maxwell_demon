@@ -129,8 +129,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         lr_scheduler_choice.keys())
     assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
         bn_config_choice.keys())
-    assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
-        regularizer_choice.keys())
+    # assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
+    #     reg_param_scheduler_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None

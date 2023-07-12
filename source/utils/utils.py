@@ -1,3 +1,4 @@
+import os
 import copy
 from typing import Any, Generator, Mapping, Optional, Tuple
 import dataclasses
@@ -39,6 +40,15 @@ from jaxpruner import base_updater
 import psutil
 import sys
 import gc
+
+from ffcv.writer import DatasetWriter
+from ffcv.fields import IntField, RGBImageField
+from ffcv.fields.decoders import IntDecoder, SimpleRGBImageDecoder
+from ffcv.loader import Loader, OrderOption
+from ffcv.pipeline.operation import Operation
+from ffcv.transforms import RandomHorizontalFlip, Cutout, \
+    RandomTranslate, Convert, ToDevice, ToTensor, ToTorchImage
+from ffcv.transforms.common import Squeeze
 
 OptState = Any
 Batch = Mapping[int, np.ndarray]
@@ -1196,6 +1206,16 @@ def custom_normalize_img(image, label, dataset):
     return image, label
 
 
+def load_imagenet_tf(dataset_dir:str, split: str, *, is_training: bool, batch_size: int,
+                    other_bs: Optional[Iterable] = None,
+                    subset: Optional[int] = None, transform: bool = True,
+                    cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
+                    gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False,
+                    reduced_ds_size: Optional[int] = None):
+    """Retrieve the locally downloaded tar-balls for imagenet, prepare and load ds"""
+    pass
+
+
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
                     other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
@@ -1357,6 +1377,80 @@ def load_fashion_mnist_tf(split: str, is_training, batch_size, other_bs=None, su
                            other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
                            noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
                            gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset, normalize=normalize)
+
+
+# FFCV loaders:
+def load_cifar10_ffcv(split: str, is_training, batch_size, other_bs=None, subset=None, noisy_label=0,
+                      permuted_img_ratio=0, gaussian_img_ratio=0,
+                      cardinality=False, augment_dataset=False, normalize: bool = False):
+    assert subset is None, "subset arg not supported"
+    assert noisy_label == 0, "noisy_label arg not supported"
+    assert permuted_img_ratio == 0, "permuted_img_ratio arg not supported"
+    assert gaussian_img_ratio == 0, "gaussian_img_ratio arg not supported"
+    _datasets = {
+        'train': datasets.CIFAR10("./data", train=True, download=True),
+        'test': datasets.CIFAR10("./data", train=False, download=True)
+    }
+
+    directory_path = "./data/ffcv/cifar10"
+    paths = {
+        'train': directory_path + "/train",
+        'test': directory_path + "/test"
+    }
+
+    if not os.path.exists(directory_path):
+        os.makedirs(directory_path)
+
+    if not bool(os.listdir(directory_path)):  # Run FFCV builder if empty (i.e. if not done previously)
+        for (name, ds) in _datasets.items():
+            path = paths["train"] if name == 'train' else paths['test']
+            writer = DatasetWriter(path, {
+                'image': RGBImageField(),
+                'label': IntField()
+            })
+            writer.from_indexed_dataset(ds)
+
+    cifar_mean = [125.307, 122.961, 113.8575]
+    cifar_std = [51.5865, 50.847, 51.255]
+
+    name = split
+    ds_size = 50000 if name == 'train' else 10000
+    label_pipeline: List[Operation] = [IntDecoder(), ToTensor(), ToDevice(torch.device('cuda:0')), Squeeze()]
+    image_pipeline: List[Operation] = [SimpleRGBImageDecoder()]
+    if name == 'train':
+        if augment_dataset:
+            image_pipeline.extend([
+                RandomHorizontalFlip(),
+                RandomTranslate(padding=2, fill=tuple(map(int, cifar_mean))),
+                Cutout(4, tuple(map(int, cifar_mean))),
+            ])
+    image_pipeline.extend([
+        ToTensor(),
+        ToDevice(torch.device('cuda:0'), non_blocking=True),
+        ToTorchImage(),
+        Convert(torch.float16),
+        transforms.Normalize(cifar_mean, cifar_std),
+    ])
+    if normalize:
+        image_pipeline.append(transforms.Normalize(cifar_mean, cifar_std))
+
+    ordering = OrderOption.RANDOM if name == 'train' else OrderOption.SEQUENTIAL
+
+    loader = iter(Loader(paths[name], batch_size=batch_size, num_workers=4,
+                           order=ordering, drop_last=(name == 'train'),
+                           pipelines={'image': image_pipeline, 'label': label_pipeline}))
+
+    loaders = [loader]
+    if other_bs:
+        for bs in other_bs:
+            loaders.append(iter(Loader(paths[name], batch_size=bs, num_workers=4,
+                           order=ordering, drop_last=(name == 'train'),
+                           pipelines={'image': image_pipeline, 'label': label_pipeline})))
+
+    if cardinality:
+        return (ds_size, ) + tuple(loaders)
+    else:
+        return tuple(loaders)
 
 
 # Pytorch dataloader # TODO: deprecated; should remove!!
