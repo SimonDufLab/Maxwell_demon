@@ -565,6 +565,9 @@ class NeuronStates(OrderedDict):
 
         self.update(_neuron_state)
 
+    def invert_state(self):
+        return {key: jnp.logical_not(value) for key, value in self.items()}
+
 
 def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: OrderedDict, opt_state=None, state=None):
     """Given the current params and the neuron state mapping returns a
@@ -952,7 +955,8 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                             _batch: Batch, _reg_param: float = 0.0) -> Tuple[dict, hk.Params, Any, OptState]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
@@ -965,7 +969,8 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                             _batch: Batch, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     if norm_grad:
                         grads = jax.tree_map(grad_normalisation_per_layer, grads)
                     # try:
@@ -988,7 +993,8 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                             _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     key, next_key = jax.random.split(_key)
                     flat_grads, unravel_fn = ravel_pytree(grads)
                     added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
@@ -1005,7 +1011,8 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                             _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
                     if modulate_via_gate_grad:
                         grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
-                    grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     key, next_key = jax.random.split(_key)
                     flat_updates, unravel_fn = ravel_pytree(updates)
@@ -1013,6 +1020,25 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     noisy_updates = unravel_fn(a*flat_updates + b*added_noise)
                     new_params = optax.apply_updates(_params, noisy_updates)
                     return new_params, new_state, _opt_state, next_key
+
+    return _update
+
+
+def update_from_noise(loss, optimizer, with_dropout=False):
+    """Modified version of update above that trains only on noisy part of signal (true grad - noisy grad)
+       Solely used for small experiments meant to support theoretical assumptions"""
+
+    if with_dropout:
+        sys.exit("Dropout not supported yet for noisy training")
+
+    @jax.jit
+    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                _noisy_batch: Batch, _full_batch: Batch, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState]:
+        noisy_grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _noisy_batch, _reg_param)
+        true_grads, _ = jax.grad(loss, has_aux=True)(_params, _state, _full_batch, _reg_param)
+        updates, _opt_state = optimizer.update(jax.tree_map(jnp.subtract, true_grads, noisy_grads), _opt_state, _params)
+        new_params = optax.apply_updates(_params, updates)
+        return new_params, new_state, _opt_state
 
     return _update
 
@@ -1174,14 +1200,20 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
                     other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
-                    gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False):  # -> Generator[Batch, None, None]:
+                    gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False,
+                    reduced_ds_size: Optional[int] = None):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
     def filter_fn(image, label):
         return tf.reduce_any(subset == int(label))
-
-    if noisy_label or permuted_img_ratio or gaussian_img_ratio:
+    if reduced_ds_size:
+        _split = split + '[:' + str(int(reduced_ds_size)) + ']'
+        ds = tfds.load(dataset, split=_split, as_supervised=True, data_dir="./data",
+                       read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        if subset is not None:
+            ds = ds.filter(filter_fn)  # Only take the randomly selected subset
+    elif noisy_label or permuted_img_ratio or gaussian_img_ratio:
         assert (noisy_label >= 0) and (noisy_label <= 1), "noisy label ratio must be between 0 and 1"
         assert (permuted_img_ratio >= 0) and (permuted_img_ratio <= 1), "permuted_img ratio must be between 0 and 1"
         assert (gaussian_img_ratio >= 0) and (gaussian_img_ratio <= 1), "gaussian_img ratio must be between 0 and 1"
@@ -1206,7 +1238,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             ds1 = ds1.map(map_gaussian_img(ds1))
         ds = ds1.concatenate(ds2)
     else:
-        split = tfds.split_for_jax_process(split, drop_remainder=True)
+        # split = tfds.split_for_jax_process(split, drop_remainder=True)
         ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
@@ -1293,11 +1325,13 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
 
 
 def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False, normalize: bool = False):
+                  noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False,
+                  normalize: bool = False, reduced_ds_size: Optional[int] = None):
     return load_tf_dataset("mnist", split=split, is_training=is_training, batch_size=batch_size,
                            other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
                            noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
-                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset, normalize=normalize)
+                           gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset,
+                           normalize=normalize, reduced_ds_size=reduced_ds_size)
 
 
 def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
@@ -2072,3 +2106,12 @@ def get_checkpoint_step(architecture, step):
         return [100]  # fix
     else:
         raise ValueError('No rewinding steps encoded for other architectures rn')
+
+
+def avg_neuron_magnitude_in_layer(layer_params):
+    if 'b' in layer_params.keys():
+        def conca_and_norm(arr1, arr2):
+            return jnp.linalg.norm(jnp.concatenate([arr1, arr2], axis=None))
+        return jnp.mean(jax.vmap(conca_and_norm, in_axes=(1, 0))(layer_params["w"], layer_params['b']))
+    else:
+        return jnp.mean(jax.vmap(jnp.linalg.norm, in_axes=1)(layer_params["w"]))

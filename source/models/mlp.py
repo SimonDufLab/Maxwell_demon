@@ -1,11 +1,74 @@
 """ Models definition for MLP lie architecture. Defined fitting requirements of repo"""
 import haiku as hk
+import jax
+import jax.numpy as jnp
 from jax.tree_util import Partial
 from jax.nn import relu, tanh
-from utils.utils import ReluActivationModule
+from utils.utils import ReluActivationModule, IdentityActivationModule
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from models.bn_base_unit import Linear_BN, Base_BN
 from models.dropout_units import Base_Dropout
+
+FloatStrOrBool = Union[str, float, bool]
+
+
+class LinearLayer(hk.Module):
+    def __init__(
+            self,
+            output_size: int,
+            activation_fn: Optional[hk.Module],
+            with_bias: bool,
+            with_bn: bool = False,
+            is_training: bool = True,
+            fc_config: Optional[Mapping[str, FloatStrOrBool]] = {},
+            bn_config: Optional[Mapping[str, FloatStrOrBool]] = {},
+            name: Optional[str] = None,
+            preceding_activation_name: Optional[str] = None):
+        super().__init__(name=name)
+        self.activation_mapping = {}
+        self.preceding_activation_name = preceding_activation_name
+        self.with_bn = with_bn
+        self.fc_layer = hk.Linear(output_size, with_bias=with_bias, **fc_config)
+        if with_bn:
+            self.bn_layer = Base_BN(is_training=is_training, bn_config=bn_config)
+        if activation_fn:
+            self.activation_layer = activation_fn()
+        else:
+            self.activation_layer = None
+
+    def __call__(self, x):
+        block_name = self.name + "/~/"
+        x = jax.vmap(jnp.ravel, in_axes=0)(x)  # flatten
+        x = self.fc_layer(x)
+        if self.with_bn:
+            x = self.bn_layer(x)
+        if self.activation_layer:
+            x = self.activation_layer(x)
+            activation_name = block_name + self.activation_layer.name
+            self.activation_mapping[activation_name] = {"preceding": None,
+                                                        "following": activation_name}
+        else:
+            activation_name = None
+
+        fc_name = block_name + self.fc_layer.name
+        self.activation_mapping[fc_name] = {"preceding": self.preceding_activation_name,
+                                            "following": activation_name}
+
+        if self.with_bn:
+            bn_name = block_name + self.bn_layer.name
+            self.activation_mapping[bn_name] = {"preceding": None,
+                                                "following": activation_name}
+
+        self.last_act_name = activation_name
+
+        return x
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return self.last_act_name
 
 
 def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, tanh_head=False):
@@ -18,12 +81,12 @@ def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    layer_1 = [hk.Flatten, Partial(hk.Linear, sizes[0], with_bias=with_bias), act]
-    layer_2 = [Partial(hk.Linear, sizes[1], with_bias=with_bias), act]
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, activation_fn=act)]  # hk.Flatten, in in LinearLayer
+    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, activation_fn=act)]
     if tanh_head:
-        layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias), _tanh]
+        layer_3 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=_tanh)]
     else:
-        layer_3 = [Partial(hk.Linear, number_classes, with_bias=with_bias)]
+        layer_3 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=None)]
 
     return [layer_1, layer_2, layer_3],
 
