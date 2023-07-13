@@ -1,3 +1,4 @@
+import os
 import copy
 from typing import Any, Generator, Mapping, Optional, Tuple
 import dataclasses
@@ -39,6 +40,15 @@ from jaxpruner import base_updater
 import psutil
 import sys
 import gc
+
+from ffcv.writer import DatasetWriter
+from ffcv.fields import IntField, RGBImageField
+from ffcv.fields.decoders import IntDecoder, SimpleRGBImageDecoder
+from ffcv.loader import Loader, OrderOption
+from ffcv.pipeline.operation import Operation
+from ffcv.transforms import RandomHorizontalFlip, Cutout, \
+    RandomTranslate, Convert, ToDevice, ToTensor, ToTorchImage
+from ffcv.transforms.common import Squeeze
 
 OptState = Any
 Batch = Mapping[int, np.ndarray]
@@ -1091,12 +1101,25 @@ augment_tf_dataset = tf.keras.Sequential([
     tf.keras.layers.RandomCrop(32, 32)
 ])
 
+augment_train_imagenet_dataset = tf.keras.Sequential([
+    # tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+    tf.keras.layers.RandomFlip("horizontal"),
+    tf.keras.layers.RandomCrop(224, 224)
+])
+
+process_test_imagenet_dataset = tf.keras.Sequential([
+    tf.keras.layers.CenterCrop(224, 224)
+])
+
 
 def resize_tf_dataset(images, labels, dataset):
     """Final data augmentation step for cifar10, consisting of a resizing to 64x64"""
     if dataset == 'cifar10':
         # Resize images to 64x64
         images = tf.image.resize(images, [64, 64])
+    if dataset == "imagenet":
+        # Resize images to 256x256
+        images = tf.image.resize(images, [256, 256])
     return images, labels
 
 
@@ -1186,6 +1209,9 @@ def custom_normalize_img(image, label, dataset):
     elif dataset == "cifar100":
         mean = [0.5070751592371323, 0.48654887331495095, 0.4409178433670343]
         std = [0.2673342858792401, 0.2564384629170883, 0.27615047132568404]
+    elif dataset == "imagenet":
+        mean = [0.485, 0.456, 0.406]
+        std = [0.229, 0.224, 0.225]
     else:
         raise SystemExit
     mean = tf.constant(mean, dtype=tf.float32)
@@ -1194,6 +1220,107 @@ def custom_normalize_img(image, label, dataset):
     image = tf.cast(image, dtype=tf.float32)
     image = (image - mean) / std
     return image, label
+
+
+def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_size: int,
+                    other_bs: Optional[Iterable] = None,
+                    subset: Optional[int] = None, transform: bool = True,
+                    cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
+                    gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False,
+                    reduced_ds_size: Optional[int] = None):
+    """Retrieve the locally downloaded tar-balls for imagenet, prepare and load ds"""
+    download_config = tfds.download.DownloadConfig(
+        extract_dir=os.path.join(dataset_dir, 'extracted'),
+        manual_dir=dataset_dir
+    )
+
+    builder = tfds.builder("imagenet2012").download_and_prepare(download_config=download_config)
+
+    def filter_fn(image, label):
+        return tf.reduce_any(subset == int(label))
+    if reduced_ds_size:
+        _split = split + '[:' + str(int(reduced_ds_size)) + ']'
+        ds = builder.as_dataset(split=_split, as_supervised=True,
+                       read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        if subset is not None:
+            ds = ds.filter(filter_fn)  # Only take the randomly selected subset
+    elif noisy_label or permuted_img_ratio or gaussian_img_ratio:
+        assert (noisy_label >= 0) and (noisy_label <= 1), "noisy label ratio must be between 0 and 1"
+        assert (permuted_img_ratio >= 0) and (permuted_img_ratio <= 1), "permuted_img ratio must be between 0 and 1"
+        assert (gaussian_img_ratio >= 0) and (gaussian_img_ratio <= 1), "gaussian_img ratio must be between 0 and 1"
+        noisy_ratio = max(noisy_label, permuted_img_ratio, gaussian_img_ratio)
+        split1 = split + '[:' + str(int(noisy_ratio*100)) + '%]'
+        split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
+        split1 = tfds.split_for_jax_process(split1, drop_remainder=True)
+        split2 = tfds.split_for_jax_process(split2, drop_remainder=True)
+        ds1, ds_info = builder.as_dataset(split=split1, as_supervised=True, with_info=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds2 = builder.as_dataset(split=split2, as_supervised=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        sample_from = np.arange(ds_info.features["label"].num_classes - 1)
+        if subset is not None:
+            ds1 = ds1.filter(filter_fn)  # Only take the randomly selected subset
+            ds2 = ds2.filter(filter_fn)  # Only take the randomly selected subset
+            sample_from = subset
+
+        if noisy_label:
+            ds1 = ds1.map(map_noisy_labels(sample_from=sample_from))
+        elif permuted_img_ratio:  # TODO: Do not make randomized ds mutually exclusive?
+            ds1 = ds1.map(map_permuted_img)
+        elif gaussian_img_ratio:
+            ds1 = ds1.map(map_gaussian_img(ds1))
+        ds = ds1.concatenate(ds2)
+    else:
+        ds = builder.as_dataset(split=split, as_supervised=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        if subset is not None:
+            ds = ds.filter(filter_fn)  # Only take the randomly selected subset
+    ds_size = int(ds.cardinality())
+    ds = ds.map(interval_zero_one)
+    ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet"), num_parallel_calls=tf.data.AUTOTUNE)
+    if normalize:
+        ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'))
+    # ds = ds.cache()
+    ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
+    if other_bs:
+        ds1 = ds.batch(batch_size)
+        if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
+            ds1 = ds1.map(lambda x, y: (augment_train_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+        else:
+            ds1 = ds1.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y),
+                          num_parallel_calls=tf.data.AUTOTUNE)
+        ds1 = ds1.repeat()
+        all_ds = [ds1]
+        for bs in other_bs:
+            ds2 = ds.batch(bs)
+            ds2 = ds2.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+            ds2 = ds2.repeat()
+            all_ds.append(ds2)
+
+        if (subset is not None) and transform:
+            tf_iterators = tuple([tf_compatibility_iterator(iter(tfds.as_numpy(_ds)), subset) for _ds in all_ds])
+        else:
+            tf_iterators = tuple([iter(tfds.as_numpy(_ds)) for _ds in all_ds])
+        if cardinality:
+            return (ds_size, ) + tf_iterators
+        else:
+            return tf_iterators
+    else:
+        ds = ds.batch(batch_size)
+        if is_training and data_augmentation:
+            ds = ds.map(lambda x, y: (augment_train_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+        else:
+            ds = ds.map(lambda x, y: (process_test_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.repeat()
+
+        if (subset is not None) and transform:
+            tf_iterator = tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
+            if cardinality:
+                return ds_size, tf_iterator
+            else:
+                return tf_iterator
+        else:
+            if cardinality:
+                return ds_size, iter(tfds.as_numpy(ds))
+            else:
+                return iter(tfds.as_numpy(ds))
 
 
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
@@ -1357,6 +1484,80 @@ def load_fashion_mnist_tf(split: str, is_training, batch_size, other_bs=None, su
                            other_bs=other_bs, subset=subset, transform=transform, cardinality=cardinality,
                            noisy_label=noisy_label, permuted_img_ratio=permuted_img_ratio,
                            gaussian_img_ratio=gaussian_img_ratio, data_augmentation=augment_dataset, normalize=normalize)
+
+
+# FFCV loaders:
+def load_cifar10_ffcv(split: str, is_training, batch_size, other_bs=None, subset=None, noisy_label=0,
+                      permuted_img_ratio=0, gaussian_img_ratio=0,
+                      cardinality=False, augment_dataset=False, normalize: bool = False):
+    assert subset is None, "subset arg not supported"
+    assert noisy_label == 0, "noisy_label arg not supported"
+    assert permuted_img_ratio == 0, "permuted_img_ratio arg not supported"
+    assert gaussian_img_ratio == 0, "gaussian_img_ratio arg not supported"
+    _datasets = {
+        'train': datasets.CIFAR10("./data", train=True, download=True),
+        'test': datasets.CIFAR10("./data", train=False, download=True)
+    }
+
+    directory_path = "./data/ffcv/cifar10"
+    paths = {
+        'train': directory_path + "/train",
+        'test': directory_path + "/test"
+    }
+
+    if not os.path.exists(directory_path):
+        os.makedirs(directory_path)
+
+    if not bool(os.listdir(directory_path)):  # Run FFCV builder if empty (i.e. if not done previously)
+        for (name, ds) in _datasets.items():
+            path = paths["train"] if name == 'train' else paths['test']
+            writer = DatasetWriter(path, {
+                'image': RGBImageField(),
+                'label': IntField()
+            })
+            writer.from_indexed_dataset(ds)
+
+    cifar_mean = [125.307, 122.961, 113.8575]
+    cifar_std = [51.5865, 50.847, 51.255]
+
+    name = split
+    ds_size = 50000 if name == 'train' else 10000
+    label_pipeline: List[Operation] = [IntDecoder(), ToTensor(), ToDevice(torch.device('cuda:0')), Squeeze()]
+    image_pipeline: List[Operation] = [SimpleRGBImageDecoder()]
+    if name == 'train':
+        if augment_dataset:
+            image_pipeline.extend([
+                RandomHorizontalFlip(),
+                RandomTranslate(padding=2, fill=tuple(map(int, cifar_mean))),
+                Cutout(4, tuple(map(int, cifar_mean))),
+            ])
+    image_pipeline.extend([
+        ToTensor(),
+        ToDevice(torch.device('cuda:0'), non_blocking=True),
+        ToTorchImage(),
+        Convert(torch.float16),
+        transforms.Normalize(cifar_mean, cifar_std),
+    ])
+    if normalize:
+        image_pipeline.append(transforms.Normalize(cifar_mean, cifar_std))
+
+    ordering = OrderOption.RANDOM if name == 'train' else OrderOption.SEQUENTIAL
+
+    loader = iter(Loader(paths[name], batch_size=batch_size, num_workers=4,
+                           order=ordering, drop_last=(name == 'train'),
+                           pipelines={'image': image_pipeline, 'label': label_pipeline}))
+
+    loaders = [loader]
+    if other_bs:
+        for bs in other_bs:
+            loaders.append(iter(Loader(paths[name], batch_size=bs, num_workers=4,
+                           order=ordering, drop_last=(name == 'train'),
+                           pipelines={'image': image_pipeline, 'label': label_pipeline})))
+
+    if cardinality:
+        return (ds_size, ) + tuple(loaders)
+    else:
+        return tuple(loaders)
 
 
 # Pytorch dataloader # TODO: deprecated; should remove!!

@@ -117,6 +117,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     run_start_time = time.time()
 
+    if "imagenet" in exp_config.dataset:
+        dataset_dir = exp_config.dataset
+        exp_config.dataset == "imagenet"
+
     assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(
         optimizer_choice.keys())
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
@@ -129,8 +133,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         lr_scheduler_choice.keys())
     assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
         bn_config_choice.keys())
-    assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
-        regularizer_choice.keys())
+    # assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
+    #     reg_param_scheduler_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -203,6 +207,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         kept_indices = None
     load_data = dataset_choice[exp_config.dataset]
+    if exp_config.dataset == 'imagenet':
+        load_data = Partial(load_data, dataset_dir)
     eval_size = exp_config.eval_batch_size
     death_minibatch_size = exp_config.death_batch_size
     train_ds_size, train, train_eval, test_death = load_data(split="train", is_training=True,
@@ -219,6 +225,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
     steps_per_epoch = train_ds_size // exp_config.train_batch_size
+    if exp_config.dataset == 'imagenet':
+        partial_train_ds_size = train_ds_size/20  # 5% of dataset used for evaluation on train
+    else:
+        partial_train_ds_size = train_ds_size
 
     # # Recording over all widths
     # live_neurons = []
@@ -443,11 +453,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                 #                                                  epsilon=exp_config.epsilon_close,
                 #                                                  avg=exp_config.avg_for_eps)
-                scan_len = train_ds_size // death_minibatch_size
+                scan_len = partial_train_ds_size // death_minibatch_size
                 # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                 scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                 final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-                full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+                full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, partial_train_ds_size // eval_size)
 
             train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
             exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
@@ -488,7 +498,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
             # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
             final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-            full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+            full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, partial_train_ds_size // eval_size)
 
         return (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
                 accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn)
@@ -542,11 +552,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
         # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
         #                                                  epsilon=exp_config.epsilon_close, avg=exp_config.avg_for_eps)
-        scan_len = train_ds_size // death_minibatch_size
+        scan_len = partial_train_ds_size // death_minibatch_size
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
         # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, partial_train_ds_size // eval_size)
 
         if exp_config.measure_linear_perf:
             lin_accuracy_fn = utl.accuracy_given_model(lin_net, with_dropout=with_dropout)
