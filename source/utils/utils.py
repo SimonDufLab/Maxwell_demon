@@ -12,10 +12,10 @@ import numpy as np
 import optax
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import torch
-from torch.utils.data import DataLoader
-from torch.utils.data import Dataset, Subset
-from torchvision import datasets, transforms
+# import torch
+# from torch.utils.data import DataLoader
+# from torch.utils.data import Dataset, Subset
+# from torchvision import datasets, transforms
 from typing import Union, Tuple, List, Callable, Sequence
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
@@ -1579,10 +1579,10 @@ def load_fashion_mnist_tf(split: str, is_training, batch_size, other_bs=None, su
 
 # Pytorch dataloader # TODO: deprecated; should remove!!
 # @jax.jit
-def transform_batch_pytorch(targets, indices):
-    # transformed_targets = jax.vmap(map_targets, in_axes=(0, None))(targets, indices)
-    transformed_targets = targets.apply_(lambda t: torch.nonzero(t == torch.tensor(indices))[0])
-    return transformed_targets
+# def transform_batch_pytorch(targets, indices):
+#     # transformed_targets = jax.vmap(map_targets, in_axes=(0, None))(targets, indices)
+#     transformed_targets = targets.apply_(lambda t: torch.nonzero(t == torch.tensor(indices))[0])
+#     return transformed_targets
 
 
 class compatibility_iterator:
@@ -1603,43 +1603,43 @@ class compatibility_iterator:
         return next_data, next_target
 
 
-def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optional[int] = None,
-                 transform: bool = True, num_workers: int = 2):
-    if subset is not None:
-        # assert subset < 10, "subset must be smaller than 10"
-        # indices = np.random.choice(10, subset, replace=False)
-        subset_idx = np.isin(dataset.targets, subset)
-        dataset.data, dataset.targets = dataset.data[subset_idx], dataset.targets[subset_idx]
-        if transform:
-            dataset.targets = transform_batch_pytorch(dataset.targets, subset)
-
-    data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=is_training, num_workers=num_workers)
-    return compatibility_iterator(data_loader)
-
-
-def load_mnist_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
-    dataset = datasets.MNIST('./data', train=is_training, download=True,
-                             transform=transforms.Compose([
-                                 transforms.ToTensor(),
-                                 ]))  # transforms.Normalize((0.1307,), (0.3081,)) -> want positive inputs
-    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
-                        transform=transform, num_workers=num_workers)
-
-
-def load_cifar10_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
-    dataset = datasets.CIFAR10('./data', train=is_training, download=True,
-                               transform=transforms.Compose([
-                                    transforms.ToTensor()]))
-    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
-                        transform=transform, num_workers=num_workers)
-
-
-def load_fashion_mnist_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
-    dataset = datasets.FashionMNIST('./data', train=is_training, download=True,
-                                    transform=transforms.Compose([
-                                        transforms.ToTensor()]))
-    return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
-                        transform=transform, num_workers=num_workers)
+# def load_dataset(dataset: Any, is_training: bool, batch_size: int, subset: Optional[int] = None,
+#                  transform: bool = True, num_workers: int = 2):
+#     if subset is not None:
+#         # assert subset < 10, "subset must be smaller than 10"
+#         # indices = np.random.choice(10, subset, replace=False)
+#         subset_idx = np.isin(dataset.targets, subset)
+#         dataset.data, dataset.targets = dataset.data[subset_idx], dataset.targets[subset_idx]
+#         if transform:
+#             dataset.targets = transform_batch_pytorch(dataset.targets, subset)
+#
+#     data_loader = DataLoader(dataset, batch_size=batch_size, shuffle=is_training, num_workers=num_workers)
+#     return compatibility_iterator(data_loader)
+#
+#
+# def load_mnist_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
+#     dataset = datasets.MNIST('./data', train=is_training, download=True,
+#                              transform=transforms.Compose([
+#                                  transforms.ToTensor(),
+#                                  ]))  # transforms.Normalize((0.1307,), (0.3081,)) -> want positive inputs
+#     return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
+#                         transform=transform, num_workers=num_workers)
+#
+#
+# def load_cifar10_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
+#     dataset = datasets.CIFAR10('./data', train=is_training, download=True,
+#                                transform=transforms.Compose([
+#                                     transforms.ToTensor()]))
+#     return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
+#                         transform=transform, num_workers=num_workers)
+#
+#
+# def load_fashion_mnist_torch(is_training, batch_size, subset=None, transform=True, num_workers=2):
+#     dataset = datasets.FashionMNIST('./data', train=is_training, download=True,
+#                                     transform=transforms.Compose([
+#                                         transforms.ToTensor()]))
+#     return load_dataset(dataset, is_training=is_training, batch_size=batch_size, subset=subset,
+#                         transform=transform, num_workers=num_workers)
 
 
 ##############################
