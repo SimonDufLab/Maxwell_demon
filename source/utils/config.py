@@ -7,7 +7,7 @@ from jax.tree_util import Partial
 import utils.utils as utl
 import utils.scores as scores
 from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch, load_cifar100_tf
-from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf, load_cifar10_ffcv, load_imagenet_tf
+from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf, load_imagenet_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule, one_cycle_schedule, fix_step_decay
 from models.mlp import mlp_3, mlp_3_bn, mlp_3_reg
 from models.mlp import mlp_3_act_pre_relu, mlp_3_act_pre_bn, mlp_3_act_post_bn
@@ -46,7 +46,7 @@ dataset_choice = {
     "fashion mnist": load_fashion_mnist_tf,
     "fashion mnist-torch": load_fashion_mnist_torch,
     "cifar10": load_cifar10_tf,
-    "cifar10-ffcv": load_cifar10_ffcv,
+    # "cifar10-ffcv": load_cifar10_ffcv,
     "cifar10-torch": load_cifar10_torch,
     "cifar100": load_cifar100_tf,
     'imagenet': load_imagenet_tf,

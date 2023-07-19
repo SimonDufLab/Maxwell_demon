@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=asymptotic_live_neurons
-#SBATCH --partition=main                           # Ask for unkillable job
+#SBATCH --partition=unkillable                           # Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1 # rm-ed 32gb for long                                     # Ask for 1 GPU #gpu:16gb:1 for resnet18 models
-#SBATCH --mem=16G    #24 for resnet18                                    # Ask for 10 GB of RAM # 24G with resnet models
-#SBATCH --time=16:00:00 #48h for resnet18                                   # The job will run for 2.5 hours
+#SBATCH --mem=24G    #24 for resnet18                                    # Ask for 10 GB of RAM # 24G with resnet models
+#SBATCH --time=8:00:00 #48h for resnet18                                   # The job will run for 2.5 hours
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -37,14 +37,20 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # Run experiments
 
+python source/asymptotic_live_neurons.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 with_bn=True lr_schedule=one_cycle normalize_inputs=True info=Resnet19_DD_width reg_param=0.00005 optimizer=adam augment_dataset=True gradient_clipping=True noisy_label=0.0 regularizer=None activation=relu wd_param=0.0001 lr=0.01 train_batch_size=256 'sizes="(2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64)"' init_seed=23
+wait $!
+
+#python source/asymptotic_live_neurons.py dataset='cifar10' architecture='resnet18' training_steps=150000 report_freq=10000 record_freq=500 pruning_freq=10000 live_freq=25000 with_bn=True lr_schedule=piecewise_constant normalize_inputs=True info=Resnet19_DD_width reg_param=0.0 optimizer=adam augment_dataset=True gradient_clipping=True noisy_label=0.0 regularizer=None activation=relu wd_param=0.0001 lr=0.01 train_batch_size=256 'sizes="(2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64)"' init_seed=24
+#wait $!
+
 #python source/asymptotic_live_neurons.py dataset="cifar10" regularizer=None training_steps=250001 architecture=conv_4_2 'sizes="((8, 32), (16, 32), (32, 32), (64, 32), (96, 48), (128, 64), (192, 96), (256, 128), (512, 256))"' report_freq=2500 record_freq=250 pruning_freq=500 live_freq=25000 info=rdm_img_perm_conv_4_2 lr_schedule=piecewise_constant train_batch_size=32 optimizer=sgd lr=0.05 init_seed=51
 #wait $!
 
 #python source/asymptotic_live_neurons.py dataset="mnist" regularizer=None training_steps=9375 optimizer=adam architecture=mlp_3 report_freq=125 record_freq=25 pruning_freq=50 live_freq=25000 info=zoom_5_epochs_low_noise_mlp_3 lr_schedule=piecewise_constant train_batch_size=512 lr=0.001 init_seed=42 permuted_img_ratio=0.0 death_batch_size=128
 #wait $!
 
-python source/asymptotic_live_neurons.py dataset="cifar10" regularizer=None training_steps=250001 architecture=conv_4_2 'sizes="((8, 32), (16, 32), (32, 32), (64, 32), (96, 48), (128, 64), (192, 96), (256, 128), (512, 256))"' report_freq=2500 record_freq=250 pruning_freq=1000 live_freq=25000 info=var_check_test_conv_momentum lr_schedule=piecewise_constant train_batch_size=32 var_check=True optimizer=momentum9 lr=0.001 init_seed=51 with_bn=False
-wait $!
+#python source/asymptotic_live_neurons.py dataset="cifar10" regularizer=None training_steps=250001 architecture=conv_4_2 'sizes="((8, 32), (16, 32), (32, 32), (64, 32), (96, 48), (128, 64), (192, 96), (256, 128), (512, 256))"' report_freq=2500 record_freq=250 pruning_freq=1000 live_freq=25000 info=var_check_test_conv_momentum lr_schedule=piecewise_constant train_batch_size=32 var_check=True optimizer=momentum9 lr=0.001 init_seed=51 with_bn=False
+#wait $!
 
 #python source/asymptotic_live_neurons.py dataset="mnist" regularizer=None training_steps=250001 architecture=mlp_3 report_freq=2500 record_freq=250 pruning_freq=1000 live_freq=25000 info=opt_comparison_mlp_3 lr_schedule=piecewise_constant train_batch_size=8 avg_for_eps=True 'epsilon_close="(0.001, 0.005, 0.01)"' optimizer=sgd lr=0.5 init_seed=51
 #wait $!

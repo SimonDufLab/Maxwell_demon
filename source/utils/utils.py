@@ -1187,8 +1187,14 @@ class tf_compatibility_iterator:
 
 
 def interval_zero_one(image, label):
-    padding = (32 - image.shape[0])//2  # TODO: dirty, ensure compatibility with other shapes than 28, 32, ...
-    image = tf.pad(image, [[padding, padding], [padding, padding], [0, 0]])
+    if image.shape[0] < 32:
+        padding = (32 - image.shape[0])//2  # TODO: dirty, ensure compatibility with other shapes than 28, 32, ...
+        image = tf.pad(image, [[padding, padding], [padding, padding], [0, 0]])
+    return image/255, label
+
+
+def imgnet_interval_zero_one(image, label):
+    """Same as above, but avoid error resulting from imagenet images having variable input size"""
     return image/255, label
 
 
@@ -1199,7 +1205,7 @@ def standardize_img(image, label):
 
 
 def custom_normalize_img(image, label, dataset):
-    assert dataset in ["mnist", 'cifar10', 'cifar100'], "need to implement normalization for others dataset"
+    assert dataset in ["mnist", 'cifar10', 'cifar100', 'imagenet'], "need to implement normalization for others dataset"
     if dataset == "cifar10":
         mean = [0.4914, 0.4822, 0.4465]  # Mean for each channel (R, G, B)
         std = [0.2023, 0.1994, 0.2010]  # Standard deviation for each channel (R, G, B)
@@ -1226,21 +1232,26 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
                     other_bs: Optional[Iterable] = None,
                     subset: Optional[int] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
-                    gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False,
+                    gaussian_img_ratio: float = 0, augment_dataset: bool = False, normalize: bool = False,
                     reduced_ds_size: Optional[int] = None):
     """Retrieve the locally downloaded tar-balls for imagenet, prepare and load ds"""
-    download_config = tfds.download.DownloadConfig(
-        extract_dir=os.path.join(dataset_dir, 'extracted'),
-        manual_dir=dataset_dir
-    )
+   #  download_config = tfds.download.DownloadConfig(
+   #      extract_dir=os.path.join(dataset_dir, 'extracted'),
+   #      manual_dir=dataset_dir
+   #  )
 
-    builder = tfds.builder("imagenet2012").download_and_prepare(download_config=download_config)
+    data_augmentation = augment_dataset
+    if split=="test":
+        split="validation"
+    builder = tfds.builder("imagenet2012")
+    builder.download_and_prepare(download_dir=dataset_dir)
 
     def filter_fn(image, label):
         return tf.reduce_any(subset == int(label))
     if reduced_ds_size:
         _split = split + '[:' + str(int(reduced_ds_size)) + ']'
-        ds = builder.as_dataset(split=_split, as_supervised=True,
+        _split = tfds.split_for_jax_process(_split, drop_remainder=True)
+        ds = builder.as_dataset(split=_split, as_supervised=True, shuffle_files=True,
                        read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
@@ -1253,8 +1264,8 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
         split1 = tfds.split_for_jax_process(split1, drop_remainder=True)
         split2 = tfds.split_for_jax_process(split2, drop_remainder=True)
-        ds1, ds_info = builder.as_dataset(split=split1, as_supervised=True, with_info=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
-        ds2 = builder.as_dataset(split=split2, as_supervised=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds1, ds_info = builder.as_dataset(split=split1, as_supervised=True, with_info=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds2 = builder.as_dataset(split=split2, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         sample_from = np.arange(ds_info.features["label"].num_classes - 1)
         if subset is not None:
             ds1 = ds1.filter(filter_fn)  # Only take the randomly selected subset
@@ -1269,29 +1280,34 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
             ds1 = ds1.map(map_gaussian_img(ds1))
         ds = ds1.concatenate(ds2)
     else:
-        ds = builder.as_dataset(split=split, as_supervised=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        split = tfds.split_for_jax_process(split, drop_remainder=True)
+        ds = builder.as_dataset(split=split, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
-    ds = ds.map(interval_zero_one)
+    ds = ds.map(imgnet_interval_zero_one)
     ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet"), num_parallel_calls=tf.data.AUTOTUNE)
     if normalize:
         ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'))
     # ds = ds.cache()
-    ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
+    # ds = ds.shuffle(50000, seed=0, reshuffle_each_iteration=True)
     if other_bs:
-        ds1 = ds.batch(batch_size)
+        ds1 = ds
         if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
             ds1 = ds1.map(lambda x, y: (augment_train_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.shuffle(25000, seed=0, reshuffle_each_iteration=True) #TODO shuffle again after memory leak test
         else:
             ds1 = ds1.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y),
                           num_parallel_calls=tf.data.AUTOTUNE)
         ds1 = ds1.repeat()
+        ds1 = ds1.batch(batch_size)
         all_ds = [ds1]
         for bs in other_bs:
-            ds2 = ds.batch(bs)
+            ds2 = ds
             ds2 = ds2.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+            # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
             ds2 = ds2.repeat()
+            ds2 = ds2.batch(bs)
             all_ds.append(ds2)
 
         if (subset is not None) and transform:
@@ -1303,12 +1319,13 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         else:
             return tf_iterators
     else:
-        ds = ds.batch(batch_size)
         if is_training and data_augmentation:
             ds = ds.map(lambda x, y: (augment_train_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.shuffle(25000, seed=0, reshuffle_each_iteration=True) #TODO: shuffle again after memory leak test
         else:
             ds = ds.map(lambda x, y: (process_test_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.repeat()
+        ds = ds.batch(batch_size)
 
         if (subset is not None) and transform:
             tf_iterator = tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
