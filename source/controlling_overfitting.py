@@ -232,8 +232,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      normalize=exp_config.normalize_inputs)
     steps_per_epoch = train_ds_size // exp_config.train_batch_size
     if exp_config.dataset == 'imagenet':
-        partial_train_ds_size = train_ds_size/20  # 5% of dataset used for evaluation on train
-        test_death = train_eval # Don't want to prefetch too many ds
+        partial_train_ds_size = train_ds_size/1000  # .1% of dataset used for evaluation on train
+        test_death = train_eval  # Don't want to prefetch too many ds
     else:
         partial_train_ds_size = train_ds_size
 
@@ -262,8 +262,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     size = exp_config.size
 
-    def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
-                                     final_accuracy_fn, update_fn):
+    def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params, state, opt_state, opt,
+                                 total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
+                                 scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn):
         """ Inside a function to make sure variables in function scope are cleared from memory"""
         if step == exp_config.training_steps and bool(add_steps):
             print("Entered pruning phase")
@@ -466,10 +467,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                 final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
                 full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
-            train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
-            exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
-                          step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
+            if exp_config.dataset != "imagenet":
+                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
+                exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
+                              step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
 
         # if ((step+1) % exp_config.live_freq == 0) and (step+2 < exp_config.training_steps):
         #     current_dead_neurons = scan_death_check_fn(params, state, test_death)
