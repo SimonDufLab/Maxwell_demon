@@ -1299,15 +1299,15 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         else:
             ds1 = ds1.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y),
                           num_parallel_calls=tf.data.AUTOTUNE)
-        ds1 = ds1.repeat()
         ds1 = ds1.batch(batch_size)
+        ds1 = ds1.repeat()
         all_ds = [ds1]
         for bs in other_bs:
             ds2 = ds
             ds2 = ds2.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
             # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
-            ds2 = ds2.repeat()
             ds2 = ds2.batch(bs)
+            ds2 = ds2.repeat()
             all_ds.append(ds2)
 
         if (subset is not None) and transform:
@@ -1324,8 +1324,8 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
             ds = ds.shuffle(25000, seed=0, reshuffle_each_iteration=True) #TODO: shuffle again after memory leak test
         else:
             ds = ds.map(lambda x, y: (process_test_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
-        ds = ds.repeat()
         ds = ds.batch(batch_size)
+        ds = ds.repeat()
 
         if (subset is not None) and transform:
             tf_iterator = tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
