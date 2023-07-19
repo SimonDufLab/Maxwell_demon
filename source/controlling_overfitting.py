@@ -284,9 +284,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             state = init_state  # Reset state as well
             # Reset losses etc.
             # utl.clear_caches()
-            loss.clear_cache()
-            test_loss_fn.clear_cache()
-            update_fn.clear_cache()
+            # loss.clear_cache()
+            # test_loss_fn.clear_cache()
+            # update_fn.clear_cache()
             decaying_reg_param = pruning_reg_param
             loss = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg, reg_param=pruning_reg_param,
                                            classes=classes, with_dropout=with_dropout)
@@ -307,9 +307,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             print(decaying_reg_param)
             print()
             # utl.clear_caches()
-            loss.clear_cache()
-            test_loss_fn.clear_cache()
-            update_fn.clear_cache()
+            # loss.clear_cache()
+            # test_loss_fn.clear_cache()
+            # update_fn.clear_cache()
             loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
                                            classes=classes, with_dropout=with_dropout)
             test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
@@ -434,11 +434,11 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 # Clear previous cache
                 # utl.clear_caches()
-                loss.clear_cache()
-                test_loss_fn.clear_cache()
-                accuracy_fn.clear_cache()
-                update_fn.clear_cache()
-                death_check_fn.clear_cache()
+                # loss.clear_cache()
+                # test_loss_fn.clear_cache()
+                # accuracy_fn.clear_cache()
+                # update_fn.clear_cache()
+                # death_check_fn.clear_cache()
                 # scan_death_check_fn.clear_cache()
                 # eps_death_check_fn.clear_cache()  # No more cache
                 # eps_scan_death_check_fn.clear_cache()  # No more cache
@@ -768,11 +768,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         # f_acc.append(final_accuracy)
 
         # Making sure compiled fn cache was cleared
-        loss.clear_cache()
-        test_loss_fn.clear_cache()
-        accuracy_fn.clear_cache()
-        update_fn.clear_cache()
-        death_check_fn.clear_cache()
+        # loss.clear_cache()
+        # test_loss_fn.clear_cache()
+        # accuracy_fn.clear_cache()
+        # update_fn.clear_cache()
+        # death_check_fn.clear_cache()
         # eps_death_check_fn.clear_cache()
         # scan_death_check_fn._clear_cache()  # No more cache
         # scan_death_check_fn_with_activations._clear_cache()  # No more cache
