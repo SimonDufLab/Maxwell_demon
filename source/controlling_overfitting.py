@@ -46,6 +46,7 @@ class ExpConfig:
     report_freq: int = 2500
     record_freq: int = 250
     pruning_freq: int = 1000
+    checkpoint_freq: int = 10000
     # live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     record_gate_grad_stat: bool = False  # Record in logger info about gradient magnitude per layer throughout training
     mod_via_gate_grad: bool = False  # Use gate gradients to rescale weight gradients if True -> shitty, don't use
@@ -109,13 +110,17 @@ cs = ConfigStore.instance()
 cs.store(name=exp_name+"_config", node=ExpConfig)
 
 # Using tf on CPU for data loading
-# tf.config.experimental.set_visible_devices([], "GPU")
+tf.config.experimental.set_visible_devices([], "GPU")
 
 
 @hydra.main(version_base=None, config_name=exp_name+"_config")
 def run_exp(exp_config: ExpConfig) -> None:
 
     run_start_time = time.time()
+
+    if "imagenet" in exp_config.dataset:
+        dataset_dir = exp_config.dataset
+        exp_config.dataset = "imagenet"
 
     assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(
         optimizer_choice.keys())
@@ -129,8 +134,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         lr_scheduler_choice.keys())
     assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
         bn_config_choice.keys())
-    assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
-        regularizer_choice.keys())
+    # assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
+    #     reg_param_scheduler_choice.keys())
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -157,18 +162,24 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
+    elif exp_config.dataset == "imagenet":
+        exp_name_ = "imgnet_"+exp_name
     else:
         exp_name_ = exp_name
 
     activation_fn = activation_choice[exp_config.activation]
-
+    
+    # Path for logs
+    log_path = "./Neurips2023_main_3"
+    if exp_config.dataset == "imagenet":
+        log_path = "./imagenet_exps"
     # Logger config
-    exp_run = Run(repo="./Neurips2023_main_3", experiment=exp_name_)
+    exp_run = Run(repo=log_path, experiment=exp_name_)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
     if exp_config.save_wanda:
         # Create pickle directory
-        pickle_dir_path = "./Neurips2023_main_3/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+        pickle_dir_path = log_path + "/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
         os.makedirs(pickle_dir_path)
         # Dump config file in it as well
         with open(pickle_dir_path+'config.json', 'w') as fp:
@@ -203,6 +214,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         kept_indices = None
     load_data = dataset_choice[exp_config.dataset]
+    if exp_config.dataset == 'imagenet':
+        load_data = Partial(load_data, dataset_dir)
     eval_size = exp_config.eval_batch_size
     death_minibatch_size = exp_config.death_batch_size
     train_ds_size, train, train_eval, test_death = load_data(split="train", is_training=True,
@@ -219,6 +232,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
     steps_per_epoch = train_ds_size // exp_config.train_batch_size
+    if exp_config.dataset == 'imagenet':
+        partial_train_ds_size = train_ds_size/1000  # .1% of dataset used for evaluation on train
+        test_death = train_eval  # Don't want to prefetch too many ds
+    else:
+        partial_train_ds_size = train_ds_size
 
     # # Recording over all widths
     # live_neurons = []
@@ -245,8 +263,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     size = exp_config.size
 
-    def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
-                                     final_accuracy_fn, update_fn):
+    def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params, state, opt_state, opt,
+                                 total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
+                                 scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn):
         """ Inside a function to make sure variables in function scope are cleared from memory"""
         if step == exp_config.training_steps and bool(add_steps):
             print("Entered pruning phase")
@@ -267,9 +286,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             state = init_state  # Reset state as well
             # Reset losses etc.
             # utl.clear_caches()
-            loss.clear_cache()
-            test_loss_fn.clear_cache()
-            update_fn.clear_cache()
+            # loss.clear_cache()
+            # test_loss_fn.clear_cache()
+            # update_fn.clear_cache()
             decaying_reg_param = pruning_reg_param
             loss = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg, reg_param=pruning_reg_param,
                                            classes=classes, with_dropout=with_dropout)
@@ -290,9 +309,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             print(decaying_reg_param)
             print()
             # utl.clear_caches()
-            loss.clear_cache()
-            test_loss_fn.clear_cache()
-            update_fn.clear_cache()
+            # loss.clear_cache()
+            # test_loss_fn.clear_cache()
+            # update_fn.clear_cache()
             loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
                                            classes=classes, with_dropout=with_dropout)
             test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
@@ -417,11 +436,11 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 # Clear previous cache
                 # utl.clear_caches()
-                loss.clear_cache()
-                test_loss_fn.clear_cache()
-                accuracy_fn.clear_cache()
-                update_fn.clear_cache()
-                death_check_fn.clear_cache()
+                # loss.clear_cache()
+                # test_loss_fn.clear_cache()
+                # accuracy_fn.clear_cache()
+                # update_fn.clear_cache()
+                # death_check_fn.clear_cache()
                 # scan_death_check_fn.clear_cache()
                 # eps_death_check_fn.clear_cache()  # No more cache
                 # eps_scan_death_check_fn.clear_cache()  # No more cache
@@ -443,16 +462,17 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                 #                                                  epsilon=exp_config.epsilon_close,
                 #                                                  avg=exp_config.avg_for_eps)
-                scan_len = train_ds_size // death_minibatch_size
+                scan_len = int(partial_train_ds_size // death_minibatch_size)
                 # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                 scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-                final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-                full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+                final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+                full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
-            train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
-            exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
-                          step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
+            if exp_config.dataset != "imagenet":
+                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
+                exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
+                              step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
 
         # if ((step+1) % exp_config.live_freq == 0) and (step+2 < exp_config.training_steps):
         #     current_dead_neurons = scan_death_check_fn(params, state, test_death)
@@ -487,8 +507,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             #                                                  avg=exp_config.avg_for_eps)
             scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
             # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
-            final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-            full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+            final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+            full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
         return (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
                 accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn)
@@ -542,16 +562,16 @@ def run_exp(exp_config: ExpConfig) -> None:
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
         # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
         #                                                  epsilon=exp_config.epsilon_close, avg=exp_config.avg_for_eps)
-        scan_len = train_ds_size // death_minibatch_size
+        scan_len = int(partial_train_ds_size // death_minibatch_size)
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
         # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
-        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
         if exp_config.measure_linear_perf:
             lin_accuracy_fn = utl.accuracy_given_model(lin_net, with_dropout=with_dropout)
             lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
-
+        
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         # initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
         init_state = copy.deepcopy(state)
@@ -595,9 +615,13 @@ def run_exp(exp_config: ExpConfig) -> None:
             add_steps = 0
 
         for step in range(exp_config.training_steps + add_steps):
-            # Upate decaying reg_param if needed:
+            # Update decaying reg_param if needed:
             if exp_config.reg_param_schedule and step < exp_config.training_steps:
                 decaying_reg_param = reg_sched(step)
+            # Checkpoint
+            if (step > 0) and (step % exp_config.checkpoint_freq == 0):
+                print(f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time()-subrun_start_time)}")
+                # TODO: Add checkpointing for efficient and automatic run restart
             # Record metrics and prune model if needed:
             (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
              accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
@@ -751,11 +775,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         # f_acc.append(final_accuracy)
 
         # Making sure compiled fn cache was cleared
-        loss.clear_cache()
-        test_loss_fn.clear_cache()
-        accuracy_fn.clear_cache()
-        update_fn.clear_cache()
-        death_check_fn.clear_cache()
+        # loss.clear_cache()
+        # test_loss_fn.clear_cache()
+        # accuracy_fn.clear_cache()
+        # update_fn.clear_cache()
+        # death_check_fn.clear_cache()
         # eps_death_check_fn.clear_cache()
         # scan_death_check_fn._clear_cache()  # No more cache
         # scan_death_check_fn_with_activations._clear_cache()  # No more cache
