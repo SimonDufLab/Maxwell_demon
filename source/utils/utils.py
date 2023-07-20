@@ -1295,7 +1295,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         ds1 = ds
         if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
             ds1 = ds1.map(lambda x, y: (augment_train_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
-            ds1 = ds1.shuffle(25000, seed=0, reshuffle_each_iteration=True) #TODO shuffle again after memory leak test
+            ds1 = ds1.shuffle(25000, seed=0, reshuffle_each_iteration=True)
         else:
             ds1 = ds1.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y),
                           num_parallel_calls=tf.data.AUTOTUNE)
@@ -1321,7 +1321,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
     else:
         if is_training and data_augmentation:
             ds = ds.map(lambda x, y: (augment_train_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
-            ds = ds.shuffle(25000, seed=0, reshuffle_each_iteration=True) #TODO: shuffle again after memory leak test
+            ds = ds.shuffle(25000, seed=0, reshuffle_each_iteration=True)
         else:
             ds = ds.map(lambda x, y: (process_test_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(batch_size)
