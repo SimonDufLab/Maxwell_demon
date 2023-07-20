@@ -46,6 +46,7 @@ class ExpConfig:
     report_freq: int = 2500
     record_freq: int = 250
     pruning_freq: int = 1000
+    checkpoint_freq: int = 10000
     # live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     record_gate_grad_stat: bool = False  # Record in logger info about gradient magnitude per layer throughout training
     mod_via_gate_grad: bool = False  # Use gate gradients to rescale weight gradients if True -> shitty, don't use
@@ -614,9 +615,13 @@ def run_exp(exp_config: ExpConfig) -> None:
             add_steps = 0
 
         for step in range(exp_config.training_steps + add_steps):
-            # Upate decaying reg_param if needed:
+            # Update decaying reg_param if needed:
             if exp_config.reg_param_schedule and step < exp_config.training_steps:
                 decaying_reg_param = reg_sched(step)
+            # Checkpoint
+            if (step > 0) and (step % exp_config.checkpoint_freq == 0):
+                print(f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time()-subrun_start_time)}")
+                # TODO: Add checkpointing for efficient and automatic run restart
             # Record metrics and prune model if needed:
             (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
              accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
