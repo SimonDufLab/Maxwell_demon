@@ -1183,7 +1183,7 @@ def map_gaussian_img(ds):
 
 
 def map_targets(target, indices):
-  return jnp.asarray(target == indices).nonzero(size=1)
+    return jnp.asarray(target == indices).nonzero(size=1)
 
 
 @jax.jit
@@ -1266,7 +1266,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
     # Create AutotuneOptions
     options = tf.data.Options()
     options.autotune.enabled = True
-    options.autotune.ram_budget = 24 * 1024**3  # TODO: RAM budget should be determine auto. current rule: 1/2 of total RAM
+    options.autotune.ram_budget = 36 * 1024**3  # TODO: RAM budget should be determine auto. current rule: 1/2 of total RAM
     options.autotune.cpu_budget = 8  # TODO: Also determine auto. current rule: all avail cpus
 
 
@@ -1312,30 +1312,29 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
-    ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
-    ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet"), num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=8)  # num_parallel_calls=tf.data.AUTOTUNE)
+    ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet"), num_parallel_calls=8)  # num_parallel_calls=tf.data.AUTOTUNE)
     if normalize:
-        ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
+        ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=8)  # num_parallel_calls=tf.data.AUTOTUNE)
     # ds = ds.cache()
     # ds = ds.shuffle(50000, seed=0, reshuffle_each_iteration=True)
     if other_bs:
         ds1 = ds
         if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
-            ds1 = ds1.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.map(augment_train_imagenet_dataset, num_parallel_calls=8)  # num_parallel_calls=tf.data.AUTOTUNE)
             ds1 = ds1.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
-            ds1 = ds1.map(process_test_imagenet_dataset,
-                          num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.map(process_test_imagenet_dataset, num_parallel_calls=8)  # num_parallel_calls=tf.data.AUTOTUNE)
         ds1 = ds1.batch(batch_size)
-        ds1 = ds1.prefetch(tf.data.AUTOTUNE)
+        ds1 = ds1.prefetch(12)  # tf.data.AUTOTUNE)
         ds1 = ds1.repeat()
         all_ds = [ds1]
         for bs in other_bs:
             ds2 = ds
-            ds2 = ds2.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            ds2 = ds2.map(process_test_imagenet_dataset, num_parallel_calls=8)  # num_parallel_calls=tf.data.AUTOTUNE)
             # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
             ds2 = ds2.batch(bs)
-            ds2 = ds2.prefetch(tf.data.AUTOTUNE)
+            ds2 = ds2.prefetch(12)  # tf.data.AUTOTUNE)
             ds2 = ds2.repeat()
             all_ds.append(ds2)
 
@@ -1349,12 +1348,12 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
             return tf_iterators
     else:
         if is_training and data_augmentation:
-            ds = ds.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.map(augment_train_imagenet_dataset, num_parallel_calls=8)  # num_parallel_calls=tf.data.AUTOTUNE)
             ds = ds.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
-            ds = ds.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.map(process_test_imagenet_dataset, num_parallel_calls=8)  # num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(batch_size)
-        ds = ds.prefetch(tf.data.AUTOTUNE)
+        ds = ds.prefetch(12)  # tf.data.AUTOTUNE)
         ds = ds.repeat()
 
         if (subset is not None) and transform:
