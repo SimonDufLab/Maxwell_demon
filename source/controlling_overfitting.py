@@ -573,8 +573,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
         
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-        # initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
-        init_state = copy.deepcopy(state)
+        # initial_params = utl.jax_deep_copy(params)  # Keep a copy of the initial params for relative change metric
+        init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
         # frozen_layer_lists = utl.extract_layer_lists(params)
         activation_layer_order = list(state.keys())
@@ -599,7 +599,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # print(hk.experimental.tabulate(net.init)(next(train)))
         # raise SystemExit
 
-        decaying_reg_param = copy.deepcopy(reg_param)
+        decaying_reg_param = reg_param
         decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
         if decay_cycles == 2:
             reg_param_decay_period = int(0.8*exp_config.training_steps)

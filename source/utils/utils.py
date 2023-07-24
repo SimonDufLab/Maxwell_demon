@@ -357,7 +357,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
       removed and the new size of the layers (that is, # of conv filters or # of
        neurons in fully connected layer, etc.)"""
     neurons_state = jax.tree_map(jnp.logical_not, neurons_state)
-    filtered_params = copy.deepcopy(params)
+    filtered_params = jax_deep_copy(params)
 
     # print(jax.tree_map(jax.numpy.shape, filtered_params))
     flag_opt = False
@@ -369,9 +369,9 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         field_names = list(opt_state[0]._fields)
         if 'count' in field_names:
             field_names.remove('count')
-        filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
+        filter_in_opt_state = jax_deep_copy([getattr(opt_state[0], field) for field in field_names])
     if state:
-        filtered_state = copy.deepcopy(state)
+        filtered_state = jax_deep_copy(state)
         state_names = ["/~/var_ema", "/~/mean_ema"]
         _identity_state_name = [name for name in state.keys() if "identity" in name]
         _identity_state_name.sort()
@@ -584,7 +584,7 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
      filtered params dict (and its associated optimizer state) with dead weights
       removed and the new size of the layers (that is, # of conv filters or # of
        neurons in fully connected layer, etc.)"""
-    filtered_params = copy.deepcopy(params)
+    filtered_params = jax_deep_copy(params)
 
     assert not all(value is None for value in list(
         neurons_state_dict.keys())), "neurons state dictionary needs to be updated before attempting to prune"
@@ -597,10 +597,10 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
         field_names = list(opt_state[0]._fields)
         if 'count' in field_names:
             field_names.remove('count')
-        filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
+        filter_in_opt_state = jax_deep_copy([getattr(opt_state[0], field) for field in field_names])
 
     if state:
-        filtered_state = copy.deepcopy(state)
+        filtered_state = jax_deep_copy(state)
 
     for layer_name, mapping_info in activation_mapping.items():
         preceding = mapping_info.get('preceding')
@@ -2362,3 +2362,9 @@ def avg_neuron_magnitude_in_layer(layer_params):
         return jnp.mean(jax.vmap(conca_and_norm, in_axes=(1, 0))(layer_params["w"], layer_params['b']))
     else:
         return jnp.mean(jax.vmap(jnp.linalg.norm, in_axes=1)(layer_params["w"]))
+
+
+def jax_deep_copy(pytree):
+    """ALERT: copy.deepcopy relies on pickle which creates the copy on host before transfer to device.
+    This function tries to avoid potential memory issue implied by this procedure."""
+    return jax.tree_util.tree_map(lambda x: jax.device_put(x), pytree)
