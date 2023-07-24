@@ -1101,17 +1101,32 @@ augment_tf_dataset = tf.keras.Sequential([
     tf.keras.layers.RandomCrop(32, 32)
 ])
 
-augment_train_imagenet_dataset = tf.keras.Sequential([
-    # tf.keras.layers.RandomFlip("horizontal_and_vertical"),
-    tf.keras.layers.RandomFlip("horizontal"),
-    tf.keras.layers.RandomCrop(224, 224)
-])
+# augment_train_imagenet_dataset = tf.keras.Sequential([
+    ## tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+    # tf.keras.layers.RandomFlip("horizontal"),
+    # tf.keras.layers.RandomCrop(224, 224)
+# ])
 
-process_test_imagenet_dataset = tf.keras.Sequential([
-    tf.keras.layers.CenterCrop(224, 224)
-])
+@tf.function
+def augment_train_imagenet_dataset(image, label):
+    # Randomly flip the image horizontally
+    image = tf.image.random_flip_left_right(image)
+
+    # Randomly crop the image
+    image = tf.image.random_crop(image, [224, 224, 3]) # assuming image has 3 color channels
+    return image, label
+
+# process_test_imagenet_dataset = tf.keras.Sequential([
+    # tf.keras.layers.CenterCrop(224, 224)
+# ])
+
+@tf.function
+def process_test_imagenet_dataset(image, label):
+    image = tf.image.central_crop(image, 224/256) # assuming input image size is 256x256
+    return image, label
 
 
+@tf.function
 def resize_tf_dataset(images, labels, dataset):
     """Final data augmentation step for cifar10, consisting of a resizing to 64x64"""
     if dataset == 'cifar10':
@@ -1193,9 +1208,10 @@ def interval_zero_one(image, label):
     return image/255, label
 
 
+@tf.function
 def imgnet_interval_zero_one(image, label):
     """Same as above, but avoid error resulting from imagenet images having variable input size"""
-    return image/255, label
+    return tf.cast(image, tf.float32) / 255., label
 
 
 def standardize_img(image, label):
@@ -1204,6 +1220,7 @@ def standardize_img(image, label):
     return image, label
 
 
+@tf.function
 def custom_normalize_img(image, label, dataset):
     assert dataset in ["mnist", 'cifar10', 'cifar100', 'imagenet'], "need to implement normalization for others dataset"
     if dataset == "cifar10":
@@ -1246,13 +1263,21 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
     builder = tfds.builder("imagenet2012")
     builder.download_and_prepare(download_dir=dataset_dir)
 
+    # Create AutotuneOptions
+    options = tf.data.Options()
+    options.autotune.enabled = True
+    options.autotune.ram_budget = 24 * 1024**3  # TODO: RAM budget should be determine auto. current rule: 1/2 of total RAM
+    options.autotune.cpu_budget = 8  # TODO: Also determine auto. current rule: all avail cpus
+
+
     def filter_fn(image, label):
         return tf.reduce_any(subset == int(label))
     if reduced_ds_size:
         _split = split + '[:' + str(int(reduced_ds_size)) + ']'
         _split = tfds.split_for_jax_process(_split, drop_remainder=True)
         ds = builder.as_dataset(split=_split, as_supervised=True, shuffle_files=True,
-                       read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+                       read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
+        ds = ds.with_options(options)
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     elif noisy_label or permuted_img_ratio or gaussian_img_ratio:
@@ -1264,8 +1289,8 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
         split1 = tfds.split_for_jax_process(split1, drop_remainder=True)
         split2 = tfds.split_for_jax_process(split2, drop_remainder=True)
-        ds1, ds_info = builder.as_dataset(split=split1, as_supervised=True, with_info=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
-        ds2 = builder.as_dataset(split=split2, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds1, ds_info = builder.as_dataset(split=split1, as_supervised=True, with_info=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
+        ds2 = builder.as_dataset(split=split2, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
         sample_from = np.arange(ds_info.features["label"].num_classes - 1)
         if subset is not None:
             ds1 = ds1.filter(filter_fn)  # Only take the randomly selected subset
@@ -1279,34 +1304,38 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         elif gaussian_img_ratio:
             ds1 = ds1.map(map_gaussian_img(ds1))
         ds = ds1.concatenate(ds2)
+        ds = ds.with_options(options)
     else:
         split = tfds.split_for_jax_process(split, drop_remainder=True)
-        ds = builder.as_dataset(split=split, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds = builder.as_dataset(split=split, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
+        ds = ds.with_options(options)
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
-    ds = ds.map(imgnet_interval_zero_one)
+    ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
     ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet"), num_parallel_calls=tf.data.AUTOTUNE)
     if normalize:
-        ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'))
+        ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
     # ds = ds.cache()
     # ds = ds.shuffle(50000, seed=0, reshuffle_each_iteration=True)
     if other_bs:
         ds1 = ds
         if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
-            ds1 = ds1.map(lambda x, y: (augment_train_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
-            ds1 = ds1.shuffle(25000, seed=0, reshuffle_each_iteration=True)
+            ds1 = ds1.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
-            ds1 = ds1.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y),
+            ds1 = ds1.map(process_test_imagenet_dataset,
                           num_parallel_calls=tf.data.AUTOTUNE)
         ds1 = ds1.batch(batch_size)
+        ds1 = ds1.prefetch(tf.data.AUTOTUNE)
         ds1 = ds1.repeat()
         all_ds = [ds1]
         for bs in other_bs:
             ds2 = ds
-            ds2 = ds2.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+            ds2 = ds2.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
             # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
             ds2 = ds2.batch(bs)
+            ds2 = ds2.prefetch(tf.data.AUTOTUNE)
             ds2 = ds2.repeat()
             all_ds.append(ds2)
 
@@ -1320,11 +1349,12 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
             return tf_iterators
     else:
         if is_training and data_augmentation:
-            ds = ds.map(lambda x, y: (augment_train_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
-            ds = ds.shuffle(25000, seed=0, reshuffle_each_iteration=True)
+            ds = ds.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
-            ds = ds.map(lambda x, y: (process_test_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(batch_size)
+        ds = ds.prefetch(tf.data.AUTOTUNE)
         ds = ds.repeat()
 
         if (subset is not None) and transform:

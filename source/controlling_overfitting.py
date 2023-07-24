@@ -327,7 +327,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             train_accuracy = accuracy_fn(params, state, next(train_eval))
             test_accuracy = accuracy_fn(params, state, next(test_eval))
             test_loss = test_loss_fn(params, state, next(test_eval), _reg_param=decaying_reg_param)
-            train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
+            # train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
             # Periodically print classification accuracy on train & test sets.
             if step % exp_config.report_freq == 0:
                 print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
@@ -336,36 +336,36 @@ def run_exp(exp_config: ExpConfig) -> None:
             dead_neurons = death_check_fn(params, state, test_death_batch)
             # Record some metrics
             dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
-            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
+            exp_run.track(dead_neurons_count, name="Dead neurons", step=step,
                           context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
+            exp_run.track(total_neurons - dead_neurons_count, name="Live neurons", step=step,
                           context={"reg param": utl.size_to_string(reg_param)})
             if exp_config.epsilon_close:
                 for eps in exp_config.epsilon_close:
                     eps_dead_neurons = death_check_fn(params, state, test_death_batch, eps)
                     eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
-                    exp_run.track(jax.device_get(eps_dead_neurons_count),
+                    exp_run.track(eps_dead_neurons_count,
                                   name="Quasi-dead neurons", step=step,
                                   context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
-                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
+                    exp_run.track(total_neurons - eps_dead_neurons_count,
                                   name="Quasi-live neurons", step=step,
                                   context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
             exp_run.track(test_accuracy, name="Test accuracy", step=step,
                           context={"reg param": utl.size_to_string(reg_param)})
             exp_run.track(train_accuracy, name="Train accuracy", step=step,
                           context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
+            exp_run.track(train_loss, name="Train loss", step=step,
                           context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(jax.device_get(test_loss), name="Test loss", step=step,
+            exp_run.track(test_loss, name="Test loss", step=step,
                           context={"reg param": utl.size_to_string(reg_param)})
 
         if step % exp_config.pruning_freq == 0:
             dead_neurons = scan_death_check_fn(params, state, test_death)
             dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
-            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
+            exp_run.track(dead_neurons_count, name="Dead neurons; whole training dataset",
                           step=step,
                           context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
+            exp_run.track(total_neurons - dead_neurons_count,
                           name="Live neurons; whole training dataset",
                           step=step,
                           context={"reg param": utl.size_to_string(reg_param)})
@@ -373,20 +373,20 @@ def run_exp(exp_config: ExpConfig) -> None:
                 for eps in exp_config.epsilon_close:
                     eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
                     eps_dead_neurons_count, eps_dead_per_layers = utl.count_dead_neurons(eps_dead_neurons)
-                    exp_run.track(jax.device_get(eps_dead_neurons_count),
+                    exp_run.track(eps_dead_neurons_count,
                                   name="Quasi-dead neurons; whole training dataset",
                                   step=step,
                                   context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
-                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
+                    exp_run.track(total_neurons - eps_dead_neurons_count,
                                   name="Quasi-live neurons; whole training dataset",
                                   step=step,
                                   context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
             for i, layer_dead in enumerate(dead_per_layers):
                 total_neuron_in_layer = total_per_layer[i]
-                exp_run.track(jax.device_get(layer_dead),
+                exp_run.track(layer_dead,
                               name=f"Dead neurons in layer {i}; whole training dataset", step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
-                exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
+                exp_run.track(total_neuron_in_layer - layer_dead,
                               name=f"Live neurons in layer {i}; whole training dataset", step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
             del dead_per_layers
@@ -398,18 +398,18 @@ def run_exp(exp_config: ExpConfig) -> None:
                 snap_score = scr.snap_score(params, state, test_loss_fn, train_eval, 5)  # Avg on 5 minibatches
                 gate_grad.update(snap_score)
                 for i, layer_gate_grad in enumerate(gate_grad.values()):  # Ordered dict retrieves layers in order
-                    exp_run.track(jax.device_get(jnp.mean(layer_gate_grad)),
+                    exp_run.track(jnp.mean(layer_gate_grad),
                                   name=f"Average gate gradients magnitude in layer {i}; whole training dataset",
                                   step=step,
                                   context={"reg param": utl.size_to_string(reg_param)})
 
             if exp_config.measure_linear_perf:
                 # Record performance over full validation set of the NN for relu and decaying_reg_paramlinear activations
-                relu_perf = jax.device_get(final_accuracy_fn(params, state, test_eval))
+                relu_perf = final_accuracy_fn(params, state, test_eval)
                 exp_run.track(relu_perf,
                               name="Total accuracy for relu NN", step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
-                lin_perf = jax.device_get(lin_full_accuracy_fn(params, state, test_eval))
+                lin_perf = lin_full_accuracy_fn(params, state, test_eval)
                 exp_run.track(lin_perf,
                               name="Total accuracy for linear NN", step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
@@ -469,7 +469,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
             if exp_config.dataset != "imagenet":
-                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
+                train_acc_whole_ds = full_train_acc_fn(params, state, train_eval)
                 exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
                               step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
@@ -644,8 +644,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                     noise_key, _reg_param=decaying_reg_param)
 
         # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
-        final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
-        final_train_acc = jax.device_get(full_train_acc_fn(params, state, train_eval))
+        final_accuracy = final_accuracy_fn(params, state, test_eval)
+        final_train_acc = full_train_acc_fn(params, state, train_eval)
         # size_arr.append(starting_neurons)
 
         scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
@@ -671,11 +671,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             activations_meta.mean[reg_param] = activations_mean
             activations_meta.count[reg_param] = activations_count
         activations_max, _ = ravel_pytree(activations_max)
-        activations_max = jax.device_get(activations_max)
+        # activations_max = jax.device_get(activations_max)
         activations_mean, _ = ravel_pytree(activations_mean)
-        activations_mean = jax.device_get(activations_mean)
+        # activations_mean = jax.device_get(activations_mean)
         activations_count, _ = ravel_pytree(activations_count)
-        activations_count = jax.device_get(activations_count)
+        # activations_count = jax.device_get(activations_count)
 
         # Additionally, track an 'on average' number of death neurons within a batch
         # def scan_f(_, __):
@@ -694,16 +694,16 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         log_step = reg_param*1e8
 
-        exp_run.track(jax.device_get(avg_final_live_neurons),
+        exp_run.track(avg_final_live_neurons,
                       name="On average, live neurons after convergence w/r reg param", step=log_step)
-        exp_run.track(jax.device_get(avg_final_live_neurons / init_total_neurons),
+        exp_run.track(avg_final_live_neurons / init_total_neurons,
                       name="Average live neurons ratio after convergence w/r reg param", step=log_step)
         total_live_neurons = total_neurons - final_dead_neurons_count
-        exp_run.track(jax.device_get(total_live_neurons),
+        exp_run.track(total_live_neurons,
                       name="Live neurons after convergence w/r reg param", step=log_step)
-        exp_run.track(jax.device_get(total_live_neurons/init_total_neurons),
+        exp_run.track(total_live_neurons/init_total_neurons,
                       name="Live neurons ratio after convergence w/r reg param", step=log_step)
-        exp_run.track(jax.device_get(reg_param),  # Logging true reg_param value to display with aim metrics
+        exp_run.track(reg_param,  # Logging true reg_param value to display with aim metrics
                       name="Reg param w/r reg param", step=log_step)
         if exp_config.epsilon_close:
             for eps in exp_config.epsilon_close:
@@ -718,34 +718,34 @@ def run_exp(exp_config: ExpConfig) -> None:
                 eps_batches_final_live_neurons = jnp.stack(eps_batches_final_live_neurons)
                 eps_avg_final_live_neurons = jnp.mean(eps_batches_final_live_neurons, axis=0)
 
-                exp_run.track(jax.device_get(eps_avg_final_live_neurons),
+                exp_run.track(eps_avg_final_live_neurons,
                               name="On average, quasi-live neurons after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
-                exp_run.track(jax.device_get(eps_avg_final_live_neurons / total_neurons),
+                exp_run.track(eps_avg_final_live_neurons / total_neurons,
                               name="Average quasi-live neurons ratio after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
                 eps_total_live_neurons = total_neurons - eps_final_dead_neurons_count
-                exp_run.track(jax.device_get(eps_total_live_neurons),
+                exp_run.track(eps_total_live_neurons,
                               name="Quasi-live neurons after convergence w/r reg param", step=log_step,
                               context={"epsilon": eps})
-                exp_run.track(jax.device_get(eps_total_live_neurons / total_neurons),
+                exp_run.track(eps_total_live_neurons / total_neurons,
                               name="Quasi-live neurons ratio after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
 
         for i, layer_dead in enumerate(final_dead_per_layer):
             total_neuron_in_layer = init_total_per_layer[i]
             live_in_layer = total_neuron_in_layer - layer_dead
-            exp_run.track(jax.device_get(live_in_layer),
+            exp_run.track(live_in_layer,
                           name=f"Live neurons in layer {i} after convergence w/r reg param",
                           step=log_step)
-            exp_run.track(jax.device_get(live_in_layer/total_neuron_in_layer),
+            exp_run.track(live_in_layer/total_neuron_in_layer,
                           name=f"Live neurons ratio in layer {i} after convergence w/r reg param",
                           step=log_step)
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r reg param", step=log_step)
         exp_run.track(final_train_acc,
                       name="Train accuracy after convergence w/r reg param", step=log_step)
-        log_sparsity_step = jax.device_get(total_live_neurons/init_total_neurons) * 1000
+        log_sparsity_step = (total_live_neurons/init_total_neurons) * 1000
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
         log_params_sparsity_step = final_params_count/initial_params_count * 1000
