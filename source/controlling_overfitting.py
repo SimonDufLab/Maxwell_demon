@@ -96,7 +96,7 @@ class ExpConfig:
     with_rng_seed: int = 428
     linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
     measure_linear_perf: bool = False  # Measure performance over the linear network without changing activation
-    record_distribution_data: bool = False  # Weither to record distribution at end of training -- high memory usage
+    record_distribution_data: bool = False  # Whether to record distribution at end of training -- high memory usage
     save_wanda: bool = False  # Whether to save weights and activations value or not
     save_act_only: bool = True  # Only saving distributions with wanda, not the weights
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
@@ -137,6 +137,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         bn_config_choice.keys())
     # assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
     #     reg_param_scheduler_choice.keys())
+    if exp_config.record_distribution_data:
+        assert not exp_config.dynamic_pruning, "Dynamic pruning must be disabled to record meaningful distribution data"
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -638,30 +640,40 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                     noise_var,
                                                                     noise_key, _reg_param=decaying_reg_param)
 
-        # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
-        final_accuracy = final_accuracy_fn(params, state, test_eval)
-        final_train_acc = full_train_acc_fn(params, state, train_eval)
-        # size_arr.append(starting_neurons)
-
         if exp_config.record_distribution_data:
             scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
                 utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
             activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state,
                                                                                              test_death)
         else:
-            final_dead_neurons = scan_death_check_fn(params, test_death)
+            final_dead_neurons = scan_death_check_fn(params, state, test_death)
 
-        # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
-        final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
-        # pruned_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
-        #                                                          frozen_layer_lists, opt_state,
-        #                                                          state)[0]
         neuron_states.update_from_ordered_list(final_dead_neurons)
-        pruned_params = utl.prune_params_state_optstate(params, acti_map,
-                                                        neuron_states, opt_state,
-                                                        state)[0]
-        final_params_count = utl.count_params(pruned_params)
+        params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
+                                                                              neuron_states, opt_state,
+                                                                              state)  # Final pruning before eval
+        final_params_count = utl.count_params(params)
+
+        # final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
         del final_dead_neurons  # Freeing memory
+        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+            exp_config.architecture]
+        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+        net = build_models(*architecture)[0]
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+
+        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+        # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+        #                                                  epsilon=exp_config.epsilon_close,
+        #                                                  avg=exp_config.avg_for_eps)
+        # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
+
+        final_accuracy = final_accuracy_fn(params, state, test_eval)
+        final_train_acc = full_train_acc_fn(params, state, train_eval)
 
         # Additionally, track an 'on average' number of death neurons within a batch
         # def scan_f(_, __):
@@ -684,7 +696,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                       name="On average, live neurons after convergence w/r reg param", step=log_step)
         exp_run.track(avg_final_live_neurons / init_total_neurons,
                       name="Average live neurons ratio after convergence w/r reg param", step=log_step)
-        total_live_neurons = total_neurons - final_dead_neurons_count
+        total_live_neurons = total_neurons  # - final_dead_neurons_count
         exp_run.track(total_live_neurons,
                       name="Live neurons after convergence w/r reg param", step=log_step)
         exp_run.track(total_live_neurons / init_total_neurons,
@@ -719,9 +731,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name="Quasi-live neurons ratio after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
 
-        for i, layer_dead in enumerate(final_dead_per_layer):
+        for i, live_in_layer in enumerate(total_per_layer):
             total_neuron_in_layer = init_total_per_layer[i]
-            live_in_layer = total_neuron_in_layer - layer_dead
+            # live_in_layer = total_neuron_in_layer - layer_dead
             exp_run.track(live_in_layer,
                           name=f"Live neurons in layer {i} after convergence w/r reg param",
                           step=log_step)

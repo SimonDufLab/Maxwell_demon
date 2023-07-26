@@ -143,56 +143,83 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
         return jnp.logical_and(leaf1.astype(bool), leaf2.astype(bool))
 
     if with_activations_data:
-        def scan_death_check(params, state, batch_it, epsilon=0):
-            # def scan_dead_neurons_over_whole_ds(previous_dead, __):
-            #     batched_activations, dead_neurons = death_check_fn(
-            #         params, next(batch_it))
-            #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), batched_activations
-            #
-            # _, carry_init = death_check_fn(params, next(batch_it))
-            # dead_neurons, batched_activations = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
-            #                                                  scan_len)
-            # return batched_activations, dead_neurons
+        # def scan_death_check(params, state, batch_it, epsilon=0):
+        #     # def scan_dead_neurons_over_whole_ds(previous_dead, __):
+        #     #     batched_activations, dead_neurons = death_check_fn(
+        #     #         params, next(batch_it))
+        #     #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), batched_activations
+        #     #
+        #     # _, carry_init = death_check_fn(params, next(batch_it))
+        #     # dead_neurons, batched_activations = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
+        #     #                                                  scan_len)
+        #     # return batched_activations, dead_neurons
+        #
+        #     activations, previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
+        #     # batched_activations = [activations]
+        #     running_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
+        #     running_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
+        #     running_count = count_activations_occurrence(activations)
+        #     running_var = jax.tree_map(Partial(jnp.var, axis=0), activations)
+        #     N = 1
+        #     for i in range(scan_len-1):
+        #         activations, dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
+        #         # batched_activations.append(activations)
+        #         running_max = update_running_max(activations, running_max)
+        #         running_mean = update_running_mean(activations, running_mean)
+        #         running_var = update_running_var(activations, running_var)
+        #         N += 1
+        #         running_count = update_running_count(activations, running_count)
+        #
+        #         previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
+        #
+        #     return (running_max, jax.tree_map(lambda x: x/N, running_mean),
+        #             running_count, jax.tree_map(lambda x: x/N, running_var)), previous_dead
 
-            activations, previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
-            # batched_activations = [activations]
-            running_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
-            running_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
-            running_count = count_activations_occurrence(activations)
-            running_var = jax.tree_map(Partial(jnp.var, axis=0), activations)
-            N = 1
-            for i in range(scan_len-1):
+        # return scan_death_check
+
+        def scan_death_check(params, state, batch_it, epsilon=0):
+            def update(running_vals, _):
+                prev_dead, running_max, running_mean, running_var, running_count, N = running_vals
                 activations, dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
-                # batched_activations.append(activations)
                 running_max = update_running_max(activations, running_max)
                 running_mean = update_running_mean(activations, running_mean)
                 running_var = update_running_var(activations, running_var)
-                N += 1
                 running_count = update_running_count(activations, running_count)
+                dead_neurons = jax.tree_map(sum_dead_neurons, prev_dead, dead_neurons)
+                return (dead_neurons, running_max, running_mean, running_var, running_count, N + 1), None
+            activations, previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
+            running_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
+            running_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
+            running_var = jax.tree_map(Partial(jnp.var, axis=0), activations)
+            running_count = count_activations_occurrence(activations)
+            N = 1
 
-                previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
+            (dead_neurons, running_max, running_mean, running_var, running_count, N), _ = jax.lax.scan(
+                update, (previous_dead, running_max, running_mean, running_var, running_count, N),
+                None, scan_len - 1)
 
-            return (running_max, jax.tree_map(lambda x: x/N, running_mean),
-                    running_count, jax.tree_map(lambda x: x/N, running_var)), previous_dead
+            return (running_max, jax.tree_map(lambda x: x / N, running_mean),
+                    running_count, jax.tree_map(lambda x: x / N, running_var)), dead_neurons
 
         return scan_death_check
     else:
-        def scan_death_check(params, state, batch_it, epsilon=0):
-            # def scan_dead_neurons_over_whole_ds(previous_dead, __):
-            #     dead_neurons = death_check_fn(params, next(batch_it))
-            #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), None
+        # def scan_death_check(params, state, batch_it, epsilon=0):
+            # previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
+            # for i in range(scan_len-1):
+            #     dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
+            #     previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
             #
-            # carry_init = death_check_fn(params, next(batch_it))
-            # dead_neurons, _ = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
-            #                                scan_len)
-            # return dead_neurons
+            # return previous_dead
 
+        def scan_death_check(params, state, batch_it, epsilon=0):
             previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
-            for i in range(scan_len-1):
-                dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
-                previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
 
-            return previous_dead
+            def scan_fn(prev_dead, _):
+                dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
+                return jax.tree_map(sum_dead_neurons, prev_dead, dead_neurons), None
+
+            dead_neurons, _ = jax.lax.scan(scan_fn, previous_dead, None, scan_len - 1)
+            return dead_neurons
 
         return scan_death_check
 
@@ -739,17 +766,24 @@ def accuracy_given_model(model, with_dropout=False):
 
 
 def create_full_accuracy_fn(accuracy_fn, scan_len):
-    def full_accuracy_fn(params, state, batch_it):
-        # def scan_accuracy_fn(_, __):
-        #     acc = accuracy_fn(params, next(batch_it))
-        #     return None, acc
-        # _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
-        # return jnp.mean(all_acc)
+    # def full_accuracy_fn(params, state, batch_it):
+    #     # def scan_accuracy_fn(_, __):
+    #     #     acc = accuracy_fn(params, next(batch_it))
+    #     #     return None, acc
+    #     # _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
+    #     # return jnp.mean(all_acc)
+    #
+    #     acc = [accuracy_fn(params, state, next(batch_it))]
+    #     for i in range(scan_len-1):
+    #         acc.append(accuracy_fn(params, state, next(batch_it)))
+    #     return jnp.mean(jnp.stack(acc))
 
-        acc = [accuracy_fn(params, state, next(batch_it))]
-        for i in range(scan_len-1):
-            acc.append(accuracy_fn(params, state, next(batch_it)))
-        return jnp.mean(jnp.stack(acc))
+    def full_accuracy_fn(params: hk.Params, state: hk.State, batch_it):
+        def scan_accuracy_fn(carry, _):
+            return None, accuracy_fn(params, state, next(batch_it))
+
+        _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
+        return jnp.mean(all_acc)
     return full_accuracy_fn
 
 
