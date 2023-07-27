@@ -622,7 +622,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                    full_train_acc_fn,
                                                    final_accuracy_fn, update_fn)  # Ugly, but cache is cleared
             if (step % exp_config.pruning_freq == 0) and exp_config.dynamic_pruning:
-                jax.clear_backends()
+                # jax.clear_backends()
                 gc.collect()
             # Train step over single batch
             if with_dropout:
@@ -811,7 +811,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     for reg_param in exp_config.reg_params:  # Vary the regularizer parameter to measure impact on overfitting
         # Time the subrun for the different sizes
         subrun_start_time = time.time()
-        jax.clear_backends()
+        # jax.clear_backends()
         gc.collect()
 
         train_run(reg_param)
