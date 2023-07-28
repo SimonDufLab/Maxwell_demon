@@ -144,15 +144,6 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
 
     if with_activations_data:
         def scan_death_check(params, state, batch_it, epsilon=0):
-            # def scan_dead_neurons_over_whole_ds(previous_dead, __):
-            #     batched_activations, dead_neurons = death_check_fn(
-            #         params, next(batch_it))
-            #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), batched_activations
-            #
-            # _, carry_init = death_check_fn(params, next(batch_it))
-            # dead_neurons, batched_activations = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
-            #                                                  scan_len)
-            # return batched_activations, dead_neurons
 
             activations, previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
             # batched_activations = [activations]
@@ -176,23 +167,50 @@ def scanned_death_check_fn(death_check_fn, scan_len, with_activations_data=False
                     running_count, jax.tree_map(lambda x: x/N, running_var)), previous_dead
 
         return scan_death_check
+
+        # def scan_death_check(params, state, batch_it, epsilon=0): # TODO: Can't use scan -> cache explode with iter
+        #     def update(running_vals, _):
+        #         prev_dead, running_max, running_mean, running_var, running_count, N = running_vals
+        #         activations, dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
+        #         running_max = update_running_max(activations, running_max)
+        #         running_mean = update_running_mean(activations, running_mean)
+        #         running_var = update_running_var(activations, running_var)
+        #         running_count = update_running_count(activations, running_count)
+        #         dead_neurons = jax.tree_map(sum_dead_neurons, prev_dead, dead_neurons)
+        #         return (dead_neurons, running_max, running_mean, running_var, running_count, N + 1), None
+        #     activations, previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
+        #     running_max = jax.tree_map(Partial(jnp.amax, axis=0), activations)
+        #     running_mean = jax.tree_map(Partial(jnp.mean, axis=0), activations)
+        #     running_var = jax.tree_map(Partial(jnp.var, axis=0), activations)
+        #     running_count = count_activations_occurrence(activations)
+        #     N = 1
+        #
+        #     (dead_neurons, running_max, running_mean, running_var, running_count, N), _ = jax.lax.scan(
+        #         update, (previous_dead, running_max, running_mean, running_var, running_count, N),
+        #         None, scan_len - 1)
+        #
+        #     return (running_max, jax.tree_map(lambda x: x / N, running_mean),
+        #             running_count, jax.tree_map(lambda x: x / N, running_var)), dead_neurons
+        #
+        # return scan_death_check
     else:
         def scan_death_check(params, state, batch_it, epsilon=0):
-            # def scan_dead_neurons_over_whole_ds(previous_dead, __):
-            #     dead_neurons = death_check_fn(params, next(batch_it))
-            #     return jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons), None
-            #
-            # carry_init = death_check_fn(params, next(batch_it))
-            # dead_neurons, _ = jax.lax.scan(scan_dead_neurons_over_whole_ds, carry_init, None,
-            #                                scan_len)
-            # return dead_neurons
-
             previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
             for i in range(scan_len-1):
                 dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
                 previous_dead = jax.tree_map(sum_dead_neurons, previous_dead, dead_neurons)
 
             return previous_dead
+
+        # def scan_death_check(params, state, batch_it, epsilon=0): # TODO: Can't use scan -> cache explode with iter
+        #     previous_dead = death_check_fn(params, state, next(batch_it), epsilon)
+        #
+        #     def scan_fn(prev_dead, _):
+        #         dead_neurons = death_check_fn(params, state, next(batch_it), epsilon)
+        #         return jax.tree_map(sum_dead_neurons, prev_dead, dead_neurons), None
+        #
+        #     dead_neurons, _ = jax.lax.scan(scan_fn, previous_dead, None, scan_len - 1)
+        #     return dead_neurons
 
         return scan_death_check
 
@@ -357,7 +375,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
       removed and the new size of the layers (that is, # of conv filters or # of
        neurons in fully connected layer, etc.)"""
     neurons_state = jax.tree_map(jnp.logical_not, neurons_state)
-    filtered_params = copy.deepcopy(params)
+    filtered_params = jax_deep_copy(params)
 
     # print(jax.tree_map(jax.numpy.shape, filtered_params))
     flag_opt = False
@@ -369,9 +387,9 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
         field_names = list(opt_state[0]._fields)
         if 'count' in field_names:
             field_names.remove('count')
-        filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
+        filter_in_opt_state = jax_deep_copy([getattr(opt_state[0], field) for field in field_names])
     if state:
-        filtered_state = copy.deepcopy(state)
+        filtered_state = jax_deep_copy(state)
         state_names = ["/~/var_ema", "/~/mean_ema"]
         _identity_state_name = [name for name in state.keys() if "identity" in name]
         _identity_state_name.sort()
@@ -534,7 +552,7 @@ def remove_dead_neurons_weights(params, neurons_state, frozen_layer_lists, opt_s
                                                                        current_state, :]
 
     if opt_state:
-        cp_state = copy.copy(opt_state)
+        cp_state = jax_deep_copy(opt_state)
         filtered_opt_state = cp_state[0]
         empty_state = cp_state[1:]
         for j, field in enumerate(field_names):
@@ -584,7 +602,7 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
      filtered params dict (and its associated optimizer state) with dead weights
       removed and the new size of the layers (that is, # of conv filters or # of
        neurons in fully connected layer, etc.)"""
-    filtered_params = copy.deepcopy(params)
+    filtered_params = jax_deep_copy(params)
 
     assert not all(value is None for value in list(
         neurons_state_dict.keys())), "neurons state dictionary needs to be updated before attempting to prune"
@@ -597,10 +615,10 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
         field_names = list(opt_state[0]._fields)
         if 'count' in field_names:
             field_names.remove('count')
-        filter_in_opt_state = copy.deepcopy([getattr(opt_state[0], field) for field in field_names])
+        filter_in_opt_state = jax_deep_copy([getattr(opt_state[0], field) for field in field_names])
 
     if state:
-        filtered_state = copy.deepcopy(state)
+        filtered_state = jax_deep_copy(state)
 
     for layer_name, mapping_info in activation_mapping.items():
         preceding = mapping_info.get('preceding')
@@ -662,7 +680,7 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
                 filtered_state[f"{layer_name}/~/mean_ema"]["hidden"][..., following_neurons_state]
 
     if opt_state:
-        cp_state = copy.copy(opt_state)
+        cp_state = jax_deep_copy(opt_state)
         filtered_opt_state = cp_state[0]
         empty_state = cp_state[1:]
         for j, field in enumerate(field_names):
@@ -740,16 +758,18 @@ def accuracy_given_model(model, with_dropout=False):
 
 def create_full_accuracy_fn(accuracy_fn, scan_len):
     def full_accuracy_fn(params, state, batch_it):
-        # def scan_accuracy_fn(_, __):
-        #     acc = accuracy_fn(params, next(batch_it))
-        #     return None, acc
-        # _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
-        # return jnp.mean(all_acc)
 
         acc = [accuracy_fn(params, state, next(batch_it))]
         for i in range(scan_len-1):
             acc.append(accuracy_fn(params, state, next(batch_it)))
         return jnp.mean(jnp.stack(acc))
+
+    # def full_accuracy_fn(params: hk.Params, state: hk.State, batch_it): # TODO: can't use scan with iter!
+    #     def scan_accuracy_fn(carry, _):
+    #         return None, accuracy_fn(params, state, next(batch_it))
+    #
+    #     _, all_acc = jax.lax.scan(scan_accuracy_fn, None, None, scan_len)
+    #     return jnp.mean(all_acc)
     return full_accuracy_fn
 
 
@@ -1101,17 +1121,32 @@ augment_tf_dataset = tf.keras.Sequential([
     tf.keras.layers.RandomCrop(32, 32)
 ])
 
-augment_train_imagenet_dataset = tf.keras.Sequential([
-    # tf.keras.layers.RandomFlip("horizontal_and_vertical"),
-    tf.keras.layers.RandomFlip("horizontal"),
-    tf.keras.layers.RandomCrop(224, 224)
-])
+# augment_train_imagenet_dataset = tf.keras.Sequential([
+    ## tf.keras.layers.RandomFlip("horizontal_and_vertical"),
+    # tf.keras.layers.RandomFlip("horizontal"),
+    # tf.keras.layers.RandomCrop(224, 224)
+# ])
 
-process_test_imagenet_dataset = tf.keras.Sequential([
-    tf.keras.layers.CenterCrop(224, 224)
-])
+@tf.function
+def augment_train_imagenet_dataset(image, label):
+    # Randomly flip the image horizontally
+    image = tf.image.random_flip_left_right(image)
+
+    # Randomly crop the image
+    image = tf.image.random_crop(image, [224, 224, 3]) # assuming image has 3 color channels
+    return image, label
+
+# process_test_imagenet_dataset = tf.keras.Sequential([
+    # tf.keras.layers.CenterCrop(224, 224)
+# ])
+
+@tf.function
+def process_test_imagenet_dataset(image, label):
+    image = tf.image.central_crop(image, 224/256) # assuming input image size is 256x256
+    return image, label
 
 
+@tf.function
 def resize_tf_dataset(images, labels, dataset):
     """Final data augmentation step for cifar10, consisting of a resizing to 64x64"""
     if dataset == 'cifar10':
@@ -1168,7 +1203,7 @@ def map_gaussian_img(ds):
 
 
 def map_targets(target, indices):
-  return jnp.asarray(target == indices).nonzero(size=1)
+    return jnp.asarray(target == indices).nonzero(size=1)
 
 
 @jax.jit
@@ -1193,9 +1228,10 @@ def interval_zero_one(image, label):
     return image/255, label
 
 
+@tf.function
 def imgnet_interval_zero_one(image, label):
     """Same as above, but avoid error resulting from imagenet images having variable input size"""
-    return image/255, label
+    return tf.cast(image, tf.float32) / 255., label
 
 
 def standardize_img(image, label):
@@ -1204,6 +1240,7 @@ def standardize_img(image, label):
     return image, label
 
 
+@tf.function
 def custom_normalize_img(image, label, dataset):
     assert dataset in ["mnist", 'cifar10', 'cifar100', 'imagenet'], "need to implement normalization for others dataset"
     if dataset == "cifar10":
@@ -1241,10 +1278,17 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
    #  )
 
     data_augmentation = augment_dataset
-    if split=="test":
-        split="validation"
+    if split == "test":
+        split = "validation"
     builder = tfds.builder("imagenet2012")
     builder.download_and_prepare(download_dir=dataset_dir)
+
+    # Create AutotuneOptions
+    options = tf.data.Options()
+    options.autotune.enabled = True
+    options.autotune.ram_budget = 40 * 1024**3  # TODO: RAM budget should be determine auto. current rule: 1/2 of total RAM
+    options.autotune.cpu_budget = 8  # TODO: Also determine auto. current rule: all avail cpus
+
 
     def filter_fn(image, label):
         return tf.reduce_any(subset == int(label))
@@ -1252,7 +1296,8 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         _split = split + '[:' + str(int(reduced_ds_size)) + ']'
         _split = tfds.split_for_jax_process(_split, drop_remainder=True)
         ds = builder.as_dataset(split=_split, as_supervised=True, shuffle_files=True,
-                       read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+                       read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
+        ds = ds.with_options(options)
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     elif noisy_label or permuted_img_ratio or gaussian_img_ratio:
@@ -1264,8 +1309,8 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
         split1 = tfds.split_for_jax_process(split1, drop_remainder=True)
         split2 = tfds.split_for_jax_process(split2, drop_remainder=True)
-        ds1, ds_info = builder.as_dataset(split=split1, as_supervised=True, with_info=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
-        ds2 = builder.as_dataset(split=split2, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds1, ds_info = builder.as_dataset(split=split1, as_supervised=True, with_info=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
+        ds2 = builder.as_dataset(split=split2, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
         sample_from = np.arange(ds_info.features["label"].num_classes - 1)
         if subset is not None:
             ds1 = ds1.filter(filter_fn)  # Only take the randomly selected subset
@@ -1279,34 +1324,37 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         elif gaussian_img_ratio:
             ds1 = ds1.map(map_gaussian_img(ds1))
         ds = ds1.concatenate(ds2)
+        ds = ds.with_options(options)
     else:
         split = tfds.split_for_jax_process(split, drop_remainder=True)
-        ds = builder.as_dataset(split=split, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds = builder.as_dataset(split=split, as_supervised=True, shuffle_files=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=True))
+        ds = ds.with_options(options)
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
-    ds = ds.map(imgnet_interval_zero_one)
+    ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
     ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet"), num_parallel_calls=tf.data.AUTOTUNE)
     if normalize:
-        ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'))
+        ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
     # ds = ds.cache()
     # ds = ds.shuffle(50000, seed=0, reshuffle_each_iteration=True)
     if other_bs:
         ds1 = ds
         if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
-            ds1 = ds1.map(lambda x, y: (augment_train_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
-            ds1 = ds1.shuffle(25000, seed=0, reshuffle_each_iteration=True)
+            ds1 = ds1.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
-            ds1 = ds1.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y),
-                          num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
         ds1 = ds1.batch(batch_size)
+        ds1 = ds1.prefetch(tf.data.AUTOTUNE)
         ds1 = ds1.repeat()
         all_ds = [ds1]
         for bs in other_bs:
             ds2 = ds
-            ds2 = ds2.map(lambda x, y: (process_test_imagenet_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+            ds2 = ds2.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
             # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
             ds2 = ds2.batch(bs)
+            ds2 = ds2.prefetch(tf.data.AUTOTUNE)
             ds2 = ds2.repeat()
             all_ds.append(ds2)
 
@@ -1320,11 +1368,12 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
             return tf_iterators
     else:
         if is_training and data_augmentation:
-            ds = ds.map(lambda x, y: (augment_train_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
-            ds = ds.shuffle(25000, seed=0, reshuffle_each_iteration=True)
+            ds = ds.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
-            ds = ds.map(lambda x, y: (process_test_imagenet_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(batch_size)
+        ds = ds.prefetch(tf.data.AUTOTUNE)
         ds = ds.repeat()
 
         if (subset is not None) and transform:
@@ -1960,7 +2009,7 @@ def mask_next_layer_filters(params, next_layers, previous_smallest_filter_indice
 
 def prune_params(params, ordered_layers, layer_index, prune_ratio):
     layers = ordered_layers[layer_index]
-    pruned_params = copy.copy(params)
+    pruned_params = jax_deep_copy(params)
 
     # prune the currently considered layer
     pruning_masks, smallest_filter_indices = mask_layer_filters(params, layers, prune_ratio)
@@ -1978,7 +2027,7 @@ def prune_params(params, ordered_layers, layer_index, prune_ratio):
 
 def prune_until_perf_decay(ref_perf, allowed_decay, evaluate_fn, greedy: bool, params, ordered_layers, prune_ratio_step, starting_ratios):
     assert allowed_decay >= 0, "allowed_decay must be positive"
-    pruned_params = copy.copy(params)
+    pruned_params = jax_deep_copy(params)
     for i in range(len(ordered_layers)):
         prune_ratio = starting_ratios[i]
         perf_decay = 0
@@ -2333,3 +2382,9 @@ def avg_neuron_magnitude_in_layer(layer_params):
         return jnp.mean(jax.vmap(conca_and_norm, in_axes=(1, 0))(layer_params["w"], layer_params['b']))
     else:
         return jnp.mean(jax.vmap(jnp.linalg.norm, in_axes=1)(layer_params["w"]))
+
+
+def jax_deep_copy(pytree):
+    """ALERT: copy.deepcopy relies on pickle which creates the copy on host before transfer to device.
+    This function tries to avoid potential memory issue implied by this procedure."""
+    return jax.tree_util.tree_map(lambda x: jax.device_put(x), pytree)
