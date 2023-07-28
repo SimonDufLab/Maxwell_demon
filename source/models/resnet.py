@@ -131,9 +131,10 @@ class ResnetBlockV1(hk.Module):
 
         bn_config = dict(bn_config)
 
+        proj_channels = channels[2] if bottleneck else channels[1]
         if self.use_projection:
             self.proj_conv = hk.Conv2D(
-                output_channels=channels[1],
+                output_channels=proj_channels,
                 kernel_shape=1,
                 stride=stride,
                 with_bias=False,
@@ -143,9 +144,9 @@ class ResnetBlockV1(hk.Module):
 
             self.proj_batchnorm = hk.BatchNorm(name="shortcut_batchnorm", **bn_config)
         else:
-            self.identity_skip = IdentityConv2D(out_channels=channels[1], name="identity_skip")
+            self.identity_skip = IdentityConv2D(out_channels=proj_channels, name="identity_skip")
 
-        channel_div = 4 if bottleneck else 1
+        # channel_div = 4 if bottleneck else 1
         conv_0 = hk.Conv2D(
             output_channels=channels[0],
             kernel_shape=1 if bottleneck else 3,
@@ -572,6 +573,59 @@ def resnet18(size: Union[int, Sequence[int]],
                     "bottleneck": False,
                     "channels_per_group": sizes,  # typical resnet18 size = 64
                     "use_projection": (False, True, True, True),
+                    "bn_config": bn_config
+                    }
+    default_initial_conv_config["output_channels"] = init_conv_size
+    default_fc_layer_config["output_size"] = fc_size
+    # default_fc2_layer_config["output_size"] = fc2_size
+
+    if version == "V1":
+        resnet_block_type = ResnetBlockV1
+    elif version == "V2":
+        resnet_block_type = ResnetBlockV2
+
+    return resnet_model(num_classes=num_classes,
+                        activation_fn=activation_fn,
+                        initial_conv_config=initial_conv_config,
+                        strides=strides,
+                        logits_config=logits_config,
+                        with_bn=with_bn,
+                        resnet_block=resnet_block_type,
+                        **resnet_config)
+
+
+def resnet50(size: Union[int, Sequence[int]],
+             num_classes: int,
+             activation_fn: hk.Module = ReluActivationModule,
+             logits_config: Optional[Mapping[str, Any]] = default_logits_config,
+             initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = default_initial_conv_config,
+             strides: Sequence[int] = (1, 2, 2, 2),
+             with_bn: bool = True,
+             bn_config: dict = base_bn_config,
+             version: str = 'V1'):
+
+    assert version in ["V1", "V2"], "version must be either V1 or V2"
+
+    blocks_per_group = [3, 4, 6, 3]
+    if type(size) == int:
+        init_conv_size = size
+        sizes = [[size*(2**i), size*(2**i), 4*size*(2**i)]*blocks_per_group[i] for i in range(4)]  #[1, 2, 4, 8]]
+        fc_size = 16 * size
+        # fc2_size = 2*size
+    else:
+        init_conv_size = size[0]
+        fc_size = size[-1]
+        # fc2_size = size[-1]
+        sizes = size[1:-1]
+        # sizes = size[1:-2]
+        # sizes = size[1:]
+        sizes = [sizes[i:j] for i, j in ((0, 9), (9, 21), (21, 39), (39, 48))]
+
+    resnet_config = {
+                    "blocks_per_group": (3, 4, 6, 3),
+                    "bottleneck": True,
+                    "channels_per_group": sizes,  # typical resnet50 size = 64 (so 256 in first block after bottleneck)
+                    "use_projection": (True, True, True, True),
                     "bn_config": bn_config
                     }
     default_initial_conv_config["output_channels"] = init_conv_size
