@@ -96,6 +96,7 @@ class ExpConfig:
     with_rng_seed: int = 428
     linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
     measure_linear_perf: bool = False  # Measure performance over the linear network without changing activation
+    record_distribution_data: bool = False  # Whether to record distribution at end of training -- high memory usage
     save_wanda: bool = False  # Whether to save weights and activations value or not
     save_act_only: bool = True  # Only saving distributions with wanda, not the weights
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
@@ -136,6 +137,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         bn_config_choice.keys())
     # assert exp_config.reg_param_schedule in reg_param_scheduler_choice.keys(), "Current reg param scheduler available: " + str(
     #     reg_param_scheduler_choice.keys())
+    if exp_config.record_distribution_data:
+        assert not exp_config.dynamic_pruning, "Dynamic pruning must be disabled to record meaningful distribution data"
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -263,266 +266,247 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     size = exp_config.size
 
-    def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params, state, opt_state, opt,
-                                 total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
-                                 scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn):
-        """ Inside a function to make sure variables in function scope are cleared from memory"""
-        if step == exp_config.training_steps and bool(add_steps):
-            print("Entered pruning phase")
-            #  Reset optimizer:
-            optimizer = optimizer_choice[exp_config.pruning_opt]
-            if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamw
-                if exp_config.wd_param:  # wd_param overwrite reg_param when specified
-                    optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
-                else:
-                    optimizer = Partial(optimizer, weight_decay=reg_param)
-            opt_chain = []
-            # if exp_config.gradient_clipping:
-            #     opt_chain.append(optax.clip(0.1))
-            lr_schedule = lr_scheduler_choice["one_cycle"](add_steps, pruning_lr, None, None)  # TODO: fixed schd...
-            opt_chain.append(optimizer(lr_schedule))
-            opt = optax.chain(*opt_chain)
-            opt_state = opt.init(params)
-            state = init_state  # Reset state as well
-            # Reset losses etc.
-            # utl.clear_caches()
-            # loss.clear_cache()
-            # test_loss_fn.clear_cache()
-            # update_fn.clear_cache()
-            decaying_reg_param = pruning_reg_param
-            loss = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg, reg_param=pruning_reg_param,
-                                           classes=classes, with_dropout=with_dropout)
-            test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg,
-                                                   reg_param=pruning_reg_param,
-                                                   classes=classes, is_training=False, with_dropout=with_dropout)
-            update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                            exp_config.noise_live_only, with_dropout=with_dropout,
-                                                            modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                            acti_map=acti_map)
+    def train_run(reg_param):
 
-        if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
-                (not (step % (exp_config.training_steps - 1) == 0)) and (not exp_config.reg_param_schedule):
-            decaying_reg_param = decaying_reg_param / 10
-            if (step >= ((decay_cycles - 1) * reg_param_decay_period)) and exp_config.zero_end_reg_param:
-                decaying_reg_param = 0
-            print("decaying reg param:")
-            print(decaying_reg_param)
-            print()
-            # utl.clear_caches()
-            # loss.clear_cache()
-            # test_loss_fn.clear_cache()
-            # update_fn.clear_cache()
-            loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                           classes=classes, with_dropout=with_dropout)
-            test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                                   reg_param=decaying_reg_param,
-                                                   classes=classes, is_training=False, with_dropout=with_dropout)
-            update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                            exp_config.noise_live_only, with_dropout=with_dropout,
-                                                            modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                            acti_map=acti_map)
-
-        if step % exp_config.record_freq == 0:
-            train_loss = test_loss_fn(params, state, next(train_eval), _reg_param=decaying_reg_param)
-            train_accuracy = accuracy_fn(params, state, next(train_eval))
-            test_accuracy = accuracy_fn(params, state, next(test_eval))
-            test_loss = test_loss_fn(params, state, next(test_eval), _reg_param=decaying_reg_param)
-            train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
-            # Periodically print classification accuracy on train & test sets.
-            if step % exp_config.report_freq == 0:
-                print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
-                      f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
-            test_death_batch = next(test_death)
-            dead_neurons = death_check_fn(params, state, test_death_batch)
-            # Record some metrics
-            dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
-            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons", step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(jax.device_get(total_neurons - dead_neurons_count), name="Live neurons", step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
-            if exp_config.epsilon_close:
-                for eps in exp_config.epsilon_close:
-                    eps_dead_neurons = death_check_fn(params, state, test_death_batch, eps)
-                    eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
-                    exp_run.track(jax.device_get(eps_dead_neurons_count),
-                                  name="Quasi-dead neurons", step=step,
-                                  context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
-                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
-                                  name="Quasi-live neurons", step=step,
-                                  context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
-            exp_run.track(test_accuracy, name="Test accuracy", step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(train_accuracy, name="Train accuracy", step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(jax.device_get(train_loss), name="Train loss", step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(jax.device_get(test_loss), name="Test loss", step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
-
-        if step % exp_config.pruning_freq == 0:
-            dead_neurons = scan_death_check_fn(params, state, test_death)
-            dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
-            exp_run.track(jax.device_get(dead_neurons_count), name="Dead neurons; whole training dataset",
-                          step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
-            exp_run.track(jax.device_get(total_neurons - dead_neurons_count),
-                          name="Live neurons; whole training dataset",
-                          step=step,
-                          context={"reg param": utl.size_to_string(reg_param)})
-            if exp_config.epsilon_close:
-                for eps in exp_config.epsilon_close:
-                    eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
-                    eps_dead_neurons_count, eps_dead_per_layers = utl.count_dead_neurons(eps_dead_neurons)
-                    exp_run.track(jax.device_get(eps_dead_neurons_count),
-                                  name="Quasi-dead neurons; whole training dataset",
-                                  step=step,
-                                  context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
-                    exp_run.track(jax.device_get(total_neurons - eps_dead_neurons_count),
-                                  name="Quasi-live neurons; whole training dataset",
-                                  step=step,
-                                  context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
-            for i, layer_dead in enumerate(dead_per_layers):
-                total_neuron_in_layer = total_per_layer[i]
-                exp_run.track(jax.device_get(layer_dead),
-                              name=f"Dead neurons in layer {i}; whole training dataset", step=step,
-                              context={"reg param": utl.size_to_string(reg_param)})
-                exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
-                              name=f"Live neurons in layer {i}; whole training dataset", step=step,
-                              context={"reg param": utl.size_to_string(reg_param)})
-            del dead_per_layers
-            # if decay_cycles > 1:  # Don't record, aim metric don't support y value smaller than 0.001 ...
-            #     exp_run.track(decaying_reg_param, name="Current reg_param value", step=step,
-            #                   context={"reg param": utl.size_to_string(reg_param)})
-
-            if exp_config.record_gate_grad_stat:
-                snap_score = scr.snap_score(params, state, test_loss_fn, train_eval, 5)  # Avg on 5 minibatches
-                gate_grad.update(snap_score)
-                for i, layer_gate_grad in enumerate(gate_grad.values()):  # Ordered dict retrieves layers in order
-                    exp_run.track(jax.device_get(jnp.mean(layer_gate_grad)),
-                                  name=f"Average gate gradients magnitude in layer {i}; whole training dataset",
-                                  step=step,
-                                  context={"reg param": utl.size_to_string(reg_param)})
-
-            if exp_config.measure_linear_perf:
-                # Record performance over full validation set of the NN for relu and decaying_reg_paramlinear activations
-                relu_perf = jax.device_get(final_accuracy_fn(params, state, test_eval))
-                exp_run.track(relu_perf,
-                              name="Total accuracy for relu NN", step=step,
-                              context={"reg param": utl.size_to_string(reg_param)})
-                lin_perf = jax.device_get(lin_full_accuracy_fn(params, state, test_eval))
-                exp_run.track(lin_perf,
-                              name="Total accuracy for linear NN", step=step,
-                              context={"reg param": utl.size_to_string(reg_param)})
-
-            if exp_config.dynamic_pruning and step >= exp_config.prune_after:
-                # Pruning the network
-                # params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons,
-                #                                                                       frozen_layer_lists, opt_state,
-                #                                                                       state)
-                neuron_states.update_from_ordered_list(dead_neurons)
-                params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
-                                                                                      neuron_states, opt_state,
-                                                                                      state)
-                architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
-                    exp_config.architecture]
-                architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
-                net, raw_net = build_models(*architecture)
-                total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
-                # for _layer_name in params.keys():
-                #     if "logit" in _layer_name:
-                #         print("final_countdown")
-                #         print(jax.tree_map(jnp.shape, params[_layer_name]))
-                #         print()                    net.clear_cache()
-
-                # Clear previous cache
+        def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params, state, opt_state, opt,
+                                     total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
+                                     scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn):
+            """ Inside a function to make sure variables in function scope are cleared from memory"""
+            if step == exp_config.training_steps and bool(add_steps):
+                print("Entered pruning phase")
+                #  Reset optimizer:
+                optimizer = optimizer_choice[exp_config.pruning_opt]
+                if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamw
+                    if exp_config.wd_param:  # wd_param overwrite reg_param when specified
+                        optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
+                    else:
+                        optimizer = Partial(optimizer, weight_decay=reg_param)
+                opt_chain = []
+                # if exp_config.gradient_clipping:
+                #     opt_chain.append(optax.clip(0.1))
+                lr_schedule = lr_scheduler_choice["one_cycle"](add_steps, pruning_lr, None, None)  # TODO: fixed schd...
+                opt_chain.append(optimizer(lr_schedule))
+                opt = optax.chain(*opt_chain)
+                opt_state = opt.init(params)
+                state = init_state  # Reset state as well
+                # Reset losses etc.
                 # utl.clear_caches()
                 # loss.clear_cache()
                 # test_loss_fn.clear_cache()
-                # accuracy_fn.clear_cache()
                 # update_fn.clear_cache()
-                # death_check_fn.clear_cache()
-                # scan_death_check_fn.clear_cache()
-                # eps_death_check_fn.clear_cache()  # No more cache
-                # eps_scan_death_check_fn.clear_cache()  # No more cache
-                # Recompile training/monitoring functions
-                loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                               reg_param=decaying_reg_param, classes=classes,
-                                               with_dropout=with_dropout)
+                decaying_reg_param = pruning_reg_param
+                loss = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg, reg_param=pruning_reg_param,
+                                               classes=classes, with_dropout=with_dropout)
+                test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg,
+                                                       reg_param=pruning_reg_param,
+                                                       classes=classes, is_training=False, with_dropout=with_dropout)
+                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                                exp_config.noise_live_only, with_dropout=with_dropout,
+                                                                modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                                acti_map=acti_map)
+
+            if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
+                    (not (step % (exp_config.training_steps - 1) == 0)) and (not exp_config.reg_param_schedule):
+                decaying_reg_param = decaying_reg_param / 10
+                if (step >= ((decay_cycles - 1) * reg_param_decay_period)) and exp_config.zero_end_reg_param:
+                    decaying_reg_param = 0
+                print("decaying reg param:")
+                print(decaying_reg_param)
+                print()
+                # utl.clear_caches()
+                # loss.clear_cache()
+                # test_loss_fn.clear_cache()
+                # update_fn.clear_cache()
+                loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+                                               classes=classes, with_dropout=with_dropout)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                        reg_param=decaying_reg_param,
-                                                       classes=classes,
-                                                       is_training=False, with_dropout=with_dropout)
+                                                       classes=classes, is_training=False, with_dropout=with_dropout)
+                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                                exp_config.noise_live_only, with_dropout=with_dropout,
+                                                                modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                                acti_map=acti_map)
+
+            if step % exp_config.record_freq == 0:
+                train_loss = test_loss_fn(params, state, next(train_eval), _reg_param=decaying_reg_param)
+                train_accuracy = accuracy_fn(params, state, next(train_eval))
+                test_accuracy = accuracy_fn(params, state, next(test_eval))
+                test_loss = test_loss_fn(params, state, next(test_eval), _reg_param=decaying_reg_param)
+                # train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
+                # Periodically print classification accuracy on train & test sets.
+                if step % exp_config.report_freq == 0:
+                    print(f"[Step {step}] Train / Test accuracy: {train_accuracy:.3f} / "
+                          f"{test_accuracy:.3f}. Loss: {train_loss:.3f}.")
+                test_death_batch = next(test_death)
+                dead_neurons = death_check_fn(params, state, test_death_batch)
+                # Record some metrics
+                dead_neurons_count, _ = utl.count_dead_neurons(dead_neurons)
+                exp_run.track(dead_neurons_count, name="Dead neurons", step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
+                exp_run.track(total_neurons - dead_neurons_count, name="Live neurons", step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
+                if exp_config.epsilon_close:
+                    for eps in exp_config.epsilon_close:
+                        eps_dead_neurons = death_check_fn(params, state, test_death_batch, eps)
+                        eps_dead_neurons_count, _ = utl.count_dead_neurons(eps_dead_neurons)
+                        exp_run.track(eps_dead_neurons_count,
+                                      name="Quasi-dead neurons", step=step,
+                                      context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
+                        exp_run.track(total_neurons - eps_dead_neurons_count,
+                                      name="Quasi-live neurons", step=step,
+                                      context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
+                exp_run.track(test_accuracy, name="Test accuracy", step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
+                exp_run.track(train_accuracy, name="Train accuracy", step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
+                exp_run.track(train_loss, name="Train loss", step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
+                exp_run.track(test_loss, name="Test loss", step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
+
+            if step % exp_config.pruning_freq == 0:
+                dead_neurons = scan_death_check_fn(params, state, test_death)
+                dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
+                exp_run.track(dead_neurons_count, name="Dead neurons; whole training dataset",
+                              step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
+                exp_run.track(total_neurons - dead_neurons_count,
+                              name="Live neurons; whole training dataset",
+                              step=step,
+                              context={"reg param": utl.size_to_string(reg_param)})
+                if exp_config.epsilon_close:
+                    for eps in exp_config.epsilon_close:
+                        eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
+                        eps_dead_neurons_count, eps_dead_per_layers = utl.count_dead_neurons(eps_dead_neurons)
+                        exp_run.track(eps_dead_neurons_count,
+                                      name="Quasi-dead neurons; whole training dataset",
+                                      step=step,
+                                      context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
+                        exp_run.track(total_neurons - eps_dead_neurons_count,
+                                      name="Quasi-live neurons; whole training dataset",
+                                      step=step,
+                                      context={"reg param": utl.size_to_string(reg_param), "epsilon": eps})
+                for i, layer_dead in enumerate(dead_per_layers):
+                    total_neuron_in_layer = total_per_layer[i]
+                    exp_run.track(layer_dead,
+                                  name=f"Dead neurons in layer {i}; whole training dataset", step=step,
+                                  context={"reg param": utl.size_to_string(reg_param)})
+                    exp_run.track(total_neuron_in_layer - layer_dead,
+                                  name=f"Live neurons in layer {i}; whole training dataset", step=step,
+                                  context={"reg param": utl.size_to_string(reg_param)})
+                del dead_per_layers
+                # if decay_cycles > 1:  # Don't record, aim metric don't support y value smaller than 0.001 ...
+                #     exp_run.track(decaying_reg_param, name="Current reg_param value", step=step,
+                #                   context={"reg param": utl.size_to_string(reg_param)})
+
+                if exp_config.record_gate_grad_stat:
+                    snap_score = scr.snap_score(params, state, test_loss_fn, train_eval, 5)  # Avg on 5 minibatches
+                    gate_grad.update(snap_score)
+                    for i, layer_gate_grad in enumerate(gate_grad.values()):  # Ordered dict retrieves layers in order
+                        exp_run.track(jnp.mean(layer_gate_grad),
+                                      name=f"Average gate gradients magnitude in layer {i}; whole training dataset",
+                                      step=step,
+                                      context={"reg param": utl.size_to_string(reg_param)})
+
+                if exp_config.measure_linear_perf:
+                    # Record performance over full validation set of the NN for relu and decaying_reg_paramlinear activations
+                    relu_perf = final_accuracy_fn(params, state, test_eval)
+                    exp_run.track(relu_perf,
+                                  name="Total accuracy for relu NN", step=step,
+                                  context={"reg param": utl.size_to_string(reg_param)})
+                    lin_perf = lin_full_accuracy_fn(params, state, test_eval)
+                    exp_run.track(lin_perf,
+                                  name="Total accuracy for linear NN", step=step,
+                                  context={"reg param": utl.size_to_string(reg_param)})
+
+                if exp_config.dynamic_pruning and step >= exp_config.prune_after:
+                    # Pruning the network
+                    # params, opt_state, state, new_sizes = utl.remove_dead_neurons_weights(params, dead_neurons,
+                    #                                                                       frozen_layer_lists, opt_state,
+                    #                                                                       state)
+                    neuron_states.update_from_ordered_list(dead_neurons)
+                    params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
+                                                                                          neuron_states, opt_state,
+                                                                                          state)
+
+                    architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+                        exp_config.architecture]
+                    architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+                    net = build_models(*architecture)[0]
+                    total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+
+                    loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                   reg_param=decaying_reg_param, classes=classes,
+                                                   with_dropout=with_dropout)
+                    test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                           reg_param=decaying_reg_param,
+                                                           classes=classes,
+                                                           is_training=False, with_dropout=with_dropout)
+                    accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+                    update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
+                                                                    exp_config.noise_imp, exp_config.noise_live_only,
+                                                                    with_dropout=with_dropout,
+                                                                    modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                                    acti_map=acti_map)
+                    death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+                    # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                    #                                                  epsilon=exp_config.epsilon_close,
+                    #                                                  avg=exp_config.avg_for_eps)
+                    # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+                    scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+                    final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+                    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
+
+                if exp_config.dataset != "imagenet":
+                    train_acc_whole_ds = full_train_acc_fn(params, state, train_eval)
+                    exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
+                                  step=step,
+                                  context={"reg param": utl.size_to_string(reg_param)})
+
+            # if ((step+1) % exp_config.live_freq == 0) and (step+2 < exp_config.training_steps):
+            #     current_dead_neurons = scan_death_check_fn(params, state, test_death)
+            #     current_dead_neurons_count, _ = utl.count_dead_neurons(current_dead_neurons)
+            #     del current_dead_neurons
+            #     del _
+            #     exp_run.track(jax.device_get(total_neurons - current_dead_neurons_count),
+            #                   name=f"Live neurons at training step {step+1}", step=starting_neurons)
+
+            if (((step + 1) % (exp_config.training_steps // 2)) == 0) and exp_config.linear_switch:
+                activation_fn = activation_choice["linear"]
+                architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+                    exp_config.architecture]
+                architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
+                net = build_models(*architecture, with_dropout=with_dropout)[0]
+
+                # Reset training/monitoring functions
+                # utl.clear_caches()
+                loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+                                               classes=classes, with_dropout=with_dropout)
+                test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                       reg_param=decaying_reg_param,
+                                                       classes=classes, is_training=False, with_dropout=with_dropout)
                 accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
-                                                                exp_config.noise_imp, exp_config.noise_live_only,
-                                                                with_dropout=with_dropout,
+                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                                exp_config.noise_live_only, with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
                                                                 acti_map=acti_map)
                 death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                 # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                 #                                                  epsilon=exp_config.epsilon_close,
                 #                                                  avg=exp_config.avg_for_eps)
-                scan_len = int(partial_train_ds_size // death_minibatch_size)
-                # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                 scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+                # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                 final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
                 full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
-            if exp_config.dataset != "imagenet":
-                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
-                exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
-                              step=step,
-                              context={"reg param": utl.size_to_string(reg_param)})
-
-        # if ((step+1) % exp_config.live_freq == 0) and (step+2 < exp_config.training_steps):
-        #     current_dead_neurons = scan_death_check_fn(params, state, test_death)
-        #     current_dead_neurons_count, _ = utl.count_dead_neurons(current_dead_neurons)
-        #     del current_dead_neurons
-        #     del _
-        #     exp_run.track(jax.device_get(total_neurons - current_dead_neurons_count),
-        #                   name=f"Live neurons at training step {step+1}", step=starting_neurons)
-
-        if (((step + 1) % (exp_config.training_steps // 2)) == 0) and exp_config.linear_switch:
-            activation_fn = activation_choice["linear"]
-            architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
-                exp_config.architecture]
-            architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-            net, raw_net = build_models(*architecture, with_dropout=with_dropout)
-
-            # Reset training/monitoring functions
-            # utl.clear_caches()
-            loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                           classes=classes, with_dropout=with_dropout)
-            test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                                   reg_param=decaying_reg_param,
-                                                   classes=classes, is_training=False, with_dropout=with_dropout)
-            accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-            update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                            exp_config.noise_live_only, with_dropout=with_dropout,
-                                                            modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                            acti_map=acti_map)
-            death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-            # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
-            #                                                  epsilon=exp_config.epsilon_close,
-            #                                                  avg=exp_config.avg_for_eps)
-            scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-            # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
-            final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
-            full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
-
-        return (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
-                accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn)
-
-    for reg_param in exp_config.reg_params:  # Vary the regularizer parameter to measure impact on overfitting
-        # Time the subrun for the different sizes
-        subrun_start_time = time.time()
-        jax.clear_backends()
-        gc.collect()
+            return (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
+                    accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn)
 
         # Make the network and optimiser
-        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+            exp_config.architecture]
         if not exp_config.kept_classes:
-            classes = dataset_target_cardinality[exp_config.dataset]   # Retrieving the number of classes in dataset
+            classes = dataset_target_cardinality[exp_config.dataset]  # Retrieving the number of classes in dataset
         else:
             classes = exp_config.kept_classes
         architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
@@ -530,7 +514,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         if exp_config.measure_linear_perf:
             lin_act_fn = activation_choice["linear"]
-            lin_architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
+            lin_architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+                exp_config.architecture]
             lin_architecture = lin_architecture(size, classes, activation_fn=lin_act_fn, **net_config)
             lin_net, raw_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
@@ -546,10 +531,11 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         if 'noisy' in exp_config.optimizer:
             opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
-                                                         gamma=exp_config.noise_gamma))
+                                       gamma=exp_config.noise_gamma))
         else:
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
-                                                                      exp_config.final_lr, exp_config.lr_decay_steps)
+                                                                      exp_config.final_lr,
+                                                                      exp_config.lr_decay_steps)
             opt_chain.append(optimizer(lr_schedule))
         opt = optax.chain(*opt_chain)
 
@@ -557,7 +543,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
                                        classes=classes, with_dropout=with_dropout)
         test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
-                                            classes=classes, is_training=False, with_dropout=with_dropout)
+                                               classes=classes, is_training=False, with_dropout=with_dropout)
         accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
         # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
@@ -571,15 +557,16 @@ def run_exp(exp_config: ExpConfig) -> None:
         if exp_config.measure_linear_perf:
             lin_accuracy_fn = utl.accuracy_given_model(lin_net, with_dropout=with_dropout)
             lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
-        
+
         params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-        # initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
-        init_state = copy.deepcopy(state)
+        # initial_params = utl.jax_deep_copy(params)  # Keep a copy of the initial params for relative change metric
+        init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
         # frozen_layer_lists = utl.extract_layer_lists(params)
         activation_layer_order = list(state.keys())
         neuron_states = utl.NeuronStates(activation_layer_order)
         acti_map = utl.get_activation_mapping(raw_net, next(train))
+        del raw_net
         if exp_config.record_gate_grad_stat:
             gate_grad = utl.NeuronStates(activation_layer_order)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
@@ -599,15 +586,16 @@ def run_exp(exp_config: ExpConfig) -> None:
         # print(hk.experimental.tabulate(net.init)(next(train)))
         # raise SystemExit
 
-        decaying_reg_param = copy.deepcopy(reg_param)
+        decaying_reg_param = reg_param
         decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
         if decay_cycles == 2:
-            reg_param_decay_period = int(0.8*exp_config.training_steps)
+            reg_param_decay_period = int(0.8 * exp_config.training_steps)
         else:
             reg_param_decay_period = exp_config.training_steps // decay_cycles
 
         if exp_config.reg_param_schedule:
-            reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](exp_config.training_steps, reg_param)
+            reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](exp_config.training_steps,
+                                                                                  reg_param)
 
         if exp_config.prune_at_end:
             pruning_reg_param, pruning_lr, add_steps = exp_config.prune_at_end
@@ -620,18 +608,26 @@ def run_exp(exp_config: ExpConfig) -> None:
                 decaying_reg_param = reg_sched(step)
             # Checkpoint
             if (step > 0) and (step % exp_config.checkpoint_freq == 0):
-                print(f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time()-subrun_start_time)}")
+                print(
+                    f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time() - subrun_start_time)}")
                 # TODO: Add checkpointing for efficient and automatic run restart
             # Record metrics and prune model if needed:
-            (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
+            (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss,
+             test_loss_fn,
              accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
              update_fn) = record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params,
-                                                   state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
-                                                   accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
+                                                   state, opt_state, opt, total_neurons, total_per_layer, loss,
+                                                   test_loss_fn,
+                                                   accuracy_fn, death_check_fn, scan_death_check_fn,
+                                                   full_train_acc_fn,
                                                    final_accuracy_fn, update_fn)  # Ugly, but cache is cleared
+            if (step % exp_config.pruning_freq == 0) and exp_config.dynamic_pruning:
+                # jax.clear_backends()
+                gc.collect()
             # Train step over single batch
             if with_dropout:
-                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train), dropout_key,
+                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
+                                                                  dropout_key,
                                                                   _reg_param=decaying_reg_param)
             else:
                 if not exp_config.add_noise:
@@ -640,42 +636,44 @@ def run_exp(exp_config: ExpConfig) -> None:
                 else:
                     noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
                     noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
-                    params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train), noise_var,
+                    params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train),
+                                                                    noise_var,
                                                                     noise_key, _reg_param=decaying_reg_param)
 
-        # final_accuracy = jax.device_get(accuracy_fn(params, next(final_test_eval)))
-        final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
-        final_train_acc = jax.device_get(full_train_acc_fn(params, state, train_eval))
-        # size_arr.append(starting_neurons)
+        if exp_config.record_distribution_data:
+            scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
+                utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
+            activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state,
+                                                                                             test_death)
+        else:
+            final_dead_neurons = scan_death_check_fn(params, state, test_death)
 
-        scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
-            utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
-        activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
-        # final_dead_neurons = scan_death_check_fn(params, test_death)
-
-        # final_dead_neurons = jax.tree_map(utl.logical_and_sum, batched_dead_neurons)
-        final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
-        # pruned_params = utl.remove_dead_neurons_weights(params, final_dead_neurons,
-        #                                                          frozen_layer_lists, opt_state,
-        #                                                          state)[0]
         neuron_states.update_from_ordered_list(final_dead_neurons)
-        pruned_params = utl.prune_params_state_optstate(params, acti_map,
-                                                           neuron_states, opt_state,
-                                                           state)[0]
-        final_params_count = utl.count_params(pruned_params)
-        del final_dead_neurons  # Freeing memory
+        params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
+                                                                              neuron_states, opt_state,
+                                                                              state)  # Final pruning before eval
+        final_params_count = utl.count_params(params)
 
-        activations_max, activations_mean, activations_count, _ = activations_data
-        if exp_config.save_wanda:
-            activations_meta.maximum[reg_param] = activations_max
-            activations_meta.mean[reg_param] = activations_mean
-            activations_meta.count[reg_param] = activations_count
-        activations_max, _ = ravel_pytree(activations_max)
-        activations_max = jax.device_get(activations_max)
-        activations_mean, _ = ravel_pytree(activations_mean)
-        activations_mean = jax.device_get(activations_mean)
-        activations_count, _ = ravel_pytree(activations_count)
-        activations_count = jax.device_get(activations_count)
+        # final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
+        del final_dead_neurons  # Freeing memory
+        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+            exp_config.architecture]
+        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+        net = build_models(*architecture)[0]
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+
+        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+        # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+        #                                                  epsilon=exp_config.epsilon_close,
+        #                                                  avg=exp_config.avg_for_eps)
+        # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
+
+        final_accuracy = final_accuracy_fn(params, state, test_eval)
+        final_train_acc = full_train_acc_fn(params, state, train_eval)
 
         # Additionally, track an 'on average' number of death neurons within a batch
         # def scan_f(_, __):
@@ -684,7 +682,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         # _, batches_final_live_neurons = jax.lax.scan(scan_f, None, None, scan_len)
         batch_dead_neurons = death_check_fn(params, state, next(test_death))
         batches_final_live_neurons = [total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0]]
-        for i in range(scan_len-1):
+        for i in range(scan_len - 1):
             batch_dead_neurons = death_check_fn(params, state, next(test_death))
             batches_final_live_neurons.append(total_neurons - utl.count_dead_neurons(batch_dead_neurons)[0])
         batches_final_live_neurons = jnp.stack(batches_final_live_neurons)
@@ -692,18 +690,18 @@ def run_exp(exp_config: ExpConfig) -> None:
         avg_final_live_neurons = jnp.mean(batches_final_live_neurons, axis=0)
         # std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
 
-        log_step = reg_param*1e8
+        log_step = reg_param * 1e8
 
-        exp_run.track(jax.device_get(avg_final_live_neurons),
+        exp_run.track(avg_final_live_neurons,
                       name="On average, live neurons after convergence w/r reg param", step=log_step)
-        exp_run.track(jax.device_get(avg_final_live_neurons / init_total_neurons),
+        exp_run.track(avg_final_live_neurons / init_total_neurons,
                       name="Average live neurons ratio after convergence w/r reg param", step=log_step)
-        total_live_neurons = total_neurons - final_dead_neurons_count
-        exp_run.track(jax.device_get(total_live_neurons),
+        total_live_neurons = total_neurons  # - final_dead_neurons_count
+        exp_run.track(total_live_neurons,
                       name="Live neurons after convergence w/r reg param", step=log_step)
-        exp_run.track(jax.device_get(total_live_neurons/init_total_neurons),
+        exp_run.track(total_live_neurons / init_total_neurons,
                       name="Live neurons ratio after convergence w/r reg param", step=log_step)
-        exp_run.track(jax.device_get(reg_param),  # Logging true reg_param value to display with aim metrics
+        exp_run.track(reg_param,  # Logging true reg_param value to display with aim metrics
                       name="Reg param w/r reg param", step=log_step)
         if exp_config.epsilon_close:
             for eps in exp_config.epsilon_close:
@@ -714,41 +712,42 @@ def run_exp(exp_config: ExpConfig) -> None:
                 eps_batches_final_live_neurons = [total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0]]
                 for i in range(scan_len - 1):
                     eps_batch_dead_neurons = death_check_fn(params, state, next(test_death), eps)
-                    eps_batches_final_live_neurons.append(total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0])
+                    eps_batches_final_live_neurons.append(
+                        total_neurons - utl.count_dead_neurons(eps_batch_dead_neurons)[0])
                 eps_batches_final_live_neurons = jnp.stack(eps_batches_final_live_neurons)
                 eps_avg_final_live_neurons = jnp.mean(eps_batches_final_live_neurons, axis=0)
 
-                exp_run.track(jax.device_get(eps_avg_final_live_neurons),
+                exp_run.track(eps_avg_final_live_neurons,
                               name="On average, quasi-live neurons after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
-                exp_run.track(jax.device_get(eps_avg_final_live_neurons / total_neurons),
+                exp_run.track(eps_avg_final_live_neurons / total_neurons,
                               name="Average quasi-live neurons ratio after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
                 eps_total_live_neurons = total_neurons - eps_final_dead_neurons_count
-                exp_run.track(jax.device_get(eps_total_live_neurons),
+                exp_run.track(eps_total_live_neurons,
                               name="Quasi-live neurons after convergence w/r reg param", step=log_step,
                               context={"epsilon": eps})
-                exp_run.track(jax.device_get(eps_total_live_neurons / total_neurons),
+                exp_run.track(eps_total_live_neurons / total_neurons,
                               name="Quasi-live neurons ratio after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
 
-        for i, layer_dead in enumerate(final_dead_per_layer):
+        for i, live_in_layer in enumerate(total_per_layer):
             total_neuron_in_layer = init_total_per_layer[i]
-            live_in_layer = total_neuron_in_layer - layer_dead
-            exp_run.track(jax.device_get(live_in_layer),
+            # live_in_layer = total_neuron_in_layer - layer_dead
+            exp_run.track(live_in_layer,
                           name=f"Live neurons in layer {i} after convergence w/r reg param",
                           step=log_step)
-            exp_run.track(jax.device_get(live_in_layer/total_neuron_in_layer),
+            exp_run.track(live_in_layer / total_neuron_in_layer,
                           name=f"Live neurons ratio in layer {i} after convergence w/r reg param",
                           step=log_step)
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r reg param", step=log_step)
         exp_run.track(final_train_acc,
                       name="Train accuracy after convergence w/r reg param", step=log_step)
-        log_sparsity_step = jax.device_get(total_live_neurons/init_total_neurons) * 1000
+        log_sparsity_step = jax.device_get(total_live_neurons / init_total_neurons) * 1000
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
-        log_params_sparsity_step = final_params_count/initial_params_count * 1000
+        log_params_sparsity_step = final_params_count / initial_params_count * 1000
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of params remaining",
                       step=log_params_sparsity_step)
@@ -759,15 +758,28 @@ def run_exp(exp_config: ExpConfig) -> None:
         #         jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
         #         name="Relative change in norm of weights from init after convergence w/r reg param",
         #         step=log_step)
-        activations_max_dist = Distribution(activations_max, bin_count=100)
-        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
-                      context={"reg param": utl.size_to_string(reg_param)})
-        activations_mean_dist = Distribution(activations_mean, bin_count=100)
-        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
-                      context={"reg param": utl.size_to_string(reg_param)})
-        activations_count_dist = Distribution(activations_count, bin_count=50)
-        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
-                      context={"reg param": utl.size_to_string(reg_param)})
+
+        if exp_config.record_distribution_data:
+            activations_max, activations_mean, activations_count, _ = activations_data
+            if exp_config.save_wanda:
+                activations_meta.maximum[reg_param] = activations_max
+                activations_meta.mean[reg_param] = activations_mean
+                activations_meta.count[reg_param] = activations_count
+            activations_max, _ = ravel_pytree(activations_max)
+            # activations_max = jax.device_get(activations_max)
+            activations_mean, _ = ravel_pytree(activations_mean)
+            # activations_mean = jax.device_get(activations_mean)
+            activations_count, _ = ravel_pytree(activations_count)
+            # activations_count = jax.device_get(activations_count)
+            activations_max_dist = Distribution(activations_max, bin_count=100)
+            exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
+                          context={"reg param": utl.size_to_string(reg_param)})
+            activations_mean_dist = Distribution(activations_mean, bin_count=100)
+            exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
+                          context={"reg param": utl.size_to_string(reg_param)})
+            activations_count_dist = Distribution(activations_count, bin_count=50)
+            exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
+                          context={"reg param": utl.size_to_string(reg_param)})
 
         # live_neurons.append(total_neurons - final_dead_neurons_count)
         # avg_live_neurons.append(avg_final_live_neurons)
@@ -787,7 +799,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         if exp_config.save_wanda:
             # Pickling activations for later epsilon-close investigation in a .ipynb
-            with open(pickle_dir_path+'activations_meta.p', 'wb') as fp:
+            with open(pickle_dir_path + 'activations_meta.p', 'wb') as fp:
                 pickle.dump(asdict(activations_meta), fp)  # Update by overwrite
 
             if not exp_config.save_act_only:
@@ -796,11 +808,20 @@ def run_exp(exp_config: ExpConfig) -> None:
                 with open(pickle_dir_path + 'params_meta.p', 'wb') as fp:
                     pickle.dump(asdict(params_meta), fp)  # Update by overwrite
 
+    for reg_param in exp_config.reg_params:  # Vary the regularizer parameter to measure impact on overfitting
+        # Time the subrun for the different sizes
+        subrun_start_time = time.time()
+        # jax.clear_backends()
+        gc.collect()
+
+        train_run(reg_param)
+
         # Print running time
         print()
-        print(f"Running time for reg_param {reg_param}: " + str(timedelta(seconds=time.time()-subrun_start_time)))
+        print(f"Running time for reg_param {reg_param}: " + str(timedelta(seconds=time.time() - subrun_start_time)))
         print("----------------------------------------------")
         print()
+
 
     # Print total runtime
     print()

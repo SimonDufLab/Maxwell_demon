@@ -92,6 +92,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     run_start_time = time.time()
 
+    if "imagenet" in exp_config.dataset:
+        dataset_dir = exp_config.dataset
+        exp_config.dataset = "imagenet"
+
     assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(
         optimizer_choice.keys())
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(
@@ -167,6 +171,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         kept_indices = None
     load_data = dataset_choice[exp_config.dataset]
+    if exp_config.dataset == 'imagenet':
+        load_data = Partial(load_data, dataset_dir)
     eval_size = exp_config.eval_batch_size
     death_minibatch_size = exp_config.death_batch_size
     train_ds_size, train, train_eval, test_death = load_data(split="train", is_training=True,
@@ -179,6 +185,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
     steps_per_epoch = train_ds_size // exp_config.train_batch_size
+    if exp_config.dataset == 'imagenet':
+        partial_train_ds_size = train_ds_size/1000  # .1% of dataset used for evaluation on train
+        test_death = train_eval  # Don't want to prefetch too many ds
+    else:
+        partial_train_ds_size = train_ds_size
 
     if exp_config.save_wanda:
         # Recording metadata about activations that will be pickled
@@ -229,13 +240,13 @@ def run_exp(exp_config: ExpConfig) -> None:
     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
     update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-    scan_len = train_ds_size // death_minibatch_size
+    scan_len = int(partial_train_ds_size // death_minibatch_size)
     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
     # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
     scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
         utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
-    final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+    final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
     if exp_config.pruning_criterion:
         pruning_score_fn, pruning_step_test_fn = pruning_criterion_choice[exp_config.pruning_criterion]
         step_test_carry = 0.0
@@ -306,12 +317,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                                   name=f"Dead neurons in layer {i}; whole training dataset", step=step)
                     exp_run.track(jax.device_get(total_neuron_in_layer - layer_dead),
                                   name=f"Live neurons in layer {i}; whole training dataset", step=step)
-                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
-                exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
-                              step=step)
-                test_acc_whole_ds = jax.device_get(final_accuracy_fn(params, state, test_eval))
-                exp_run.track(test_acc_whole_ds, name="Test accuracy; whole eval dataset",
-                              step=step)
+                if exp_config.dataset != "imagenet":
+                    train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
+                    exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
+                                  step=step)
+                    test_acc_whole_ds = jax.device_get(final_accuracy_fn(params, state, test_eval))
+                    exp_run.track(test_acc_whole_ds, name="Test accuracy; whole eval dataset",
+                                  step=step)
         return print_and_record_metrics
 
     print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
@@ -396,12 +408,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt,
                                                                 with_dropout=with_dropout)
                 death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-                scan_len = train_ds_size // death_minibatch_size
+                scan_len = int(partial_train_ds_size // death_minibatch_size)
                 scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                 scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
                     utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
-                final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-                full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+                final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+                full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
                 print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
                                                                         scan_death_check_fn, full_train_acc_fn,
