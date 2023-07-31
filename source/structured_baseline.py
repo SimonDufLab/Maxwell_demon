@@ -5,6 +5,8 @@ import optax
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow as tf
+tf.config.experimental.set_visible_devices([], "GPU")
 from aim import Run, Distribution
 import os
 import time
@@ -86,6 +88,8 @@ cs = ConfigStore.instance()
 # Registering the Config class with the name '_config'.
 cs.store(name=exp_name + "_config", node=ExpConfig)
 
+# Using tf on CPU for data loading
+tf.config.experimental.set_visible_devices([], "GPU")
 
 @hydra.main(version_base=None, config_name=exp_name + "_config")
 def run_exp(exp_config: ExpConfig) -> None:
