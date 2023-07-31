@@ -5,8 +5,8 @@
 #SBATCH --cpus-per-task=8                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
 #SBATCH --mem=48G   #24G for Resnet18                                        # Ask for 10 GB of RAM
-#SBATCH --time=20:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
-#SBATCH -x 'cn-d[001-004], cn-g[005-012,017-026], cn-e[002-003], kepler5'  # Excluding DGX system, will require a jaxlib update and kepler 5 that have 16GB GPU memory
+#SBATCH --time=36:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+#SBATCH -x 'cn-b[001-005], cn-d[001-004], cn-g[005-012,017-026], cn-e[002-003], kepler5'  # Excluding DGX system, will require a jaxlib update and kepler 5 that have 16GB GPU memory
 
 # Copying Imagenet
 echo "Copying tf imagenet dataset"
@@ -85,6 +85,6 @@ export LD_PRELOAD="/home/mila/s/simon.dufort-labbe/.conda/envs/py38jax_tf/lib/li
 echo "Checking if tcmalloc was correctly attributed to LD_PRELOAD"
 echo $LD_PRELOAD
 
-# pruning density -> neuron sparsity. Typically, run for /rho in [0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9]
-python source/structured_baseline.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet18' training_steps=90083 report_freq=1000 record_freq=200 full_ds_eval_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True info=Resnet19_structured_imgnet pruning_criterion=earlycrop optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu save_wanda=False modulate_target_density=False pruning_steps=5 pruning_density=0.0 init_seed=23
+# pruning density -> neuron sparsity. Typically, run for /rho in [0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9
+python source/structured_baseline.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=90083 report_freq=1000 record_freq=200 full_ds_eval_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True info=Resnet50_structured_imgnet pruning_criterion=earlycrop optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu save_wanda=False modulate_target_density=False pruning_steps=5 pruning_density=0.0 init_seed=22
 wait $!
