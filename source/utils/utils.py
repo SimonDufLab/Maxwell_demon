@@ -2247,6 +2247,41 @@ def get_activation_mapping(net, inputs):
 
 
 ##############################
+# Minimnist utils
+# Utils for aggregating info about noise dynamics during the minimnist experiments
+##############################
+class GroupedHistory(dict):
+    """Dict object to collect statistics about individual neurons/weights throughout training. After training completes,
+       the stats will be mapped toward their respective group, live or dead neurons, and recorded accordingly."""
+
+    def __init__(self, neuron_noise_ratio: bool):
+        super().__init__()  # Initialize as an empty dict
+        if neuron_noise_ratio:
+            self["neuron_noise_ratio"] = {}
+            self.neuron_noise_ratio = self["neuron_noise_ratio"]
+
+    def update_neuron_noise_ratio(self, step, params, state, test_loss, dataloader_noisy, dataloader_full_batch):
+        gate_states, rest = scr.split_state(state)
+
+        def loss_wr_gate(_gate_states, _batch):
+            _state = scr.recombine_state_dicts(_gate_states, rest)
+            return test_loss(params, _state, _batch)
+
+        def grad_fn(_batch):
+            gate_grad = jax.grad(loss_wr_gate)(gate_states, _batch)
+            return gate_grad
+
+        def ratio_fn(noise, grad):
+            return jnp.abs(noise/(grad+1e-8))
+
+        true_neuron_gradient = grad_fn(next(dataloader_full_batch))
+        neuron_noise = jax.tree_map(jnp.subtract, grad_fn(next(dataloader_noisy)), true_neuron_gradient)
+        neuron_noise_to_grad_ratio = jax.tree_map(ratio_fn, neuron_noise, true_neuron_gradient)
+
+        self.neuron_noise_ratio[step] = neuron_noise_to_grad_ratio
+
+
+##############################
 # Varia
 ##############################
 def get_total_neurons(architecture, sizes):

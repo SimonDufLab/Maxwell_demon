@@ -37,6 +37,7 @@ class ExpConfig:
     report_freq: int = 2500
     record_freq: int = 100
     full_ds_eval_freq: int = 1000
+    update_history_freq: Optional[int] = None
     lr: float = 1e-3
     lr_schedule: str = "None"
     final_lr: float = 1e-6
@@ -285,15 +286,27 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
                                                             scan_death_check_fn, full_train_acc_fn, final_accuracy_fn)
+    if exp_config.update_history_freq:
+        history = utl.GroupedHistory(neuron_noise_ratio=True)
+
 
     for step in range(exp_config.training_steps):
         # Metrics and logs:
         print_and_record_metrics(step, params, state, total_neurons, total_per_layer)
+
+        if exp_config.update_history_freq and (step % exp_config.update_history_freq == 0):
+            history.update_neuron_noise_ratio(step, params, state, test_loss_fn, train, train_eval)
+
         # Train step over single batch
         if not exp_config.noisy_part_of_signal_only:
             params, state, opt_state = update_fn(params, state, opt_state, next(train))
         else:
             params, state, opt_state = update_fn(params, state, opt_state, next(train), next(train_eval))
+
+        # TODO: remove after testing
+        if step > 501:
+            print(history.neuron_noise_ratio)
+            raise SystemExit
 
     final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
     activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
@@ -316,6 +329,30 @@ def run_exp(exp_config: ExpConfig) -> None:
     #               name="Sparsity w/r params compression ratio",
     #               step=compression_ratio,
     #               context={"experiment phase": "noisy"})
+
+    # TODO: Draw a graph that show all neurons noise to gradient evolution per layer (timestep=1!)
+    # For each layer, make a plot
+    layers = ['model_and_activations/linear_layer/~/relu_activation_module',
+              'model_and_activations/linear_layer_1/~/relu_activation_module']
+
+    for layer in layers:
+        # Create a new figure for each layer
+        plt.figure(figsize=(10, 5))
+        plt.title(f'Gate Constants for {layer}')
+
+        steps = sorted(data_dict.keys())
+        for i in range(len(data_dict[steps[0]][layer]['gate_constant'])):
+            # Get gate constant for index i at each step
+            gate_constants = [data_dict[step][layer]['gate_constant'][i] for step in steps]
+
+            # Plot
+            plt.plot(steps, gate_constants, label=f'Index {i}')
+
+        plt.xlabel('Steps')
+        plt.ylabel('Gate Constants')
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+
+    plt.show()
 
     # Print running time
     print()
