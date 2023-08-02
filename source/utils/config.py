@@ -9,6 +9,7 @@ import utils.scores as scores
 # from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf, load_imagenet_tf, load_cifar100_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule, one_cycle_schedule, fix_step_decay
+from utils.utils import warmup_cosine_decay
 from models.mlp import mlp_3, mlp_3_bn, mlp_3_reg
 from models.mlp import mlp_3_act_pre_relu, mlp_3_act_pre_bn, mlp_3_act_post_bn
 from models.mlp import mlp_3_dropout
@@ -67,6 +68,7 @@ lr_scheduler_choice = {
     'fix_steps': fix_step_decay,
     'piecewise_constant': piecewise_constant_schedule,
     'cosine_decay': cosine_decay,
+    'warmup_cosine_decay': warmup_cosine_decay,
     'one_cycle': one_cycle_schedule
 }
 
