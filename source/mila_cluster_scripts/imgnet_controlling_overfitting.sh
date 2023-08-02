@@ -3,10 +3,10 @@
 #SBATCH --job-name=imgnet_controlling_overfitting
 #SBATCH --partition=long                           # Ask for unkillable job
 #SBATCH --cpus-per-task=8                                # Ask for 2 CPUs
-#SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=48G   #24G for Resnet18                                        # Ask for 10 GB of RAM
-#SBATCH --time=20:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
-#SBATCH -x 'cn-d[001-004], cn-g[005-012,017-026]'  # Excluding DGX system, will require a jaxlib update
+#SBATCH --gres=gpu:a100l:1                                     # Ask for 1 GPU
+#SBATCH --mem=96G   #24G for Resnet18                                        # Ask for 10 GB of RAM
+#SBATCH --time=40:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+# #SBATCH -x 'cn-b[001-005], cn-d[001-004], cn-g[005-012,017-026], cn-e[002-003], kepler5'  # Excluding DGX system, will require a jaxlib update and kepler 5 that have 16GB GPU memory and v100 with 32Gb memory
                                 # The job will run for 2.5 hours
 
 # Copying Imagenet
@@ -56,9 +56,9 @@ ulimit -n 4096 # Aim hit too many files open while preparing ds
 
 # Flags
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
-export TF_FORCE_GPU_ALLOW_GROWTH=true
+#export TF_FORCE_GPU_ALLOW_GROWTH=true
 export TCMALLOC_RELEASE_RATE=10.0
-export TCMALLOC_HEAP_LIMIT_MB=24576 # 24GB max heap
+# export TCMALLOC_HEAP_LIMIT_MB=24576 # 24GB max heap
 #export TCMALLOC_HEAP_LIMIT_MB=31744 # 31GB max heap for mem=32GB
 #export TCMALLOC_HEAP_LIMIT_MB=39936  # 39GB max heap for mem=40G
 #export TCMALLOC_HEAP_LIMIT_MB=48128 # 47GB max heap for mem=48GB
@@ -116,14 +116,24 @@ export LD_PRELOAD="/home/mila/s/simon.dufort-labbe/.conda/envs/py38jax_tf/lib/li
 echo "Checking if tcmalloc was correctly attributed to LD_PRELOAD"
 echo $LD_PRELOAD
 
-#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet18' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet19_dyn_pruning_one_cycle_decay 'reg_params="(0.0, 0.000001, 0.000005)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=26
-#wait $!
-
-#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet18' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet19_dyn_pruning_one_cycle_decay 'reg_params="(0.00001, 0.00005, 0.0001)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=26
-#wait $!
-
-python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet18' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet19_dyn_pruning_one_cycle_decay 'reg_params="(0.0005, 0.001, 0.005)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=26
+python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet50_one_cycle_decay 'reg_params="(0.0,)"' optimizer=momentum9 wd_param=0.00001 lr=1.0 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=33
 wait $!
 
-#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet18' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet19_dyn_pruning_one_cycle_decay 'reg_params="(0.01, 0.05, 0.1)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=61
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet50_one_cycle_decay 'reg_params="(0.000001,)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=33
+#wait $!
+
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet50_one_cycle_decay 'reg_params="(0.00001,)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=33
+#wait $!
+
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet50_one_cycle_decay 'reg_params="(0.0005,)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=33
+#wait $!
+
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet50_one_cycle_decay 'reg_params="(0.001,)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=33
+#wait $!
+
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=450410 report_freq=1000 record_freq=500 pruning_freq=12500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet50_one_cycle_decay 'reg_params="(0.000025,)"' optimizer=adamw wd_param=0.0001 lr=0.0003 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=False init_seed=33
+#wait $!
+
+# Appeared to be too much reg for imagenet; reuse in extreme compression only
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet18' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet19_dyn_pruning_one_cycle_decay 'reg_params="(0.01, 0.05, 0.1)"' optimizer=adamw wd_param=0.0001 lr=0.002 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=False init_seed=32
 #wait $!

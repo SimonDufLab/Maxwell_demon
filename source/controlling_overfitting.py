@@ -111,7 +111,7 @@ cs = ConfigStore.instance()
 cs.store(name=exp_name+"_config", node=ExpConfig)
 
 # Using tf on CPU for data loading
-tf.config.experimental.set_visible_devices([], "GPU")
+# tf.config.experimental.set_visible_devices([], "GPU") # Set earlier
 
 
 @hydra.main(version_base=None, config_name=exp_name+"_config")
@@ -276,12 +276,14 @@ def run_exp(exp_config: ExpConfig) -> None:
                 print("Entered pruning phase")
                 #  Reset optimizer:
                 optimizer = optimizer_choice[exp_config.pruning_opt]
+                opt_chain = []
                 if "adamw" in exp_config.pruning_opt:  # Pass reg_param to wd argument of adamw
                     if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                         optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
                     else:
                         optimizer = Partial(optimizer, weight_decay=reg_param)
-                opt_chain = []
+                elif exp_config.wd_param:  # TODO: Maybe exclude adamw?
+                    opt_chain.append(optax.add_decayed_weights(weight_decay=exp_config.wd_param))
                 # if exp_config.gradient_clipping:
                 #     opt_chain.append(optax.clip(0.1))
                 lr_schedule = lr_scheduler_choice["one_cycle"](add_steps, pruning_lr, None, None)  # TODO: fixed schd...
@@ -520,12 +522,14 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_net, raw_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
         optimizer = optimizer_choice[exp_config.optimizer]
+        opt_chain = []
         if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
             if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                 optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
             else:
                 optimizer = Partial(optimizer, weight_decay=reg_param)
-        opt_chain = []
+        elif exp_config.wd_param:  # TODO: Maybe exclude adamw?
+            opt_chain.append(optax.add_decayed_weights(weight_decay=exp_config.wd_param))
         if exp_config.gradient_clipping:
             opt_chain.append(optax.clip(10))
 

@@ -379,7 +379,41 @@ def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Seq
     return train_layers, test_layers
 
 
-class LinearBlock(hk.Module):
+class LinearBlockV1(hk.Module):
+    """Create the final linear layers for resnet models. Typical implementation, with only one fc layer"""
+
+    def __init__(
+            self,
+            is_training: bool,
+            num_classes: int,
+            logits_config: Optional[Mapping[str, FloatStrOrBool]],
+            name: Optional[str] = None,
+            preceding_activation_name: Optional[str] = None):
+        super().__init__(name=name)
+        self.activation_mapping = {}
+        self.preceding_activation_name = preceding_activation_name
+        self.logits_layer = hk.Linear(num_classes, **logits_config)  # TODO: de-hardencode the outputs_dim
+
+    def __call__(self, inputs):
+        activations = []
+        block_name = self.name + "/~/"
+        x = jnp.mean(inputs, axis=(1, 2))  # Kind of average pooling layer
+        # x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
+        x = self.logits_layer(x)
+
+        logits_name = block_name + self.logits_layer.name
+        self.activation_mapping[logits_name] = {"preceding": self.preceding_activation_name,
+                                                "following": None}
+        return x, activations
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return None
+
+
+class LinearBlockV2(hk.Module):
     """Create the final linear layers for resnet models. More than one since based on EarlyCrop implementation"""
 
     def __init__(
@@ -461,6 +495,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                  with_bn: bool = True,
                  bn_config: dict = base_bn_config,
                  resnet_block: hk.Module = ResnetBlockV1,  # Either V1 or V2
+                 v2_linear_block: bool = False,
                  name: Optional[str] = None,
                  initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
                  strides: Sequence[int] = (1, 2, 2, 2),):
@@ -515,12 +550,18 @@ def resnet_model(blocks_per_group: Sequence[int],
     #         [layer_mean, Partial(hk.Linear, **default_fc_layer_config), act],
     #         [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
 
-    train_layers.append([Partial(LinearBlock, is_training=True, num_classes=num_classes, activation_fn=activation_fn,
-                                 fc_config=(default_fc_layer_config, default_fc2_layer_config), logits_config=logits_config, bn_config=bn_config,
-                                 with_bn=with_bn)])
-    test_layers.append([Partial(LinearBlock, is_training=False, num_classes=num_classes, activation_fn=activation_fn,
-                                fc_config=(default_fc_layer_config, default_fc2_layer_config), logits_config=logits_config, bn_config=bn_config,
-                                with_bn=with_bn)])
+    if v2_linear_block:
+        train_layers.append([Partial(LinearBlockV2, is_training=True, num_classes=num_classes, activation_fn=activation_fn,
+                                     fc_config=(default_fc_layer_config, default_fc2_layer_config), logits_config=logits_config, bn_config=bn_config,
+                                     with_bn=with_bn)])
+        test_layers.append([Partial(LinearBlockV2, is_training=False, num_classes=num_classes, activation_fn=activation_fn,
+                                    fc_config=(default_fc_layer_config, default_fc2_layer_config), logits_config=logits_config, bn_config=bn_config,
+                                    with_bn=with_bn)])
+    else:
+        train_layers.append(
+            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config)])
+        test_layers.append(
+            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config)])
 
     # train_layers += train_final_layers
     # test_layers += test_final_layers
@@ -591,6 +632,7 @@ def resnet18(size: Union[int, Sequence[int]],
                         logits_config=logits_config,
                         with_bn=with_bn,
                         resnet_block=resnet_block_type,
+                        v2_linear_block=True,  # TODO: switch to resnet18/resnet19 name convention
                         **resnet_config)
 
 
@@ -602,7 +644,8 @@ def resnet50(size: Union[int, Sequence[int]],
              strides: Sequence[int] = (1, 2, 2, 2),
              with_bn: bool = True,
              bn_config: dict = base_bn_config,
-             version: str = 'V1'):
+             version: str = 'V1',
+             v2_lin_block: bool = False):
 
     assert version in ["V1", "V2"], "version must be either V1 or V2"
 
@@ -610,15 +653,15 @@ def resnet50(size: Union[int, Sequence[int]],
     if type(size) == int:
         init_conv_size = size
         sizes = [[size*(2**i), size*(2**i), 4*size*(2**i)]*blocks_per_group[i] for i in range(4)]  #[1, 2, 4, 8]]
-        fc_size = 16 * size
-        # fc2_size = 2*size
+        if v2_lin_block:
+            fc_size = 16 * size
     else:
         init_conv_size = size[0]
-        fc_size = size[-1]
-        # fc2_size = size[-1]
-        sizes = size[1:-1]
-        # sizes = size[1:-2]
-        # sizes = size[1:]
+        if v2_lin_block:
+            fc_size = size[-1]
+            sizes = size[1:-1]
+        else:
+            sizes = size[1:]
         sizes = [sizes[i:j] for i, j in ((0, 9), (9, 21), (21, 39), (39, 48))]
 
     resnet_config = {
@@ -629,8 +672,8 @@ def resnet50(size: Union[int, Sequence[int]],
                     "bn_config": bn_config
                     }
     default_initial_conv_config["output_channels"] = init_conv_size
-    default_fc_layer_config["output_size"] = fc_size
-    # default_fc2_layer_config["output_size"] = fc2_size
+    if v2_lin_block:
+        default_fc_layer_config["output_size"] = fc_size
 
     if version == "V1":
         resnet_block_type = ResnetBlockV1
@@ -644,4 +687,5 @@ def resnet50(size: Union[int, Sequence[int]],
                         logits_config=logits_config,
                         with_bn=with_bn,
                         resnet_block=resnet_block_type,
+                        v2_linear_block=v2_lin_block,
                         **resnet_config)

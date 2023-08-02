@@ -5,6 +5,8 @@ import optax
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow as tf
+tf.config.experimental.set_visible_devices([], "GPU")
 from aim import Run, Distribution
 import os
 import time
@@ -86,6 +88,8 @@ cs = ConfigStore.instance()
 # Registering the Config class with the name '_config'.
 cs.store(name=exp_name + "_config", node=ExpConfig)
 
+# Using tf on CPU for data loading # Set earlier
+# tf.config.experimental.set_visible_devices([], "GPU")
 
 @hydra.main(version_base=None, config_name=exp_name + "_config")
 def run_exp(exp_config: ExpConfig) -> None:
@@ -360,6 +364,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 print(f"new th: {target_density_for_th:.4f}")
             pruned_flag, step_test_carry = pruning_step_test_fn(target_density_for_th, params, initial_params, step_test_carry)
             if pruned_flag:  # Performs pruning
+                del initial_params  # Need to free memory
                 print(f"Performing pruning at step {step}")
                 _architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
                     exp_config.architecture]
@@ -388,11 +393,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                 total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
                 # Clear previous cache
-                loss.clear_cache()
-                test_loss_fn.clear_cache()
-                accuracy_fn.clear_cache()
-                update_fn.clear_cache()
-                death_check_fn.clear_cache()
+                # loss.clear_cache()
+                # test_loss_fn.clear_cache()
+                # accuracy_fn.clear_cache()
+                # update_fn.clear_cache()
+                # death_check_fn.clear_cache()
                 # scan_death_check_fn.clear_cache()
                 # scan_death_check_fn_with_activations_data.clear_cache()
 
