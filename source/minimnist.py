@@ -303,10 +303,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             params, state, opt_state = update_fn(params, state, opt_state, next(train), next(train_eval))
 
-        # TODO: remove after testing
-        if step > 501:
-            print(history.neuron_noise_ratio)
-            raise SystemExit
+        # # TODO: remove after testing
+        # if step > 501:
+        #     print(history.neuron_noise_ratio)
+        #     raise SystemExit
 
     final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
     activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
@@ -334,25 +334,44 @@ def run_exp(exp_config: ExpConfig) -> None:
     # For each layer, make a plot
     layers = ['model_and_activations/linear_layer/~/relu_activation_module',
               'model_and_activations/linear_layer_1/~/relu_activation_module']
+    # Define colors for dead and live neurons
+    colors = {True: 'red', False: 'green'}
 
-    for layer in layers:
+    for j, layer in enumerate(layers):
         # Create a new figure for each layer
-        plt.figure(figsize=(10, 5))
-        plt.title(f'Gate Constants for {layer}')
+        # plt.figure(figsize=(10, 5))
+        # plt.title(f'Gate Constants for {layer}')
 
-        steps = sorted(data_dict.keys())
-        for i in range(len(data_dict[steps[0]][layer]['gate_constant'])):
+        steps = sorted(history.neuron_noise_ratio.keys())
+        for i in range(len(history.neuron_noise_ratio[steps[0]][layer]['gate_constant'])):
             # Get gate constant for index i at each step
-            gate_constants = [data_dict[step][layer]['gate_constant'][i] for step in steps]
+            # gate_constants = [history.neuron_noise_ratio[step][layer]['gate_constant'][i] for step in steps]
 
-            # Plot
-            plt.plot(steps, gate_constants, label=f'Index {i}')
+            # # Color based on live state
+            # color = colors[bool(neuron_states[layer][i])]
+            #
+            # # Plot
+            # plt.plot(steps, gate_constants, label=f'Index {i}', color=color)
 
-        plt.xlabel('Steps')
-        plt.ylabel('Gate Constants')
-        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            #aim tracking instead
+            if bool(neuron_states[layer][i]):
+                for step in steps:
+                    exp_run.track(history.neuron_noise_ratio[step][layer]['gate_constant'][i],
+                                  name=f"Dead neurons noise to grad ratio in layer {j}",
+                                  step=step, context={"Neuron number": f'{i}'})
+            else:
+                for step in steps:
+                    exp_run.track(history.neuron_noise_ratio[step][layer]['gate_constant'][i],
+                                  name=f"Live neurons noise to grad ratio in layer {j}",
+                                  step=step, context={"Neuron number": f'{i}'})
 
-    plt.show()
+        # plt.xlabel('Steps')
+        # plt.ylabel('Gate Constants')
+        # plt.legend()
+        # plt.savefig(f'my_plot_layer{j}.png')
+
+    # plt.savefig('my_plot.png')
+    # plt.show()
 
     # Print running time
     print()

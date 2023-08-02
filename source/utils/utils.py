@@ -2272,7 +2272,7 @@ class GroupedHistory(dict):
             return gate_grad
 
         def ratio_fn(noise, grad):
-            return jnp.abs(noise/(grad+1e-8))
+            return jnp.clip(jnp.abs(noise/(grad+1e-8)), a_max=1)
 
         true_neuron_gradient = grad_fn(next(dataloader_full_batch))
         neuron_noise = jax.tree_map(jnp.subtract, grad_fn(next(dataloader_noisy)), true_neuron_gradient)
