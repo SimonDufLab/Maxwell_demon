@@ -1286,7 +1286,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
     # Create AutotuneOptions
     options = tf.data.Options()
     options.autotune.enabled = True
-    options.autotune.ram_budget = 40 * 1024**3  # TODO: RAM budget should be determine auto. current rule: 1/2 of total RAM
+    options.autotune.ram_budget = (66//3) * 1024**3  # TODO: RAM budget should be determine auto. current rule: 1/2 of total RAM
     options.autotune.cpu_budget = 8  # TODO: Also determine auto. current rule: all avail cpus
 
 
