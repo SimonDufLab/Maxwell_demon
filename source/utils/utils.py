@@ -1127,6 +1127,7 @@ augment_tf_dataset = tf.keras.Sequential([
     # tf.keras.layers.RandomCrop(224, 224)
 # ])
 
+
 @tf.function
 def augment_train_imagenet_dataset(image, label):
     # Randomly flip the image horizontally
@@ -1139,6 +1140,7 @@ def augment_train_imagenet_dataset(image, label):
 # process_test_imagenet_dataset = tf.keras.Sequential([
     # tf.keras.layers.CenterCrop(224, 224)
 # ])
+
 
 @tf.function
 def process_test_imagenet_dataset(image, label):
@@ -1829,6 +1831,12 @@ def cosine_decay(training_steps, base_lr, final_lr, decay_steps):
 
 def one_cycle_schedule(training_steps, base_lr, final_lr, decay_steps):
     return optax.cosine_onecycle_schedule(training_steps, base_lr)
+
+
+def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_steps):
+    warmup_steps = 0.05*training_steps  # warmup is done for 5% of training_steps
+    return optax.warmup_cosine_decay_schedule(init_value=0.0, peak_value=base_lr,
+                                              warmup_steps=warmup_steps, decay_steps=training_steps)
 
 
 ##############################
