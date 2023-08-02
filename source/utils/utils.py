@@ -609,13 +609,15 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
 
     if opt_state:
         flag_opt = False
-        if len(opt_state) == 1:
-            opt_state = opt_state[0]
+        if len(opt_state) >= 1:  # If combined gradient transformation with optax.chain
+            _opt_state = opt_state[-1]  # optimizer must be last in chain
             flag_opt = True
-        field_names = list(opt_state[0]._fields)
+        else:  # Without optax.chain
+            _opt_state = opt_state
+        field_names = list(_opt_state[0]._fields)
         if 'count' in field_names:
             field_names.remove('count')
-        filter_in_opt_state = jax_deep_copy([getattr(opt_state[0], field) for field in field_names])
+        filter_in_opt_state = jax_deep_copy([getattr(_opt_state[0], field) for field in field_names])
 
     if state:
         filtered_state = jax_deep_copy(state)
@@ -679,8 +681,8 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
                 filtered_state[f"{layer_name}/~/mean_ema"]["hidden"] = \
                 filtered_state[f"{layer_name}/~/mean_ema"]["hidden"][..., following_neurons_state]
 
-    if opt_state:
-        cp_state = jax_deep_copy(opt_state)
+    if _opt_state:
+        cp_state = jax_deep_copy(_opt_state)
         filtered_opt_state = cp_state[0]
         empty_state = cp_state[1:]
         for j, field in enumerate(field_names):
@@ -688,6 +690,7 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
 
         if flag_opt:
             new_opt_state = ((filtered_opt_state,) + empty_state,)
+            new_opt_state = opt_state[:-1] + new_opt_state
         else:
             new_opt_state = (filtered_opt_state,)
 
