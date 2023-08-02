@@ -334,36 +334,52 @@ def run_exp(exp_config: ExpConfig) -> None:
     # For each layer, make a plot
     layers = ['model_and_activations/linear_layer/~/relu_activation_module',
               'model_and_activations/linear_layer_1/~/relu_activation_module']
-    # Define colors for dead and live neurons
-    colors = {True: 'red', False: 'green'}
+    # # Define colors for dead and live neurons
+    # colors = {True: 'red', False: 'green'}
+    #
+    # for j, layer in enumerate(layers):
+    #     # Create a new figure for each layer
+    #     # plt.figure(figsize=(10, 5))
+    #     # plt.title(f'Gate Constants for {layer}')
+    #
+    #     steps = sorted(history.neuron_noise_ratio.keys())
+    #     for i in range(len(history.neuron_noise_ratio[steps[0]][layer]['gate_constant'])):
+    #         # Get gate constant for index i at each step
+    #         # gate_constants = [history.neuron_noise_ratio[step][layer]['gate_constant'][i] for step in steps]
+    #
+    #         # # Color based on live state
+    #         # color = colors[bool(neuron_states[layer][i])]
+    #         #
+    #         # # Plot
+    #         # plt.plot(steps, gate_constants, label=f'Index {i}', color=color)
+    #
+    #         #aim tracking instead
+    #         if bool(neuron_states[layer][i]):
+    #             for step in steps:
+    #                 exp_run.track(history.neuron_noise_ratio[step][layer]['gate_constant'][i],
+    #                               name=f"Dead neurons noise to grad ratio in layer {j}",
+    #                               step=step, context={"Neuron number": f'{i}'})
+    #         else:
+    #             for step in steps:
+    #                 exp_run.track(history.neuron_noise_ratio[step][layer]['gate_constant'][i],
+    #                               name=f"Live neurons noise to grad ratio in layer {j}",
+    #                               step=step, context={"Neuron number": f'{i}'})
 
-    for j, layer in enumerate(layers):
-        # Create a new figure for each layer
-        # plt.figure(figsize=(10, 5))
-        # plt.title(f'Gate Constants for {layer}')
-
+    if exp_config.update_history_freq:
         steps = sorted(history.neuron_noise_ratio.keys())
-        for i in range(len(history.neuron_noise_ratio[steps[0]][layer]['gate_constant'])):
-            # Get gate constant for index i at each step
-            # gate_constants = [history.neuron_noise_ratio[step][layer]['gate_constant'][i] for step in steps]
+        for step in steps:
+            for j, layer in enumerate(layers):
+                dead_neurons_set = history.neuron_noise_ratio[step][layer]['gate_constant'][neuron_states[layer]]
+                live_neurons_set = history.neuron_noise_ratio[step][layer]['gate_constant'][jnp.logical_not(neuron_states[layer])]
 
-            # # Color based on live state
-            # color = colors[bool(neuron_states[layer][i])]
-            #
-            # # Plot
-            # plt.plot(steps, gate_constants, label=f'Index {i}', color=color)
+                exp_run.track(jnp.sum(dead_neurons_set) / (jnp.count_nonzero(dead_neurons_set)+1e-6),
+                              name=f"Average noise to grad ratio in layer {j}",
+                              step=step, context={"Subgroup": 'Dead neurons'})
 
-            #aim tracking instead
-            if bool(neuron_states[layer][i]):
-                for step in steps:
-                    exp_run.track(history.neuron_noise_ratio[step][layer]['gate_constant'][i],
-                                  name=f"Dead neurons noise to grad ratio in layer {j}",
-                                  step=step, context={"Neuron number": f'{i}'})
-            else:
-                for step in steps:
-                    exp_run.track(history.neuron_noise_ratio[step][layer]['gate_constant'][i],
-                                  name=f"Live neurons noise to grad ratio in layer {j}",
-                                  step=step, context={"Neuron number": f'{i}'})
+                exp_run.track(jnp.sum(live_neurons_set) / (jnp.count_nonzero(live_neurons_set)+1e-6),
+                              name=f"Average noise to grad ratio in layer {j}",
+                              step=step, context={"Subgroup": 'Live neurons'})
+
 
         # plt.xlabel('Steps')
         # plt.ylabel('Gate Constants')
