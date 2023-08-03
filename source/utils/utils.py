@@ -596,6 +596,9 @@ class NeuronStates(OrderedDict):
     def invert_state(self):
         return {key: jnp.logical_not(value) for key, value in self.items()}
 
+    def state(self):
+        return {key: value for key, value in self.items()}
+
 
 def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: OrderedDict, opt_state=None, state=None):
     """Given the current params and the neuron state mapping returns a

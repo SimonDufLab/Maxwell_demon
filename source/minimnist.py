@@ -315,6 +315,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        neuron_states, opt_state,
                                                        state)[0]
     final_params_count = utl.count_params(remaining_params)
+    final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
     del final_dead_neurons  # Freeing memory
     log_params_sparsity_step = final_params_count / initial_params_count * 1000
     compression_ratio = initial_params_count / final_params_count
@@ -330,41 +331,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     #               step=compression_ratio,
     #               context={"experiment phase": "noisy"})
 
-    # TODO: Draw a graph that show all neurons noise to gradient evolution per layer (timestep=1!)
     # For each layer, make a plot
     layers = ['model_and_activations/linear_layer/~/relu_activation_module',
               'model_and_activations/linear_layer_1/~/relu_activation_module']
-    # # Define colors for dead and live neurons
-    # colors = {True: 'red', False: 'green'}
-    #
-    # for j, layer in enumerate(layers):
-    #     # Create a new figure for each layer
-    #     # plt.figure(figsize=(10, 5))
-    #     # plt.title(f'Gate Constants for {layer}')
-    #
-    #     steps = sorted(history.neuron_noise_ratio.keys())
-    #     for i in range(len(history.neuron_noise_ratio[steps[0]][layer]['gate_constant'])):
-    #         # Get gate constant for index i at each step
-    #         # gate_constants = [history.neuron_noise_ratio[step][layer]['gate_constant'][i] for step in steps]
-    #
-    #         # # Color based on live state
-    #         # color = colors[bool(neuron_states[layer][i])]
-    #         #
-    #         # # Plot
-    #         # plt.plot(steps, gate_constants, label=f'Index {i}', color=color)
-    #
-    #         #aim tracking instead
-    #         if bool(neuron_states[layer][i]):
-    #             for step in steps:
-    #                 exp_run.track(history.neuron_noise_ratio[step][layer]['gate_constant'][i],
-    #                               name=f"Dead neurons noise to grad ratio in layer {j}",
-    #                               step=step, context={"Neuron number": f'{i}'})
-    #         else:
-    #             for step in steps:
-    #                 exp_run.track(history.neuron_noise_ratio[step][layer]['gate_constant'][i],
-    #                               name=f"Live neurons noise to grad ratio in layer {j}",
-    #                               step=step, context={"Neuron number": f'{i}'})
-
     if exp_config.update_history_freq:
         steps = sorted(history.neuron_noise_ratio.keys())
         for step in steps:
@@ -380,14 +349,37 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name=f"Average noise to grad ratio in layer {j}",
                               step=step, context={"Subgroup": 'Live neurons'})
 
+    # Measuring overlapping between smallest magnitude and demon pruning
+    def get_neuron_mag(x):
+        axes = tuple(range(x.ndim - 1))
+        summed = jnp.sum(jnp.square(x), axis=axes)
+        return summed
+    neuron_magnitude = jax.tree_map(get_neuron_mag, params)
+    neuron_magnitude = {key: neuron_magnitude[key]['w'] for key in neuron_magnitude.keys()} # + neuron_magnitude[key]['b']
+    kth_smallest = jnp.sort(ravel_pytree(neuron_magnitude)[0])[final_dead_neurons_count-1]
+    mag_state = jax.tree_map(lambda x: x <= kth_smallest, neuron_magnitude)
+    mag_state = utl.NeuronStates(activation_layer_order, [mag_state[_layer] for _layer in ordered_layer_list[:-1]])
 
-        # plt.xlabel('Steps')
-        # plt.ylabel('Gate Constants')
-        # plt.legend()
-        # plt.savefig(f'my_plot_layer{j}.png')
+    state_agreement = jax.tree_map(jnp.logical_and, neuron_states.state(), mag_state.state())
+    print()
+    overall_agreement = jnp.sum(ravel_pytree(state_agreement)[0])/final_dead_neurons_count
+    print(f"Overall agreement for dead neurons: {overall_agreement:.3f}")
+    print()
+    print("Magnitude pruning layer-wise:")
+    layer_mag_state = []
+    for j, _layer in enumerate(ordered_layer_list[:-1]):
+        layer_magnitudes = neuron_magnitude[_layer]
+        if final_dead_per_layer[j] > 0:
+            kth_smallest = jnp.sort(layer_magnitudes.ravel())[final_dead_per_layer[j] - 1]
+        else:
+            kth_smallest = -1
+        layer_mag_state.append(layer_magnitudes <= kth_smallest)
+    layer_mag_state = utl.NeuronStates(activation_layer_order, layer_mag_state)
 
-    # plt.savefig('my_plot.png')
-    # plt.show()
+    state_agreement = jax.tree_map(jnp.logical_and, neuron_states.state(), layer_mag_state.state())
+    print()
+    layer_wise_agreement = jnp.sum(ravel_pytree(state_agreement)[0]) / final_dead_neurons_count
+    print(f"Agreement for dead neurons when pruning per layer dead: {layer_wise_agreement:.3f}")
 
     # Print running time
     print()
