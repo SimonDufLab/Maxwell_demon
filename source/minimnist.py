@@ -37,6 +37,7 @@ class ExpConfig:
     report_freq: int = 2500
     record_freq: int = 100
     full_ds_eval_freq: int = 1000
+    update_history_freq: Optional[int] = None
     lr: float = 1e-3
     lr_schedule: str = "None"
     final_lr: float = 1e-6
@@ -285,15 +286,27 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
                                                             scan_death_check_fn, full_train_acc_fn, final_accuracy_fn)
+    if exp_config.update_history_freq:
+        history = utl.GroupedHistory(neuron_noise_ratio=True)
+
 
     for step in range(exp_config.training_steps):
         # Metrics and logs:
         print_and_record_metrics(step, params, state, total_neurons, total_per_layer)
+
+        if exp_config.update_history_freq and (step % exp_config.update_history_freq == 0):
+            history.update_neuron_noise_ratio(step, params, state, test_loss_fn, train, train_eval)
+
         # Train step over single batch
         if not exp_config.noisy_part_of_signal_only:
             params, state, opt_state = update_fn(params, state, opt_state, next(train))
         else:
             params, state, opt_state = update_fn(params, state, opt_state, next(train), next(train_eval))
+
+        # # TODO: remove after testing
+        # if step > 501:
+        #     print(history.neuron_noise_ratio)
+        #     raise SystemExit
 
     final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
     activations_data, final_dead_neurons = scan_death_check_fn_with_activations_data(params, state, test_death)
@@ -302,6 +315,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        neuron_states, opt_state,
                                                        state)[0]
     final_params_count = utl.count_params(remaining_params)
+    final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
     del final_dead_neurons  # Freeing memory
     log_params_sparsity_step = final_params_count / initial_params_count * 1000
     compression_ratio = initial_params_count / final_params_count
@@ -316,6 +330,56 @@ def run_exp(exp_config: ExpConfig) -> None:
     #               name="Sparsity w/r params compression ratio",
     #               step=compression_ratio,
     #               context={"experiment phase": "noisy"})
+
+    # For each layer, make a plot
+    layers = ['model_and_activations/linear_layer/~/relu_activation_module',
+              'model_and_activations/linear_layer_1/~/relu_activation_module']
+    if exp_config.update_history_freq:
+        steps = sorted(history.neuron_noise_ratio.keys())
+        for step in steps:
+            for j, layer in enumerate(layers):
+                dead_neurons_set = history.neuron_noise_ratio[step][layer]['gate_constant'][neuron_states[layer]]
+                live_neurons_set = history.neuron_noise_ratio[step][layer]['gate_constant'][jnp.logical_not(neuron_states[layer])]
+
+                exp_run.track(jnp.sum(dead_neurons_set) / (jnp.count_nonzero(dead_neurons_set)+1e-6),
+                              name=f"Average noise to grad ratio in layer {j}",
+                              step=step, context={"Subgroup": 'Dead neurons'})
+
+                exp_run.track(jnp.sum(live_neurons_set) / (jnp.count_nonzero(live_neurons_set)+1e-6),
+                              name=f"Average noise to grad ratio in layer {j}",
+                              step=step, context={"Subgroup": 'Live neurons'})
+
+    # Measuring overlapping between smallest magnitude and demon pruning
+    def get_neuron_mag(x):
+        axes = tuple(range(x.ndim - 1))
+        summed = jnp.sum(jnp.square(x), axis=axes)
+        return summed
+    neuron_magnitude = jax.tree_map(get_neuron_mag, params)
+    neuron_magnitude = {key: neuron_magnitude[key]['w'] for key in neuron_magnitude.keys()} # + neuron_magnitude[key]['b']
+    kth_smallest = jnp.sort(ravel_pytree(neuron_magnitude)[0])[final_dead_neurons_count-1]
+    mag_state = jax.tree_map(lambda x: x <= kth_smallest, neuron_magnitude)
+    mag_state = utl.NeuronStates(activation_layer_order, [mag_state[_layer] for _layer in ordered_layer_list[:-1]])
+
+    state_agreement = jax.tree_map(jnp.logical_and, neuron_states.state(), mag_state.state())
+    print()
+    overall_agreement = jnp.sum(ravel_pytree(state_agreement)[0])/final_dead_neurons_count
+    print(f"Overall agreement for dead neurons: {overall_agreement:.3f}")
+    print()
+    print("Magnitude pruning layer-wise:")
+    layer_mag_state = []
+    for j, _layer in enumerate(ordered_layer_list[:-1]):
+        layer_magnitudes = neuron_magnitude[_layer]
+        if final_dead_per_layer[j] > 0:
+            kth_smallest = jnp.sort(layer_magnitudes.ravel())[final_dead_per_layer[j] - 1]
+        else:
+            kth_smallest = -1
+        layer_mag_state.append(layer_magnitudes <= kth_smallest)
+    layer_mag_state = utl.NeuronStates(activation_layer_order, layer_mag_state)
+
+    state_agreement = jax.tree_map(jnp.logical_and, neuron_states.state(), layer_mag_state.state())
+    print()
+    layer_wise_agreement = jnp.sum(ravel_pytree(state_agreement)[0]) / final_dead_neurons_count
+    print(f"Agreement for dead neurons when pruning per layer dead: {layer_wise_agreement:.3f}")
 
     # Print running time
     print()
