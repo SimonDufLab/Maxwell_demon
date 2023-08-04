@@ -74,6 +74,7 @@ class ExpConfig:
     size: Any = 50  # Can also be a tuple for convnets
     regularizer: Optional[str] = "cdg_l2"
     reg_params: Any = (0.0, 1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1)
+    masked_reg: bool = False  # If true, exclude normalisation and bias params from reg loss
     wd_param: Optional[float] = None
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
@@ -298,10 +299,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # update_fn.clear_cache()
                 decaying_reg_param = pruning_reg_param
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg, reg_param=pruning_reg_param,
-                                               classes=classes, with_dropout=with_dropout)
+                                               classes=classes, with_dropout=with_dropout,
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg,
                                                        reg_param=pruning_reg_param,
-                                                       classes=classes, is_training=False, with_dropout=with_dropout)
+                                                       classes=classes, is_training=False, with_dropout=with_dropout,
+                                                       exclude_bias_bn_from_reg=exp_config.masked_reg)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
@@ -320,10 +323,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # test_loss_fn.clear_cache()
                 # update_fn.clear_cache()
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                               classes=classes, with_dropout=with_dropout)
+                                               classes=classes, with_dropout=with_dropout,
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                        reg_param=decaying_reg_param,
-                                                       classes=classes, is_training=False, with_dropout=with_dropout)
+                                                       classes=classes, is_training=False, with_dropout=with_dropout,
+                                                       exclude_bias_bn_from_reg=exp_config.masked_reg)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
@@ -439,11 +444,13 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                    reg_param=decaying_reg_param, classes=classes,
-                                                   with_dropout=with_dropout)
+                                                   with_dropout=with_dropout,
+                                                   exclude_bias_bn_from_reg=exp_config.masked_reg)
                     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                            reg_param=decaying_reg_param,
                                                            classes=classes,
-                                                           is_training=False, with_dropout=with_dropout)
+                                                           is_training=False, with_dropout=with_dropout,
+                                                           exclude_bias_bn_from_reg=exp_config.masked_reg)
                     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
                                                                     exp_config.noise_imp, exp_config.noise_live_only,
@@ -483,10 +490,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # Reset training/monitoring functions
                 # utl.clear_caches()
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                               classes=classes, with_dropout=with_dropout)
+                                               classes=classes, with_dropout=with_dropout,
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                        reg_param=decaying_reg_param,
-                                                       classes=classes, is_training=False, with_dropout=with_dropout)
+                                                       classes=classes, is_training=False, with_dropout=with_dropout,
+                                                       exclude_bias_bn_from_reg=exp_config.masked_reg)
                 accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout,
@@ -545,9 +554,11 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Set training/monitoring functions
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
-                                       classes=classes, with_dropout=with_dropout)
+                                       classes=classes, with_dropout=with_dropout,
+                                       exclude_bias_bn_from_reg=exp_config.masked_reg)
         test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
-                                               classes=classes, is_training=False, with_dropout=with_dropout)
+                                               classes=classes, is_training=False, with_dropout=with_dropout,
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
         accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
         # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,

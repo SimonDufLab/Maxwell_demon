@@ -786,14 +786,26 @@ def exclude_bn_scale_from_params(dict_params):
     return {k: exclude_scale(v) for k, v in dict_params.items()}
 
 
-def exclude_bn_params(dict_params):  # Not a good idea, offset is equivalent to a bias parameter
-    substrings = ['batchnorm', 'bn']
+def exclude_bn_offset_from_params(dict_params):
+    def exclude_offset(sub_dict):
+        return {k: v for k, v in sub_dict.items() if "offset" not in k}
 
-    return {k: v for k, v in dict_params.items() if all(sub not in k for sub in substrings)}
+    return {k: exclude_offset(v) for k, v in dict_params.items()}
+
+
+def exclude_bn_params(dict_params):  # Not a good idea, offset is equivalent to a bias parameter
+    return exclude_bn_scale_from_params(exclude_bn_offset_from_params(dict_params))
+
+
+def exclude_bn_and_bias_params(dict_params):
+    def exclude_bias(sub_dict):
+        return {k: v for k, v in sub_dict.items() if "b" not in k}
+
+    return exclude_bn_scale_from_params(exclude_bn_offset_from_params({k: exclude_bias(v) for k, v in dict_params.items()}))
 
 
 def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False,
-                            mask_head=False, reduce_head_gap=False):
+                            mask_head=False, reduce_head_gap=False, exclude_bias_bn_from_reg=False):
     """ Build the cross-entropy loss given the model"""
     if not classes:
         classes = 10
@@ -802,19 +814,23 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
-                # params = exclude_bn_scale_from_params(params)
+                if exclude_bias_bn_from_reg:
+                    params = exclude_bn_and_bias_params(params)
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "lasso":
             def reg_fn(params, activations=None):
-                # params = exclude_bn_scale_from_params(params)
+                if exclude_bias_bn_from_reg:
+                    params = exclude_bn_and_bias_params(params)
                 return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
-                # params = exclude_bn_scale_from_params(params)
+                if exclude_bias_bn_from_reg:
+                    params = exclude_bn_and_bias_params(params)
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_lasso":
             def reg_fn(params, activations=None):
-                # params = exclude_bn_scale_from_params(params)
+                if exclude_bias_bn_from_reg:
+                    params = exclude_bn_and_bias_params(params)
                 return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2_act":
             def reg_fn(params, activations):

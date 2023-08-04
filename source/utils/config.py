@@ -109,7 +109,8 @@ bn_architecture_choice = {
 
 bn_config_choice = {
     "default": {"create_scale": True, "create_offset": True, "decay_rate": 0.9},  # decay was set to 0.999 first
-    "no_scale_and_offset": {"create_scale": False, "create_offset": False, "decay_rate": 0.9}
+    "no_scale_and_offset": {"create_scale": False, "create_offset": False, "decay_rate": 0.9},
+    "bigger_eps": {"create_scale": True, "create_offset": True, "decay_rate": 0.9, "eps": 1e-3},
 }
 
 activation_choice = {
