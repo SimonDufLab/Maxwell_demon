@@ -74,7 +74,7 @@ class ExpConfig:
     size: Any = 50  # Can also be a tuple for convnets
     regularizer: Optional[str] = "cdg_l2"
     reg_params: Any = (0.0, 1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1)
-    masked_reg: bool = False  # If true, exclude normalisation and bias params from reg loss
+    masked_reg: Optional[str] = None  # If "all" exclude all bias and bn params, if "scale" only exclude scale param
     wd_param: Optional[float] = None
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training

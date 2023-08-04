@@ -805,32 +805,37 @@ def exclude_bn_and_bias_params(dict_params):
 
 
 def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False,
-                            mask_head=False, reduce_head_gap=False, exclude_bias_bn_from_reg=False):
+                            mask_head=False, reduce_head_gap=False, exclude_bias_bn_from_reg=None):
     """ Build the cross-entropy loss given the model"""
     if not classes:
         classes = 10
+
+    assert exclude_bias_bn_from_reg in [None, 'all', 'scale'], "Can only exclude some params from reg loss with all or scale rn."
+    if exclude_bias_bn_from_reg:
+        if exclude_bias_bn_from_reg == "all":
+            exclude_fn = lambda x: exclude_bn_and_bias_params(x)
+        elif exclude_bias_bn_from_reg == "scale":
+            exclude_fn = lambda  x: exclude_bn_scale_from_params(x)
+    else:
+        exclude_fn = lambda x: x
 
     if regularizer:
         assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
-                if exclude_bias_bn_from_reg:
-                    params = exclude_bn_and_bias_params(params)
+                params = exclude_fn(params)
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "lasso":
             def reg_fn(params, activations=None):
-                if exclude_bias_bn_from_reg:
-                    params = exclude_bn_and_bias_params(params)
+                params = exclude_fn(params)
                 return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
-                if exclude_bias_bn_from_reg:
-                    params = exclude_bn_and_bias_params(params)
+                params = exclude_fn(params)
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_lasso":
             def reg_fn(params, activations=None):
-                if exclude_bias_bn_from_reg:
-                    params = exclude_bn_and_bias_params(params)
+                params = exclude_fn(params)
                 return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2_act":
             def reg_fn(params, activations):
