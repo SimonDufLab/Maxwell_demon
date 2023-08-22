@@ -1,5 +1,6 @@
 """ Models definition for the differrent resnet architecture"""
 import haiku as hk
+import numpy as np
 import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
@@ -15,6 +16,116 @@ from haiku._src.utils import replicate
 from haiku._src.conv import to_dimension_numbers
 
 FloatStrOrBool = Union[str, float, bool]
+
+
+class CustomBatchNorm(hk.BatchNorm):
+    """ Slightly modify version of BatchNorm layer that allows to fix the scale value to a given constant"""
+    def __init__(
+            self,
+            create_scale: bool,
+            create_offset: bool,
+            decay_rate: float,
+            eps: float = 1e-5,
+            constant_scale: Optional[float] = None,
+            scale_init: Optional[hk.initializers.Initializer] = None,
+            offset_init: Optional[hk.initializers.Initializer] = None,
+            axis: Optional[Sequence[int]] = None,
+            cross_replica_axis: Optional[Union[str, Sequence[str]]] = None,
+            cross_replica_axis_index_groups: Optional[Sequence[Sequence[int]]] = None,
+            data_format: str = "channels_last",
+            name: Optional[str] = None,
+    ):
+        super().__init__(create_scale=create_scale, create_offset=create_offset, decay_rate=decay_rate, eps=eps,
+                         scale_init=scale_init, offset_init=offset_init, axis=axis,
+                         cross_replica_axis=cross_replica_axis,
+                         cross_replica_axis_index_groups=cross_replica_axis_index_groups, data_format=data_format,
+                         name=name)
+        self.constant_scale = constant_scale
+        if self.create_scale and self.constant_scale is not None:
+            raise ValueError(
+                "Cannot set `constant_scale` if `create_scale=True`.")
+
+    def __call__(  # Sole modification is that scale can be fixed
+            self,
+            inputs: jax.Array,
+            is_training: bool,
+            test_local_stats: bool = False,
+            scale: Optional[jax.Array] = None,
+            offset: Optional[jax.Array] = None,
+    ) -> jax.Array:
+        """Computes the normalized version of the input.
+
+        Args:
+          inputs: An array, where the data format is ``[..., C]``.
+          is_training: Whether this is during training.
+          test_local_stats: Whether local stats are used when is_training=False.
+          scale: An array up to n-D. The shape of this tensor must be broadcastable
+            to the shape of ``inputs``. This is the scale applied to the normalized
+            inputs. This cannot be passed in if the module was constructed with
+            ``create_scale=True``.
+          offset: An array up to n-D. The shape of this tensor must be broadcastable
+            to the shape of ``inputs``. This is the offset applied to the normalized
+            inputs. This cannot be passed in if the module was constructed with
+            ``create_offset=True``.
+
+        Returns:
+          The array, normalized across all but the last dimension.
+        """
+        if self.create_scale and scale is not None:
+            raise ValueError(
+                "Cannot pass `scale` at call time if `create_scale=True`.")
+        if self.create_offset and offset is not None:
+            raise ValueError(
+                "Cannot pass `offset` at call time if `create_offset=True`.")
+
+        channel_index = self.channel_index
+        if channel_index < 0:
+            channel_index += inputs.ndim
+
+        if self.axis is not None:
+            axis = self.axis
+        else:
+            axis = [i for i in range(inputs.ndim) if i != channel_index]
+
+        if is_training or test_local_stats:
+            mean = jnp.mean(inputs, axis, keepdims=True)
+            mean_of_squares = jnp.mean(jnp.square(inputs), axis, keepdims=True)
+            if self.cross_replica_axis:
+                mean = jax.lax.pmean(
+                    mean,
+                    axis_name=self.cross_replica_axis,
+                    axis_index_groups=self.cross_replica_axis_index_groups)
+                mean_of_squares = jax.lax.pmean(
+                    mean_of_squares,
+                    axis_name=self.cross_replica_axis,
+                    axis_index_groups=self.cross_replica_axis_index_groups)
+            var = mean_of_squares - jnp.square(mean)
+        else:
+            mean = self.mean_ema.average.astype(inputs.dtype)
+            var = self.var_ema.average.astype(inputs.dtype)
+
+        if is_training:
+            self.mean_ema(mean)
+            self.var_ema(var)
+
+        w_shape = [1 if i in axis else inputs.shape[i] for i in range(inputs.ndim)]
+        w_dtype = inputs.dtype
+
+        if self.create_scale:
+            scale = hk.get_parameter("scale", w_shape, w_dtype, self.scale_init)
+        elif self.constant_scale:
+            scale = np.ones([], dtype=w_dtype) * self.constant_scale
+        elif scale is None:
+            scale = np.ones([], dtype=w_dtype)
+
+        if self.create_offset:
+            offset = hk.get_parameter("offset", w_shape, w_dtype, self.offset_init)
+        elif offset is None:
+            offset = np.zeros([], dtype=w_dtype)
+
+        eps = jax.lax.convert_element_type(self.eps, var.dtype)
+        inv = scale * jax.lax.rsqrt(var + eps)
+        return (inputs - mean) * inv + offset
 
 
 def init_identity_conv(shape, dtype):
@@ -142,7 +253,7 @@ class ResnetBlockV1(hk.Module):
                 name="shortcut_conv",
                 **default_block_conv_config)
 
-            self.proj_batchnorm = hk.BatchNorm(name="shortcut_batchnorm", **bn_config)
+            self.proj_batchnorm = CustomBatchNorm(name="shortcut_batchnorm", **bn_config)
         else:
             self.identity_skip = IdentityConv2D(out_channels=proj_channels, name="identity_skip")
 
@@ -155,7 +266,7 @@ class ResnetBlockV1(hk.Module):
             padding="SAME",
             name="conv_0",
             **default_block_conv_config)
-        bn_0 = hk.BatchNorm(name="batchnorm_0", **bn_config)
+        bn_0 = CustomBatchNorm(name="batchnorm_0", **bn_config)
 
         conv_1 = hk.Conv2D(
             output_channels=channels[1],
@@ -166,7 +277,7 @@ class ResnetBlockV1(hk.Module):
             name="conv_1",
             **default_block_conv_config)
 
-        bn_1 = hk.BatchNorm(name="batchnorm_1", **bn_config)
+        bn_1 = CustomBatchNorm(name="batchnorm_1", **bn_config)
         layers = ((conv_0, bn_0, activation_fn()), (conv_1, bn_1, activation_fn()))
 
         if bottleneck:
@@ -179,7 +290,7 @@ class ResnetBlockV1(hk.Module):
                 name="conv_2",
                 **default_block_conv_config)
 
-            bn_2 = hk.BatchNorm(name="batchnorm_2", scale_init=jnp.zeros, **bn_config)
+            bn_2 = CustomBatchNorm(name="batchnorm_2", scale_init=jnp.zeros, **bn_config)
             layers = layers + ((conv_2, bn_2, activation_fn()),)
 
         self.layers = layers
@@ -312,7 +423,7 @@ class ResnetInit(hk.Module):
         self.activation_mapping = {}
         self.preceding_activation_name = preceding_activation_name
         self.is_training = is_training
-        self.bn = hk.BatchNorm(name="init_bn", **bn_config)
+        self.bn = CustomBatchNorm(name="init_bn", **bn_config)
         self.conv = hk.Conv2D(**conv_config)
         self.activation_fn = activation_fn()
         self.with_bn = with_bn
@@ -433,11 +544,12 @@ class LinearBlockV2(hk.Module):
         self.with_bn = with_bn
         self.fc_layer = hk.Linear(**fc_config[0])
         # self.fc_layer2 = hk.Linear(**fc_config[1])
-        self.bn_layer = Base_BN(is_training=is_training, bn_config=bn_config, name="lin_bn")
+        self.bn_layer = CustomBatchNorm(name="lin_bn", **bn_config)
         # self.bn_layer2 = Base_BN(is_training=is_training, bn_config=bn_config, name="lin_bn2")
         self.logits_layer = hk.Linear(num_classes, **logits_config)  # TODO: de-hardencode the outputs_dim
         self.activation_layer = activation_fn()
         # self.activation_layer2 = activation_fn()
+        self.is_training = is_training
 
     def __call__(self, inputs):
         activations = []
@@ -446,7 +558,7 @@ class LinearBlockV2(hk.Module):
         # x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
         x = self.fc_layer(x)
         if self.with_bn:
-            x = self.bn_layer(x)
+            x = self.bn_layer(x, is_training=self.is_training)
         x = self.activation_layer(x)
         activations.append(x)
         # x = self.fc_layer2(x)

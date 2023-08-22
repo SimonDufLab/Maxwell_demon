@@ -12,6 +12,7 @@ import numpy as np
 import optax
 import tensorflow as tf
 import tensorflow_datasets as tfds
+import chex
 # import torch
 # from torch.utils.data import DataLoader
 # from torch.utils.data import Dataset, Subset
@@ -786,35 +787,56 @@ def exclude_bn_scale_from_params(dict_params):
     return {k: exclude_scale(v) for k, v in dict_params.items()}
 
 
-def exclude_bn_params(dict_params):  # Not a good idea, offset is equivalent to a bias parameter
-    substrings = ['batchnorm', 'bn']
+def exclude_bn_offset_from_params(dict_params):
+    def exclude_offset(sub_dict):
+        return {k: v for k, v in sub_dict.items() if "offset" not in k}
 
-    return {k: v for k, v in dict_params.items() if all(sub not in k for sub in substrings)}
+    return {k: exclude_offset(v) for k, v in dict_params.items()}
+
+
+def exclude_bn_params(dict_params):  # Not a good idea, offset is equivalent to a bias parameter
+    return exclude_bn_scale_from_params(exclude_bn_offset_from_params(dict_params))
+
+
+def exclude_bn_and_bias_params(dict_params):
+    def exclude_bias(sub_dict):
+        return {k: v for k, v in sub_dict.items() if "b" not in k}
+
+    return exclude_bn_scale_from_params(exclude_bn_offset_from_params({k: exclude_bias(v) for k, v in dict_params.items()}))
 
 
 def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False,
-                            mask_head=False, reduce_head_gap=False):
+                            mask_head=False, reduce_head_gap=False, exclude_bias_bn_from_reg=None):
     """ Build the cross-entropy loss given the model"""
     if not classes:
         classes = 10
+
+    assert exclude_bias_bn_from_reg in [None, 'all', 'scale'], "Can only exclude some params from reg loss with all or scale rn."
+    if exclude_bias_bn_from_reg:
+        if exclude_bias_bn_from_reg == "all":
+            exclude_fn = lambda x: exclude_bn_and_bias_params(x)
+        elif exclude_bias_bn_from_reg == "scale":
+            exclude_fn = lambda  x: exclude_bn_scale_from_params(x)
+    else:
+        exclude_fn = lambda x: x
 
     if regularizer:
         assert regularizer in ["cdg_l2", "cdg_lasso", "l2", "lasso", "cdg_l2_act", "cdg_lasso_act"]
         if regularizer == "l2":
             def reg_fn(params, activations=None):
-                # params = exclude_bn_scale_from_params(params)
+                params = exclude_fn(params)
                 return 0.5 * sum(jnp.sum(jnp.square(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "lasso":
             def reg_fn(params, activations=None):
-                # params = exclude_bn_scale_from_params(params)
+                params = exclude_fn(params)
                 return sum(jnp.sum(jnp.abs(p)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2":
             def reg_fn(params, activations=None):
-                # params = exclude_bn_scale_from_params(params)
+                params = exclude_fn(params)
                 return 0.5 * sum(jnp.sum(jnp.power(jnp.clip(p, 0), 2)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_lasso":
             def reg_fn(params, activations=None):
-                # params = exclude_bn_scale_from_params(params)
+                params = exclude_fn(params)
                 return sum(jnp.sum(jnp.clip(p, 0)) for p in jax.tree_util.tree_leaves(params))
         if regularizer == "cdg_l2_act":
             def reg_fn(params, activations):
@@ -2282,6 +2304,70 @@ class GroupedHistory(dict):
         neuron_noise_to_grad_ratio = jax.tree_map(ratio_fn, neuron_noise, true_neuron_gradient)
 
         self.neuron_noise_ratio[step] = neuron_noise_to_grad_ratio
+
+
+##############################
+# Modified optimizers
+##############################
+def scale_by_adam_to_momentum(
+    b1: float = 0.9,
+    b2: float = 0.999,
+    dampening: float = 0.0,
+    eps_start: float = 1e-8,
+    transition_steps: int = 1e4,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[chex.ArrayDType] = None,
+) -> base.GradientTransformation:
+    """Gradually transform Adam rescaling into momentum rescaling
+    """
+
+    mu_dtype = optax._src.utils.canonicalize_dtype(mu_dtype)
+
+    eps_scaling = optax.linear_schedule(eps_start, 1, transition_steps)
+
+    def init_fn(params):
+        mu = jax.tree_util.tree_map(  # First moment
+            lambda t: jnp.zeros_like(t, dtype=mu_dtype), params)
+        nu = jax.tree_util.tree_map(jnp.zeros_like, params)  # Second moment
+        return optax._src.transform.ScaleByAdamState(count=jnp.zeros([], jnp.int32), mu=mu, nu=nu)
+
+    def update_fn(updates, state, params=None):
+        del params
+        # mu = optax._src.transform.update_moment(updates, state.mu, b1, 1)
+        mu = jax.tree_util.tree_map(lambda g, t: (1 - dampening) * g + b1 * t, updates, state.mu)  # More similart to base momentum optimizer
+        nu = optax._src.transform.update_moment_per_elem_norm(updates, state.nu, b2, 2)
+        count_inc = optax._src.numerics.safe_int32_increment(state.count)
+        # mu_hat = optax._src.transform.bias_correction(mu, b1, count_inc)
+        mu_bias_correction = (1-dampening)*(1 - b1**count_inc)/(1-b1)  # bias correction must now account for variable dampening
+        mu_hat = jax.tree_util.tree_map(lambda t: t / mu_bias_correction.astype(t.dtype), mu)
+        nu_hat = optax._src.transform.bias_correction(nu, b2, count_inc)
+        eps = eps_scaling(count_inc)
+        updates = jax.tree_util.tree_map(
+            # lambda m, v: m * (eps / (jnp.sqrt(v + eps_root) + eps)), mu_hat, nu_hat)
+            lambda m, v: m * ((jnp.sqrt(jnp.mean(v) + eps_root) + eps) / (jnp.sqrt(v + eps_root) + eps)), mu_hat, nu_hat)
+        mu = optax._src.utils.cast_tree(mu, mu_dtype)
+        return updates, optax._src.transform.ScaleByAdamState(count=count_inc, mu=mu, nu=nu)
+
+    return base.GradientTransformation(init_fn, update_fn)
+
+
+def adam_to_momentum(
+    learning_rate: ScalarOrSchedule,
+    b1: float = 0.9,
+    b2: float = 0.999,
+    dampening: float = 0.0,
+    eps_start: float = 1e-8,
+    transition_steps: int = 1e4,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[Any] = None,
+) -> base.GradientTransformation:
+    """An optimizer that start as adam but gradually becomes momentum via gradual increase of eps parameter
+    """
+    return combine.chain(
+      scale_by_adam_to_momentum(
+          b1=b1, b2=b2, dampening=dampening, eps_start=eps_start, transition_steps=transition_steps, eps_root=eps_root, mu_dtype=mu_dtype),
+      _scale_by_learning_rate(learning_rate),
+    )
 
 
 ##############################

@@ -33,6 +33,7 @@ optimizer_choice = {
     "adam": optax.adam,
     "adamw": optax.adamw,
     "adamw_cdg": utl.adamw_cdg,
+    "adam_to_momentum": utl.adam_to_momentum,  # Adam on schedule -> become momentum after ~10k steps
     "sgd": optax.sgd,
     "noisy_sgd": optax.noisy_sgd,
     "momentum9": Partial(optax.sgd, momentum=0.9),
@@ -109,7 +110,9 @@ bn_architecture_choice = {
 
 bn_config_choice = {
     "default": {"create_scale": True, "create_offset": True, "decay_rate": 0.9},  # decay was set to 0.999 first
-    "no_scale_and_offset": {"create_scale": False, "create_offset": False, "decay_rate": 0.9}
+    "no_scale_and_offset": {"create_scale": False, "create_offset": False, "decay_rate": 0.9},
+    "bigger_eps": {"create_scale": True, "create_offset": True, "decay_rate": 0.9, "eps": 1e-3},
+    "constant_scale": {"create_scale": False, "create_offset": True, "decay_rate": 0.9, "constant_scale": 10.0},
 }
 
 activation_choice = {
