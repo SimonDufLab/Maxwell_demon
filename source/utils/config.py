@@ -33,6 +33,7 @@ optimizer_choice = {
     "adam": optax.adam,
     "adamw": optax.adamw,
     "adamw_cdg": utl.adamw_cdg,
+    "adam_to_momentum": utl.adam_to_momentum,  # Adam on schedule -> become momentum after ~10k steps
     "sgd": optax.sgd,
     "noisy_sgd": optax.noisy_sgd,
     "momentum9": Partial(optax.sgd, momentum=0.9),

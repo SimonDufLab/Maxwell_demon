@@ -12,6 +12,7 @@ import numpy as np
 import optax
 import tensorflow as tf
 import tensorflow_datasets as tfds
+import chex
 # import torch
 # from torch.utils.data import DataLoader
 # from torch.utils.data import Dataset, Subset
@@ -2303,6 +2304,70 @@ class GroupedHistory(dict):
         neuron_noise_to_grad_ratio = jax.tree_map(ratio_fn, neuron_noise, true_neuron_gradient)
 
         self.neuron_noise_ratio[step] = neuron_noise_to_grad_ratio
+
+
+##############################
+# Modified optimizers
+##############################
+def scale_by_adam_to_momentum(
+    b1: float = 0.9,
+    b2: float = 0.999,
+    dampening: float = 0.0,
+    eps_start: float = 1e-8,
+    transition_steps: int = 1e4,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[chex.ArrayDType] = None,
+) -> base.GradientTransformation:
+    """Gradually transform Adam rescaling into momentum rescaling
+    """
+
+    mu_dtype = optax._src.utils.canonicalize_dtype(mu_dtype)
+
+    eps_scaling = optax.linear_schedule(eps_start, 1, transition_steps)
+
+    def init_fn(params):
+        mu = jax.tree_util.tree_map(  # First moment
+            lambda t: jnp.zeros_like(t, dtype=mu_dtype), params)
+        nu = jax.tree_util.tree_map(jnp.zeros_like, params)  # Second moment
+        return optax._src.transform.ScaleByAdamState(count=jnp.zeros([], jnp.int32), mu=mu, nu=nu)
+
+    def update_fn(updates, state, params=None):
+        del params
+        # mu = optax._src.transform.update_moment(updates, state.mu, b1, 1)
+        mu = jax.tree_util.tree_map(lambda g, t: (1 - dampening) * g + b1 * t, updates, state.mu)  # More similart to base momentum optimizer
+        nu = optax._src.transform.update_moment_per_elem_norm(updates, state.nu, b2, 2)
+        count_inc = optax._src.numerics.safe_int32_increment(state.count)
+        # mu_hat = optax._src.transform.bias_correction(mu, b1, count_inc)
+        mu_bias_correction = (1-dampening)*(1 - b1**count_inc)/(1-b1)  # bias correction must now account for variable dampening
+        mu_hat = jax.tree_util.tree_map(lambda t: t / mu_bias_correction.astype(t.dtype), mu)
+        nu_hat = optax._src.transform.bias_correction(nu, b2, count_inc)
+        eps = eps_scaling(count_inc)
+        updates = jax.tree_util.tree_map(
+            # lambda m, v: m * (eps / (jnp.sqrt(v + eps_root) + eps)), mu_hat, nu_hat)
+            lambda m, v: m * ((jnp.sqrt(jnp.mean(v) + eps_root) + eps) / (jnp.sqrt(v + eps_root) + eps)), mu_hat, nu_hat)
+        mu = optax._src.utils.cast_tree(mu, mu_dtype)
+        return updates, optax._src.transform.ScaleByAdamState(count=count_inc, mu=mu, nu=nu)
+
+    return base.GradientTransformation(init_fn, update_fn)
+
+
+def adam_to_momentum(
+    learning_rate: ScalarOrSchedule,
+    b1: float = 0.9,
+    b2: float = 0.999,
+    dampening: float = 0.0,
+    eps_start: float = 1e-8,
+    transition_steps: int = 1e4,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[Any] = None,
+) -> base.GradientTransformation:
+    """An optimizer that start as adam but gradually becomes momentum via gradual increase of eps parameter
+    """
+    return combine.chain(
+      scale_by_adam_to_momentum(
+          b1=b1, b2=b2, dampening=dampening, eps_start=eps_start, transition_steps=transition_steps, eps_root=eps_root, mu_dtype=mu_dtype),
+      _scale_by_learning_rate(learning_rate),
+    )
 
 
 ##############################
