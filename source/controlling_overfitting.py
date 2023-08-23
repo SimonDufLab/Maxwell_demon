@@ -539,6 +539,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 optimizer = Partial(optimizer, weight_decay=reg_param)
         elif exp_config.wd_param:  # TODO: Maybe exclude adamw?
             opt_chain.append(optax.add_decayed_weights(weight_decay=exp_config.wd_param))
+        if exp_config.optimizer == "adam_to_momentum":  # Setting transition steps to total # of steps
+            optimizer = Partial(optimizer, transition_steps=exp_config.training_steps)
         if exp_config.gradient_clipping:
             opt_chain.append(optax.clip(10))
 
