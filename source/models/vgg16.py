@@ -1,14 +1,51 @@
 """ Models definition for vgg nets architecture. Defined fitting requirements of repo"""
 import haiku as hk
 import jax.nn
+import jax.numpy as jnp
 from jax.tree_util import Partial
-from utils.utils import ReluActivationModule
+from utils.utils import ReluActivationModule, MaxPool, AvgPool
+from typing import Optional, Mapping, Union
 
 from models.bn_base_unit import Base_BN, Conv_BN, Linear_BN
 from models.dropout_units import Base_Dropout
 
+FloatStrOrBool = Union[str, float, bool]
 
-def vgg16(sizes, number_classes, bn_config, activation_fn=ReluActivationModule, with_bias=True):
+
+class LogitsVGG(hk.Module):
+    """Create the final linear layers for vgg models. Typical implementation, with only one fc layer"""
+
+    def __init__(
+            self,
+            num_classes: int,
+            logits_config: Optional[Mapping[str, FloatStrOrBool]] = {},
+            with_bias: bool = True,
+            name: Optional[str] = None,
+            preceding_activation_name: Optional[str] = None):
+        super().__init__(name=name)
+        self.activation_mapping = {}
+        self.preceding_activation_name = preceding_activation_name
+        self.logits_layer = hk.Linear(num_classes, with_bias=with_bias, **logits_config)
+
+    def __call__(self, inputs):
+        activations = []
+        block_name = self.name + "/~/"
+        x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
+        x = self.logits_layer(x)
+
+        logits_name = block_name + self.logits_layer.name
+        self.activation_mapping[logits_name] = {"preceding": self.preceding_activation_name,
+                                                "following": None}
+        return x, activations
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return None
+
+
+def vgg16(sizes, num_classes, bn_config, activation_fn=ReluActivationModule, with_bias=True):
     """Prunable VGG16 implementation.
        default sizes=(64, 4096)
     """
@@ -19,23 +56,27 @@ def vgg16(sizes, number_classes, bn_config, activation_fn=ReluActivationModule, 
         sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], 4 * sizes[0],
                  8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 16 * sizes[0], sizes[1], sizes[1], sizes[1]]
 
-    max_pool = Partial(hk.MaxPool, window_shape=2, strides=2, padding="VALID")
-    avg_pool = Partial(hk.AvgPool, window_shape=2, strides=2, padding="VALID")
+    max_pool = Partial(MaxPool, window_shape=2, strides=2, padding="VALID")
+    avg_pool = Partial(AvgPool, window_shape=2, strides=2, padding="VALID")
 
     def make_layers(training):
         layers = []
         for i in range(16):
             if i < 13:
                 if i in [2, 4, 7, 10]:
-                    layers.append([max_pool, Partial(Conv_BN, training, sizes[i], 3, bn_config, with_bias=with_bias), act])
+                    layers.append([max_pool, Partial(Conv_BN, training, sizes[i], 3, bn_config=bn_config,
+                                                     with_bias=with_bias, activation_fn=act)])
                 else:
-                    layers.append([Partial(Conv_BN, training, sizes[i], 3, bn_config, with_bias=with_bias), act])
+                    layers.append([Partial(Conv_BN, training, sizes[i], 3, bn_config=bn_config,
+                                           with_bias=with_bias, activation_fn=act)])
             elif i == 13:
-                layers.append([avg_pool, hk.Flatten, Partial(Linear_BN, training, sizes[i], bn_config, with_bias=with_bias), act])
+                layers.append([avg_pool, Partial(Linear_BN, training, sizes[i], bn_config=bn_config,
+                                                             with_bias=with_bias, activation_fn=act)])
             elif i < 15:
-                layers.append([Partial(Linear_BN, training, sizes[i], bn_config, with_bias=with_bias), act])
+                layers.append([Partial(Linear_BN, training, sizes[i], bn_config=bn_config,
+                                       with_bias=with_bias, activation_fn=act)])
             else:
-                layers.append([Partial(hk.Linear, number_classes, with_bias=with_bias)])
+                layers.append([Partial(LogitsVGG, num_classes, with_bias=with_bias)])
         return layers
 
     return make_layers(True), make_layers(False)

@@ -205,7 +205,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             classes = exp_config.kept_classes
         architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-        net = build_models(*architecture, with_dropout=with_dropout)
+        net, _ = build_models(*architecture, with_dropout=with_dropout)
 
         optimizer = optimizer_choice[exp_config.optimizer]
         if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
@@ -402,7 +402,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
                         exp_config.architecture]
                     architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
-                    net = build_models(*architecture)
+                    net, _ = build_models(*architecture)
                     total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
                     # Clear previous cache
