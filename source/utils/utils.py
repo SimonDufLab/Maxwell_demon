@@ -2242,6 +2242,25 @@ class MaxPool(hk.MaxPool):
         return self.preceding_activations_name
 
 
+class AvgPool(hk.AvgPool):
+    """Avg pool upgraded with activation mapping
+    """
+
+    def __init__(self, window_shape: Union[int, Sequence[int]], strides: Union[int, Sequence[int]], padding: str,
+               channel_axis: Optional[int] = -1, name: Optional[str] = None,
+               preceding_activation_name: Optional[str] = None, ):
+        super().__init__(window_shape=window_shape, strides=strides, padding=padding,
+                         channel_axis=channel_axis, name=name)
+        self.preceding_activations_name = preceding_activation_name
+        self.activation_mapping = {}
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return self.preceding_activations_name
+
+
 def get_activation_mapping(net, inputs):
 
     def model_fn(_net, x):
