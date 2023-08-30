@@ -13,6 +13,7 @@ import optax
 import tensorflow as tf
 import tensorflow_datasets as tfds
 import chex
+import pickle
 # import torch
 # from torch.utils.data import DataLoader
 # from torch.utils.data import Dataset, Subset
@@ -1162,7 +1163,7 @@ def augment_train_imagenet_dataset(image, label):
     image = tf.image.random_flip_left_right(image)
 
     # Randomly crop the image
-    image = tf.image.random_crop(image, [224, 224, 3]) # assuming image has 3 color channels
+    image = tf.image.random_crop(image, [224, 224, 3])  # assuming image has 3 color channels
     return image, label
 
 # process_test_imagenet_dataset = tf.keras.Sequential([
@@ -1172,7 +1173,7 @@ def augment_train_imagenet_dataset(image, label):
 
 @tf.function
 def process_test_imagenet_dataset(image, label):
-    image = tf.image.central_crop(image, 224/256) # assuming input image size is 256x256
+    image = tf.image.central_crop(image, 224/256)  # assuming input image size is 256x256
     return image, label
 
 
@@ -1421,7 +1422,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
 
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
                     other_bs: Optional[Iterable] = None,
-                    subset: Optional[int] = None, transform: bool = True,
+                    subset: Optional[Sequence[int]] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
                     gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False,
                     reduced_ds_size: Optional[int] = None):  # -> Generator[Batch, None, None]:
@@ -1466,6 +1467,8 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
+    if ds_size == -2:
+        ds_size = sum(1 for _ in ds)  # This loads the whole dataset into memory... TODO:other workaround
     # if subset is not None:
     #     # assert subset < 10, "subset must be smaller than 10"
     #     # indices = np.random.choice(10, subset, replace=False)
@@ -2387,6 +2390,65 @@ def adam_to_momentum(
           b1=b1, b2=b2, dampening=dampening, eps_start=eps_start, transition_steps=transition_steps, eps_root=eps_root, mu_dtype=mu_dtype),
       _scale_by_learning_rate(learning_rate),
     )
+
+
+##############################
+# Checkpointing
+##############################
+def save_pytree_state(ckpt_dir: str, state) -> None:
+    # Save the numpy arrays (parameters) to disk
+    with open(os.path.join(ckpt_dir, "arrays.npy"), "wb") as f:
+        for x in jax.tree_util.tree_leaves(state):
+            np.save(f, np.array(x), allow_pickle=False)
+
+    # Save the structure of the state tree
+    tree_struct = jax.tree_map(lambda t: 0, state)
+    with open(os.path.join(ckpt_dir, "tree.pkl"), "wb") as f:
+        pickle.dump(tree_struct, f)
+
+
+def restore_pytree_state(ckpt_dir):
+    # Load the structure of the state tree
+    with open(os.path.join(ckpt_dir, "tree.pkl"), "rb") as f:
+        tree_struct = pickle.load(f)
+
+    # Load the flat state (parameters) from disk
+    leaves, treedef = jax.tree_util.tree_flatten(tree_struct)
+    with open(os.path.join(ckpt_dir, "arrays.npy"), "rb") as f:
+        flat_state = [np.load(f) for _ in leaves]
+
+    # Reconstruct the state tree from its structure and parameters
+    return jax.tree_util.tree_unflatten(treedef, flat_state)
+
+
+def save_all_pytree_states(parent_dir: str, params, state, opt_state):
+    # Create directories for params, state, and opt_state
+    params_dir = os.path.join(parent_dir, "params")
+    state_dir = os.path.join(parent_dir, "state")
+    opt_state_dir = os.path.join(parent_dir, "opt_state")
+
+    os.makedirs(params_dir, exist_ok=True)
+    os.makedirs(state_dir, exist_ok=True)
+    os.makedirs(opt_state_dir, exist_ok=True)
+
+    # Use the existing save function
+    save_pytree_state(params_dir, params)
+    save_pytree_state(state_dir, state)
+    save_pytree_state(opt_state_dir, opt_state)
+
+
+def restore_all_pytree_states(parent_dir: str):
+    # Directories for params, state, and opt_state
+    params_dir = os.path.join(parent_dir, "params")
+    state_dir = os.path.join(parent_dir, "state")
+    opt_state_dir = os.path.join(parent_dir, "opt_state")
+
+    # Use the existing restore function
+    restored_params = restore_pytree_state(params_dir)
+    restored_state = restore_pytree_state(state_dir)
+    restored_opt_state = restore_pytree_state(opt_state_dir)
+
+    return restored_params, restored_state, restored_opt_state
 
 
 ##############################
