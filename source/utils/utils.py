@@ -1163,7 +1163,7 @@ def augment_train_imagenet_dataset(image, label):
     image = tf.image.random_flip_left_right(image)
 
     # Randomly crop the image
-    image = tf.image.random_crop(image, [224, 224, 3]) # assuming image has 3 color channels
+    image = tf.image.random_crop(image, [224, 224, 3])  # assuming image has 3 color channels
     return image, label
 
 # process_test_imagenet_dataset = tf.keras.Sequential([
@@ -1173,7 +1173,7 @@ def augment_train_imagenet_dataset(image, label):
 
 @tf.function
 def process_test_imagenet_dataset(image, label):
-    image = tf.image.central_crop(image, 224/256) # assuming input image size is 256x256
+    image = tf.image.central_crop(image, 224/256)  # assuming input image size is 256x256
     return image, label
 
 
@@ -1422,7 +1422,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
 
 def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: int,
                     other_bs: Optional[Iterable] = None,
-                    subset: Optional[int] = None, transform: bool = True,
+                    subset: Optional[Sequence[int]] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
                     gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False,
                     reduced_ds_size: Optional[int] = None):  # -> Generator[Batch, None, None]:
@@ -1467,6 +1467,8 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
+    if ds_size == -2:
+        ds_size = sum(1 for _ in ds)  # This loads the whole dataset into memory... TODO:other workaround
     # if subset is not None:
     #     # assert subset < 10, "subset must be smaller than 10"
     #     # indices = np.random.choice(10, subset, replace=False)
