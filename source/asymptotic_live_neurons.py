@@ -223,11 +223,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         partial_train_ds_size = train_ds_size
 
     # Recording over all widths
-    live_neurons = []
-    avg_live_neurons = []
-    std_live_neurons = []
-    size_arr = []
-    f_acc = []
+    # live_neurons = []
+    # avg_live_neurons = []
+    # std_live_neurons = []
+    # size_arr = []
+    # f_acc = []
 
     if exp_config.save_wanda:
         # Recording metadata about activations that will be pickled
@@ -244,9 +244,12 @@ def run_exp(exp_config: ExpConfig) -> None:
             parameters: List[float] = field(default_factory=list)
         params_meta = FinalParamsMeta()
 
-    decaying_reg_param = copy.deepcopy(exp_config.reg_param)
+    decaying_reg_param = exp_config.reg_param
     decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
-    reg_param_decay_period = exp_config.training_steps // decay_cycles
+    if decay_cycles == 2:
+        reg_param_decay_period = int(0.8 * exp_config.training_steps)
+    else:
+        reg_param_decay_period = exp_config.training_steps // decay_cycles
 
     for size in exp_config.sizes:  # Vary the NN width
         # Time the subrun for the different sizes
@@ -332,14 +335,13 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         for step in range(exp_config.training_steps):
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
-                    (not (step % exp_config.training_steps == 0)):
+                    (not (step % (exp_config.training_steps - 1) == 0)):  # and (not exp_config.reg_param_schedule):
                 decaying_reg_param = decaying_reg_param / 10
-                if (exp_config.training_steps // reg_param_decay_period) == decay_cycles:
+                if (step >= ((decay_cycles - 1) * reg_param_decay_period)) and exp_config.zero_end_reg_param:
                     decaying_reg_param = 0
-                loss.clear_cache()
-                test_loss_fn.clear_cache()
-                update_fn.clear_cache()
-
+                print("decaying reg param:")
+                print(decaying_reg_param)
+                print()
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
                                                classes=classes, with_dropout=with_dropout)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
