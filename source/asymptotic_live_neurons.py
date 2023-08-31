@@ -244,7 +244,6 @@ def run_exp(exp_config: ExpConfig) -> None:
             parameters: List[float] = field(default_factory=list)
         params_meta = FinalParamsMeta()
 
-    decaying_reg_param = exp_config.reg_param
     decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
     if decay_cycles == 2:
         reg_param_decay_period = int(0.8 * exp_config.training_steps)
@@ -254,6 +253,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     for size in exp_config.sizes:  # Vary the NN width
         # Time the subrun for the different sizes
         subrun_start_time = time.time()
+
+        # Reset decay param
+        decaying_reg_param = exp_config.reg_param
 
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[exp_config.architecture]
