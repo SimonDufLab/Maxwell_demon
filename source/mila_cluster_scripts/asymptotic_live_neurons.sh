@@ -1,11 +1,13 @@
 #!/bin/bash
 
 #SBATCH --job-name=asymptotic_live_neurons
-#SBATCH --partition=unkillable                           # Ask for unkillable job
+#SBATCH --partition=main                           # Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
-#SBATCH --gres=gpu:1 # rm-ed 32gb for long                                     # Ask for 1 GPU #gpu:16gb:1 for resnet18 models
-#SBATCH --mem=24G    #24 for resnet18                                    # Ask for 10 GB of RAM # 24G with resnet models
-#SBATCH --time=8:00:00 #48h for resnet18                                   # The job will run for 2.5 hours
+#SBATCH --gres=gpu:1                                     # Ask for 1 GPU
+#SBATCH --mem=24G   #24G for Resnet18                                        # Ask for 10 GB of RAM
+#SBATCH --time=8:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+#SBATCH -x 'cn-d[001-004], cn-g[005-012,017-026]'  # Excluding DGX system, will require a jaxlib update
+
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -19,7 +21,7 @@ module load cuda/11.2/cudnn/8.1
 source venv/bin/activate
 
 # Flags
-export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_PYTHON_CLIENT_PREALLOCATE=true
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # Default configuration:
@@ -37,8 +39,13 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # Run experiments
 
-python source/asymptotic_live_neurons.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 with_bn=True lr_schedule=one_cycle normalize_inputs=True info=Resnet19_DD_width reg_param=0.00005 optimizer=adam augment_dataset=True gradient_clipping=True noisy_label=0.0 regularizer=None activation=relu wd_param=0.0001 lr=0.01 train_batch_size=256 'sizes="(2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64)"' init_seed=23
+python source/asymptotic_live_neurons.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=2 info=Resnet18_cifar_10_kept_class_debugged reg_param=0.0005 'sizes="(4, 8, 16, 24, 32, 48, 64)"' optimizer=adamw wd_param=0.0001 lr=0.005 train_batch_size=64 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True kept_classes=6 init_seed=63
 wait $!
+
+# --------------------------------------------------------------------------------------------------------------------------------------------------
+
+#python source/asymptotic_live_neurons.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 with_bn=True lr_schedule=one_cycle normalize_inputs=True info=Resnet19_DD_width reg_param=0.00005 optimizer=adam augment_dataset=True gradient_clipping=True noisy_label=0.0 regularizer=None activation=relu wd_param=0.0001 lr=0.01 train_batch_size=256 'sizes="(2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64)"' init_seed=23
+#wait $!
 
 #python source/asymptotic_live_neurons.py dataset='cifar10' architecture='resnet18' training_steps=150000 report_freq=10000 record_freq=500 pruning_freq=10000 live_freq=25000 with_bn=True lr_schedule=piecewise_constant normalize_inputs=True info=Resnet19_DD_width reg_param=0.0 optimizer=adam augment_dataset=True gradient_clipping=True noisy_label=0.0 regularizer=None activation=relu wd_param=0.0001 lr=0.01 train_batch_size=256 'sizes="(2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 16, 20, 24, 28, 32, 36, 40, 44, 48, 52, 56, 60, 64)"' init_seed=24
 #wait $!

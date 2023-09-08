@@ -100,6 +100,7 @@ class ExpConfig:
     measure_linear_perf: bool = False  # Measure performance over the linear network without changing activation
     record_distribution_data: bool = False  # Whether to record distribution at end of training -- high memory usage
     preempt_handling: bool = False  # Frequent checkpointing to handle SLURM preemption
+    jobid: Optional[str] = None  # Manually restart previous job from checkpoint
     checkpoint_freq: int = 1 # in epochs
     save_wanda: bool = False  # Whether to save weights and activations value or not
     save_act_only: bool = True  # Only saving distributions with wanda, not the weights
@@ -180,7 +181,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     load_from_preexisting_model_state = False
     if exp_config.preempt_handling:
         SCRATCH = Path(os.environ["SCRATCH"])
-        SLURM_JOBID = os.environ["SLURM_JOBID"]
+        if exp_config.jobid:
+            SLURM_JOBID = exp_config.jobid
+        else:
+            SLURM_JOBID = os.environ["SLURM_JOBID"]
         saving_dir = SCRATCH / exp_name_ / SLURM_JOBID
 
         # Create the directory if it does not exist
@@ -207,11 +211,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         aim_hash = None
     
     # Path for logs
-    log_path = "./Neurips2023_main_3"
+    log_path = "./Neurips2023_main_3" # "./preempt_test"  #
     if exp_config.dataset == "imagenet":
         log_path = "./imagenet_exps"
     # Logger config
-    exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash)
+    exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash, force_resume=True)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
     if exp_config.preempt_handling:
         run_state["aim_hash"] = exp_run.hash
@@ -305,9 +309,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     signal.signal(signal.SIGUSR1, utl.signal_handler)  # Before reaching the end of the time limit.
 
     def train_run(reg_param):
-        global load_from_preexisting_model_state
+        nonlocal load_from_preexisting_model_state
 
-        def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params, state, opt_state, opt,
+        def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params, state, opt_state, opt,
                                      total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
                                      scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn):
             """ Inside a function to make sure variables in function scope are cleared from memory"""
@@ -548,7 +552,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
                 full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
-            return (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
+            return (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
                     accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn)
 
         # Make the network and optimiser
@@ -559,10 +563,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             classes = exp_config.kept_classes
         if load_from_preexisting_model_state:
-            architecture = architecture(run_state["curr_arch_sizes"], classes, activation_fn=activation_fn, **net_config)
+            new_sizes = run_state["curr_arch_sizes"]
         else:
-            architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-        new_sizes = size
+            new_sizes = size
+        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
         net, raw_net = build_models(*architecture, with_dropout=with_dropout)
 
         dropout_key = jax.random.PRNGKey(exp_config.with_rng_seed)
@@ -623,10 +627,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         # initial_params = utl.jax_deep_copy(params)  # Keep a copy of the initial params for relative change metric
         init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
+        activation_layer_order = list(state.keys())
         if load_from_preexisting_model_state:
             params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
         # frozen_layer_lists = utl.extract_layer_lists(params)
-        activation_layer_order = list(state.keys())
         neuron_states = utl.NeuronStates(activation_layer_order)
         acti_map = utl.get_activation_mapping(raw_net, next(train))
         del raw_net
@@ -640,7 +644,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
-        total_neurons, total_per_layer = starting_neurons, starting_per_layer
+        # total_neurons, total_per_layer = starting_neurons, starting_per_layerç
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
         init_total_neurons = copy.copy(total_neurons)
         init_total_per_layer = copy.copy(total_per_layer)
         initial_params_count = utl.count_params(params)
@@ -672,6 +677,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             load_from_preexisting_model_state = False
         else:
             starting_step = 0
+        print(f"Continuing training from step {starting_step} and reg_param {reg_param}")
         for step in range(starting_step, exp_config.training_steps + add_steps):
             # Update decaying reg_param if needed:
             if exp_config.reg_param_schedule and step < exp_config.training_steps:
@@ -688,10 +694,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                 print(
                     f"Checkpointing performed in: {timedelta(seconds=time.time() - chckpt_init_time)}")
             # Record metrics and prune model if needed:
-            (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss,
+            (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer, loss,
              test_loss_fn,
              accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
-             update_fn) = record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params,
+             update_fn) = record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params,
                                                    state, opt_state, opt, total_neurons, total_per_layer, loss,
                                                    test_loss_fn,
                                                    accuracy_fn, death_check_fn, scan_death_check_fn,

@@ -2403,7 +2403,7 @@ def save_pytree_state(ckpt_dir: str, state) -> None:
     # Save the numpy arrays (parameters) to disk
     with open(os.path.join(ckpt_dir, "arrays.npy"), "wb") as f:
         for x in jax.tree_util.tree_leaves(state):
-            np.save(f, np.array(x), allow_pickle=False)
+            jnp.save(f, x, allow_pickle=True)
 
     # Save the structure of the state tree
     tree_struct = jax.tree_map(lambda t: 0, state)
@@ -2411,15 +2411,18 @@ def save_pytree_state(ckpt_dir: str, state) -> None:
         pickle.dump(tree_struct, f)
 
 
-def restore_pytree_state(ckpt_dir):
+def restore_pytree_state(ckpt_dir, verbose=False):
     # Load the structure of the state tree
     with open(os.path.join(ckpt_dir, "tree.pkl"), "rb") as f:
         tree_struct = pickle.load(f)
 
+    if verbose:
+        print(jax.tree_map(jnp.shape, tree_struct))
+
     # Load the flat state (parameters) from disk
     leaves, treedef = jax.tree_util.tree_flatten(tree_struct)
     with open(os.path.join(ckpt_dir, "arrays.npy"), "rb") as f:
-        flat_state = [np.load(f) for _ in leaves]
+        flat_state = [jnp.load(f, allow_pickle=True) for _ in leaves]
 
     # Reconstruct the state tree from its structure and parameters
     return jax.tree_util.tree_unflatten(treedef, flat_state)
@@ -2465,7 +2468,7 @@ class RunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_
     epoch: int
     training_step: int
     model_dir: str  # Parent dir contains params, model state and opt_state pytrees in separate children dir
-    curr_arch_sizes: List[int]  # To rebuild the pruned model
+    curr_arch_sizes: List  # To rebuild the pruned model
     aim_hash: Optional[str]  # Unique hash identifying experiment in aim (logger)
     slurm_jobid: str  # Unique experiment identifier attributed by SLURM
     exp_name: str
@@ -2496,7 +2499,9 @@ def load_run_state(checkpoint_dir: Path) -> Optional[RunState]: # Taken from htt
     with open(checkpoint_file, "rb") as f:
         checkpoint_state = pickle.load(f)
 
-    print(f"Resuming from the checkpoint file at {checkpoint_file}")
+    print(f"Resuming from the checkpoint file at {checkpoint_file}:")
+    print(checkpoint_state)
+    print()
     state: RunState = checkpoint_state  # type: ignore
     return state
 
