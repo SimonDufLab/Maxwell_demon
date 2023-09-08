@@ -1161,6 +1161,18 @@ augment_tf_dataset = tf.keras.Sequential([
 # ])
 
 
+def reflection_padding2d(x, padding=4):
+    return tf.pad(x, [[0, 0], [padding, padding], [padding, padding], [0, 0]], 'REFLECT')
+
+
+ReflectionPadding2D = tf.keras.layers.Lambda(reflection_padding2d)
+srigl_data_augmentation_tf = tf.keras.Sequential([
+    ReflectionPadding2D,  # Replaces tf.keras.layers.ZeroPadding2D
+    tf.keras.layers.RandomCrop(height=32, width=32),
+    tf.keras.layers.RandomFlip('horizontal')
+])
+
+
 @tf.function
 def augment_train_imagenet_dataset(image, label):
     # Randomly flip the image horizontally
@@ -1277,7 +1289,7 @@ def standardize_img(image, label):
 
 @tf.function
 def custom_normalize_img(image, label, dataset):
-    assert dataset in ["mnist", 'cifar10', 'cifar100', 'imagenet'], "need to implement normalization for others dataset"
+    assert dataset in ["mnist", 'cifar10', 'cifar10_srigl', 'cifar100', 'imagenet'], "need to implement normalization for others dataset"
     if dataset == "cifar10":
         mean = [0.4914, 0.4822, 0.4465]  # Mean for each channel (R, G, B)
         std = [0.2023, 0.1994, 0.2010]  # Standard deviation for each channel (R, G, B)
@@ -1290,6 +1302,12 @@ def custom_normalize_img(image, label, dataset):
     elif dataset == "imagenet":
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
+    elif dataset == "cifar10_srigl":
+        # Perform per-image standardization instead
+        image = tf.cast(image, dtype=tf.float32)
+        mean, variance = tf.nn.moments(image, axes=[0, 1], keepdims=True)
+        std = tf.math.sqrt(variance)
+        return (image - mean) / std, label
     else:
         raise SystemExit
     mean = tf.constant(mean, dtype=tf.float32)
@@ -1433,11 +1451,18 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
+    if "srigl" in dataset:
+        _dataset = dataset[:-6]
+        augmentation_routine = srigl_data_augmentation_tf
+    else:
+        _dataset = dataset
+        augmentation_routine = augment_tf_dataset
+
     def filter_fn(image, label):
         return tf.reduce_any(subset == int(label))
     if reduced_ds_size:
         _split = split + '[:' + str(int(reduced_ds_size)) + ']'
-        ds = tfds.load(dataset, split=_split, as_supervised=True, data_dir="./data",
+        ds = tfds.load(_dataset, split=_split, as_supervised=True, data_dir="./data",
                        read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
@@ -1450,8 +1475,8 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         split2 = split + '[' + str(int(noisy_ratio*100)) + '%:]'
         split1 = tfds.split_for_jax_process(split1, drop_remainder=True)
         split2 = tfds.split_for_jax_process(split2, drop_remainder=True)
-        ds1, ds_info = tfds.load(dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
-        ds2 = tfds.load(dataset, split=split2, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds1, ds_info = tfds.load(_dataset, split=split1, as_supervised=True, data_dir="./data", with_info=True, read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds2 = tfds.load(_dataset, split=split2, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         sample_from = np.arange(ds_info.features["label"].num_classes - 1)
         if subset is not None:
             ds1 = ds1.filter(filter_fn)  # Only take the randomly selected subset
@@ -1467,7 +1492,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
         ds = ds1.concatenate(ds2)
     else:
         # split = tfds.split_for_jax_process(split, drop_remainder=True)
-        ds = tfds.load(dataset, split=split, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
+        ds = tfds.load(_dataset, split=split, as_supervised=True, data_dir="./data", read_config=tfds.ReadConfig(try_autocache=False, skip_prefetch=False))
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
@@ -1488,7 +1513,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     #     #     ds = ds.cache().repeat()
     #     ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=False)
     #     if data_augmentation:
-    #         ds = ds.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+    #         ds = ds.map(lambda x, y: (augmentation_routine(x), y), num_parallel_calls=tf.data.AUTOTUNE)
     #     # ds = ds.take(batch_size).cache().repeat()
     ds = ds.cache()
     ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
@@ -1499,7 +1524,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             # ds1 = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
             # ds1 = ds.batch(batch_size)
             if data_augmentation:
-                ds1 = ds1.map(lambda x, y: (augment_tf_dataset(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
+                ds1 = ds1.map(lambda x, y: (augmentation_routine(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
                 ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
             # ds1 = ds1.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
         # else:
@@ -1531,7 +1556,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
             # ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
             # ds = ds.batch(batch_size)
             if data_augmentation:
-                ds = ds.map(lambda x, y: (augment_tf_dataset(x), y), num_parallel_calls=tf.data.AUTOTUNE)
+                ds = ds.map(lambda x, y: (augmentation_routine(x), y), num_parallel_calls=tf.data.AUTOTUNE)
                 ds = ds.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
             # ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
         else:
@@ -1565,8 +1590,8 @@ def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=Non
 
 
 def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
-                    noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False, normalize: bool = False):
-    return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
+                    noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False, normalize: bool = False, dataset: str = "cifar10"):
+    return load_tf_dataset(dataset, split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
                            subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
                            permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio,
                            data_augmentation=augment_dataset, normalize=normalize)
@@ -2553,7 +2578,20 @@ def get_total_neurons(architecture, sizes):
             sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], 4 * sizes[0],
                      8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 16 * sizes[0], sizes[1],
                      sizes[1], sizes[1]]
-    elif architecture == "resnet18" or architecture == "resnet18_v2":
+    elif "resnet18" in architecture:
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes,
+                     sizes, sizes,
+                     sizes, sizes,
+                     2*sizes, 2*sizes,
+                     2*sizes, 2*sizes,
+                     4 * sizes, 4 * sizes,
+                     4 * sizes, 4 * sizes,
+                     8 * sizes, 8 * sizes,
+                     8 * sizes, 8 * sizes,
+                     # 2*sizes,
+                     ]
+    elif "resnet19" in architecture:
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes,
                      sizes, sizes,

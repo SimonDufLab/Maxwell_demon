@@ -101,7 +101,7 @@ class ExpConfig:
     record_distribution_data: bool = False  # Whether to record distribution at end of training -- high memory usage
     preempt_handling: bool = False  # Frequent checkpointing to handle SLURM preemption
     jobid: Optional[str] = None  # Manually restart previous job from checkpoint
-    checkpoint_freq: int = 1 # in epochs
+    checkpoint_freq: int = 1  # in epochs
     save_wanda: bool = False  # Whether to save weights and activations value or not
     save_act_only: bool = True  # Only saving distributions with wanda, not the weights
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
