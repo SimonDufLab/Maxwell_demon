@@ -1,6 +1,7 @@
 import os
 import copy
-from typing import Any, Generator, Mapping, Optional, Tuple
+from typing import Any, Generator, Mapping, Optional, Tuple, TypedDict
+from types import FrameType
 import dataclasses
 from dataclasses import fields
 
@@ -14,6 +15,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import chex
 import pickle
+import signal
 # import torch
 # from torch.utils.data import DataLoader
 # from torch.utils.data import Dataset, Subset
@@ -24,6 +26,8 @@ from jax.flatten_util import ravel_pytree
 from collections import OrderedDict
 from collections.abc import Iterable
 from itertools import cycle
+from pathlib import Path
+from dataclasses import dataclass
 
 import utils.scores as scr
 
@@ -1317,7 +1321,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
     # Create AutotuneOptions
     options = tf.data.Options()
     options.autotune.enabled = True
-    options.autotune.ram_budget = (66//3) * 1024**3  # TODO: RAM budget should be determine auto. current rule: 1/2 of total RAM
+    options.autotune.ram_budget = (90//3) * 1024**3  # TODO: RAM budget should be determine auto. current rule: 1/2 of total RAM
     options.autotune.cpu_budget = 8  # TODO: Also determine auto. current rule: all avail cpus
 
 
@@ -2106,7 +2110,7 @@ def extract_ordered_layers(params):
 
 
 # Reimplementing a version of layer weight magnitude pruning, but with jaxpruner
-@dataclasses.dataclass
+@dataclass
 class LayerMagnitudePruning(BaseUpdater):
     """Implements layer magnitude based pruning."""
 
@@ -2399,7 +2403,7 @@ def save_pytree_state(ckpt_dir: str, state) -> None:
     # Save the numpy arrays (parameters) to disk
     with open(os.path.join(ckpt_dir, "arrays.npy"), "wb") as f:
         for x in jax.tree_util.tree_leaves(state):
-            np.save(f, np.array(x), allow_pickle=False)
+            jnp.save(f, x, allow_pickle=True)
 
     # Save the structure of the state tree
     tree_struct = jax.tree_map(lambda t: 0, state)
@@ -2407,15 +2411,18 @@ def save_pytree_state(ckpt_dir: str, state) -> None:
         pickle.dump(tree_struct, f)
 
 
-def restore_pytree_state(ckpt_dir):
+def restore_pytree_state(ckpt_dir, verbose=False):
     # Load the structure of the state tree
     with open(os.path.join(ckpt_dir, "tree.pkl"), "rb") as f:
         tree_struct = pickle.load(f)
 
+    if verbose:
+        print(jax.tree_map(jnp.shape, tree_struct))
+
     # Load the flat state (parameters) from disk
     leaves, treedef = jax.tree_util.tree_flatten(tree_struct)
     with open(os.path.join(ckpt_dir, "arrays.npy"), "rb") as f:
-        flat_state = [np.load(f) for _ in leaves]
+        flat_state = [jnp.load(f, allow_pickle=True) for _ in leaves]
 
     # Reconstruct the state tree from its structure and parameters
     return jax.tree_util.tree_unflatten(treedef, flat_state)
@@ -2449,6 +2456,80 @@ def restore_all_pytree_states(parent_dir: str):
     restored_opt_state = restore_pytree_state(opt_state_dir)
 
     return restored_params, restored_state, restored_opt_state
+
+
+class RunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
+    """Typed dictionary containing the state of the training run which is saved at each epoch.
+
+    Using type hints helps prevent bugs and makes your code easier to read for both humans and
+    machines (e.g. Copilot). This leads to less time spent debugging and better code suggestions.
+    """
+
+    epoch: int
+    training_step: int
+    model_dir: str  # Parent dir contains params, model state and opt_state pytrees in separate children dir
+    curr_arch_sizes: List  # To rebuild the pruned model
+    aim_hash: Optional[str]  # Unique hash identifying experiment in aim (logger)
+    slurm_jobid: str  # Unique experiment identifier attributed by SLURM
+    exp_name: str
+    curr_starting_size: Optional[List[int]]  # To use with exps that loop over size
+    curr_reg_param: Optional[float]  # To use with exps that loop over reg_param
+    dropout_key: Optional[jax.random.PRNGKey]
+    decaying_reg_param: Optional[float]
+
+
+def load_run_state(checkpoint_dir: Path) -> Optional[RunState]: # Taken from https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
+    """Loads the latest checkpoint if possible, otherwise returns `None`."""
+    checkpoint_file = checkpoint_dir / "checkpoint_run_state.pkl"
+    restart_count = int(os.environ.get("SLURM_RESTART_COUNT", 0))
+    if restart_count:
+        print(f"NOTE: This job has been restarted {restart_count} times by SLURM.")
+
+    if not checkpoint_file.exists():
+        print(f"No checkpoint found in checkpoints dir ({checkpoint_dir}).")
+        if restart_count:
+            raise RuntimeWarning(
+                f"This job has been restarted {restart_count} times by SLURM, but no "
+                "checkpoint was found! This either means that your checkpointing code is "
+                "broken, or that the job did not reach the checkpointing portion of your "
+                "training loop."
+            )
+        return None
+
+    with open(checkpoint_file, "rb") as f:
+        checkpoint_state = pickle.load(f)
+
+    print(f"Resuming from the checkpoint file at {checkpoint_file}:")
+    print(checkpoint_state)
+    print()
+    state: RunState = checkpoint_state  # type: ignore
+    return state
+
+
+def checkpoint_exp(run_state: RunState, params, state, opt_state, curr_epoch: int, curr_step: int,
+                   curr_arch_sizes, curr_starting_size, curr_reg_param, dropout_key, decaying_reg_param):
+    run_state["epoch"] = curr_epoch
+    run_state["training_step"] = curr_step
+    run_state["curr_arch_sizes"] = curr_arch_sizes
+    run_state["curr_starting_size"] = curr_starting_size
+    run_state["curr_reg_param"] = curr_reg_param
+    run_state["dropout_key"] = dropout_key
+    run_state["decaying_reg_param"] = decaying_reg_param
+
+    with open(os.path.join(run_state["model_dir"], "checkpoint_run_state.pkl"), "wb") as f:
+        pickle.dump(run_state, f)
+
+    # Update weights
+    save_all_pytree_states(run_state["model_dir"], params, state, opt_state)
+
+
+def signal_handler(signum: int, frame: Optional[FrameType]):  # Taken from: https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
+    """Called before the job gets pre-empted or reaches the time-limit.
+
+    This should run quickly. Performing a full checkpoint here mid-epoch is not recommended.
+    """
+    signal_enum = signal.Signals(signum)
+    print(f"Job received a {signal_enum.name} signal!")
 
 
 ##############################

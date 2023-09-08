@@ -16,12 +16,14 @@ from datetime import timedelta
 import pickle
 import json
 import gc
+import signal
 from dataclasses import dataclass, field, asdict
 from typing import Optional, Tuple, Any, List, Dict
 from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
+from pathlib import Path
 
 from jax.flatten_util import ravel_pytree
 from jax.tree_util import Partial
@@ -46,7 +48,6 @@ class ExpConfig:
     report_freq: int = 2500
     record_freq: int = 250
     pruning_freq: int = 1000
-    checkpoint_freq: int = 10000
     # live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     record_gate_grad_stat: bool = False  # Record in logger info about gradient magnitude per layer throughout training
     mod_via_gate_grad: bool = False  # Use gate gradients to rescale weight gradients if True -> shitty, don't use
@@ -98,6 +99,9 @@ class ExpConfig:
     linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
     measure_linear_perf: bool = False  # Measure performance over the linear network without changing activation
     record_distribution_data: bool = False  # Whether to record distribution at end of training -- high memory usage
+    preempt_handling: bool = False  # Frequent checkpointing to handle SLURM preemption
+    jobid: Optional[str] = None  # Manually restart previous job from checkpoint
+    checkpoint_freq: int = 1 # in epochs
     save_wanda: bool = False  # Whether to save weights and activations value or not
     save_act_only: bool = True  # Only saving distributions with wanda, not the weights
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
@@ -172,14 +176,49 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_name_ = exp_name
 
     activation_fn = activation_choice[exp_config.activation]
+
+    # Check for checkpoints
+    load_from_preexisting_model_state = False
+    if exp_config.preempt_handling:
+        SCRATCH = Path(os.environ["SCRATCH"])
+        if exp_config.jobid:
+            SLURM_JOBID = exp_config.jobid
+        else:
+            SLURM_JOBID = os.environ["SLURM_JOBID"]
+        saving_dir = SCRATCH / exp_name_ / SLURM_JOBID
+
+        # Create the directory if it does not exist
+        os.makedirs(saving_dir, exist_ok=True)
+
+        # Check for previous checkpoints
+        run_state = utl.load_run_state(saving_dir)
+        if run_state:
+            load_from_preexisting_model_state = True
+        else:  # Initialize the run_state
+            run_state = utl.RunState(epoch=0, training_step=0, model_dir=saving_dir, curr_arch_sizes=exp_config.size,
+                                     aim_hash=None, slurm_jobid=SLURM_JOBID, exp_name=exp_name_,
+                                     curr_starting_size=exp_config.size, curr_reg_param=exp_config.reg_params[0],
+                                     dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
+                                     curr_decaying_reg_param=exp_config.reg_params[0])
+            # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
+            #     pickle.dump(run_state, f)
+
+            # Dump config file in it as well
+            with open(os.path.join(saving_dir, 'config.json'), 'w') as fp:
+                json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
+        aim_hash = run_state["aim_hash"]
+    else:
+        aim_hash = None
     
     # Path for logs
-    log_path = "./Neurips2023_main_3"
+    log_path = "./Neurips2023_main_3" # "./preempt_test"  #
     if exp_config.dataset == "imagenet":
         log_path = "./imagenet_exps"
     # Logger config
-    exp_run = Run(repo=log_path, experiment=exp_name_)
+    exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash, force_resume=True)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
+    if exp_config.preempt_handling:
+        run_state["aim_hash"] = exp_run.hash
 
     if exp_config.save_wanda:
         # Create pickle directory
@@ -192,7 +231,6 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Experiments with dropout
     with_dropout = exp_config.dropout_rate > 0
     if with_dropout:
-        dropout_key = jax.random.PRNGKey(exp_config.with_rng_seed)
         assert exp_config.architecture in pick_architecture(
             with_dropout=True).keys(), "Current architectures available with dropout: " + str(
             pick_architecture(with_dropout=True).keys())
@@ -267,9 +305,13 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     size = exp_config.size
 
-    def train_run(reg_param):
+    signal.signal(signal.SIGTERM, utl.signal_handler)  # Before getting pre-empted and requeued.
+    signal.signal(signal.SIGUSR1, utl.signal_handler)  # Before reaching the end of the time limit.
 
-        def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params, state, opt_state, opt,
+    def train_run(reg_param):
+        nonlocal load_from_preexisting_model_state
+
+        def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params, state, opt_state, opt,
                                      total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
                                      scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn):
             """ Inside a function to make sure variables in function scope are cleared from memory"""
@@ -510,7 +552,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
                 full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
-            return (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
+            return (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
                     accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn)
 
         # Make the network and optimiser
@@ -520,8 +562,14 @@ def run_exp(exp_config: ExpConfig) -> None:
             classes = dataset_target_cardinality[exp_config.dataset]  # Retrieving the number of classes in dataset
         else:
             classes = exp_config.kept_classes
-        architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
+        if load_from_preexisting_model_state:
+            new_sizes = run_state["curr_arch_sizes"]
+        else:
+            new_sizes = size
+        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
         net, raw_net = build_models(*architecture, with_dropout=with_dropout)
+
+        dropout_key = jax.random.PRNGKey(exp_config.with_rng_seed)
 
         if exp_config.measure_linear_perf:
             lin_act_fn = activation_choice["linear"]
@@ -579,8 +627,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         # initial_params = utl.jax_deep_copy(params)  # Keep a copy of the initial params for relative change metric
         init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
-        # frozen_layer_lists = utl.extract_layer_lists(params)
         activation_layer_order = list(state.keys())
+        if load_from_preexisting_model_state:
+            params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
+        # frozen_layer_lists = utl.extract_layer_lists(params)
         neuron_states = utl.NeuronStates(activation_layer_order)
         acti_map = utl.get_activation_mapping(raw_net, next(train))
         del raw_net
@@ -594,7 +644,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
-        total_neurons, total_per_layer = starting_neurons, starting_per_layer
+        # total_neurons, total_per_layer = starting_neurons, starting_per_layerç
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
         init_total_neurons = copy.copy(total_neurons)
         init_total_per_layer = copy.copy(total_per_layer)
         initial_params_count = utl.count_params(params)
@@ -619,20 +670,34 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             add_steps = 0
 
-        for step in range(exp_config.training_steps + add_steps):
+        if load_from_preexisting_model_state:
+            starting_step = run_state["training_step"]
+            decaying_reg_param = run_state["decaying_reg_param"]
+            dropout_key = run_state["dropout_key"]
+            load_from_preexisting_model_state = False
+        else:
+            starting_step = 0
+        print(f"Continuing training from step {starting_step} and reg_param {reg_param}")
+        for step in range(starting_step, exp_config.training_steps + add_steps):
             # Update decaying reg_param if needed:
             if exp_config.reg_param_schedule and step < exp_config.training_steps:
                 decaying_reg_param = reg_sched(step)
             # Checkpoint
-            if (step > 0) and (step % exp_config.checkpoint_freq == 0):
+            if (step > 0) and exp_config.preempt_handling and (step % (exp_config.checkpoint_freq * steps_per_epoch) == 0):
                 print(
                     f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time() - subrun_start_time)}")
-                # TODO: Add checkpointing for efficient and automatic run restart
+                chckpt_init_time = time.time()
+                utl.checkpoint_exp(run_state, params, state, opt_state, curr_epoch=step//steps_per_epoch,
+                                   curr_step=step, curr_arch_sizes=new_sizes, curr_starting_size=size,
+                                   curr_reg_param=reg_param, dropout_key=dropout_key,
+                                   decaying_reg_param=decaying_reg_param)
+                print(
+                    f"Checkpointing performed in: {timedelta(seconds=time.time() - chckpt_init_time)}")
             # Record metrics and prune model if needed:
-            (decaying_reg_param, net, params, state, opt_state, opt, total_neurons, total_per_layer, loss,
+            (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer, loss,
              test_loss_fn,
              accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
-             update_fn) = record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, params,
+             update_fn) = record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params,
                                                    state, opt_state, opt, total_neurons, total_per_layer, loss,
                                                    test_loss_fn,
                                                    accuracy_fn, death_check_fn, scan_death_check_fn,
@@ -825,7 +890,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 with open(pickle_dir_path + 'params_meta.p', 'wb') as fp:
                     pickle.dump(asdict(params_meta), fp)  # Update by overwrite
 
-    for reg_param in exp_config.reg_params:  # Vary the regularizer parameter to measure impact on overfitting
+    if exp_config.preempt_handling:
+        beginning_index = exp_config.reg_params.index(run_state["curr_reg_param"])
+        reg_params_iterate = exp_config.reg_params[beginning_index:]
+    else:
+        reg_params_iterate = exp_config.reg_params
+    for reg_param in reg_params_iterate:  # Vary the regularizer parameter to measure impact on overfitting
         # Time the subrun for the different sizes
         subrun_start_time = time.time()
         # jax.clear_backends()
