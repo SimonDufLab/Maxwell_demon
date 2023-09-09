@@ -1867,33 +1867,34 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
 ##############################
 # lr scheduler utilities
 ##############################
-def constant_schedule(training_steps, base_lr, final_lr, decay_steps):
+def constant_schedule(training_steps, base_lr, final_lr, decay_bounds):
     return optax.constant_schedule(base_lr)
 
 
-def fix_step_decay(training_steps, base_lr, final_lr, decay_steps):
+def fix_step_decay(training_steps, base_lr, final_lr, decay_bounds, scaling_factor):
     """ Decay by 1/10 lr at fixed step defined by user"""
-    scaling_factor = 0.1
-    bound_dict = {i: scaling_factor**(j+1) for j, i in enumerate(decay_steps)}
+    # scaling_factor = 0.1
+    # bound_dict = {i: scaling_factor**(j+1) for j, i in enumerate(decay_steps)}
+    bound_dict = {i: scaling_factor for i in decay_bounds}
     return optax.piecewise_constant_schedule(base_lr, bound_dict)
 
 
-def piecewise_constant_schedule(training_steps, base_lr, final_lr, decay_steps):
+def piecewise_constant_schedule(training_steps, base_lr, final_lr, decay_steps, scaling_factor):
     scaling_factor = (final_lr/base_lr)**(1/(decay_steps-1))
     bound_dict = {int(training_steps/decay_steps*i): scaling_factor for i in range(1, decay_steps)}
     return optax.piecewise_constant_schedule(base_lr, bound_dict)
 
 
-def cosine_decay(training_steps, base_lr, final_lr, decay_steps):
+def cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling_factor):
     alpha_val = final_lr/base_lr
     return optax.cosine_decay_schedule(base_lr, training_steps, alpha_val)
 
 
-def one_cycle_schedule(training_steps, base_lr, final_lr, decay_steps):
+def one_cycle_schedule(training_steps, base_lr, final_lr, decay_bounds, scaling_factor):
     return optax.cosine_onecycle_schedule(training_steps, base_lr)
 
 
-def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_steps):
+def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling_factor):
     warmup_steps = 0.05*training_steps  # warmup is done for 5% of training_steps
     return optax.warmup_cosine_decay_schedule(init_value=0.0, peak_value=base_lr,
                                               warmup_steps=warmup_steps, decay_steps=training_steps)

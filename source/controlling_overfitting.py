@@ -55,7 +55,8 @@ class ExpConfig:
     gradient_clipping: bool = False
     lr_schedule: str = "None"
     final_lr: float = 1e-6
-    lr_decay_steps: Any = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_steps: int = 5  # Number of epochs after which lr is decayed
+    lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
     train_batch_size: int = 512
     eval_batch_size: int = 512
     death_batch_size: int = 512
@@ -211,7 +212,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         aim_hash = None
     
     # Path for logs
-    log_path = "./Neurips2023_main_3" # "./preempt_test"  #
+    log_path = "./ICLR2023_main"  # "./preempt_test"  #
     if exp_config.dataset == "imagenet":
         log_path = "./imagenet_exps"
     # Logger config
@@ -596,9 +597,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
                                        gamma=exp_config.noise_gamma))
         else:
+            decay_boundaries = [steps_per_epoch * exp_config.lr_decay_steps * (i+1) for i in range((exp_config.training_steps//steps_per_epoch)//exp_config.lr_decay_steps)]
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
                                                                       exp_config.final_lr,
-                                                                      exp_config.lr_decay_steps)
+                                                                      decay_boundaries,
+                                                                      exp_config.lr_decay_scaling_factor)
             opt_chain.append(optimizer(lr_schedule))
         opt = optax.chain(*opt_chain)
 
