@@ -499,16 +499,21 @@ class LinearBlockV1(hk.Module):
             num_classes: int,
             logits_config: Optional[Mapping[str, FloatStrOrBool]],
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None):
+            preceding_activation_name: Optional[str] = None,
+            avg_pool_layer: bool = False):
         super().__init__(name=name)
         self.activation_mapping = {}
         self.preceding_activation_name = preceding_activation_name
         self.logits_layer = hk.Linear(num_classes, **logits_config)  # TODO: de-hardencode the outputs_dim
+        if avg_pool_layer:
+            self.mean_layer = hk.AvgPool(window_shape=(1, 4, 4, 1), strides=(1, 4, 4, 1), padding="VALID")
+        else:
+            self.mean_layer = Partial(jnp.mean, axis=(1, 2))  # Kind of average pooling layer
 
     def __call__(self, inputs):
         activations = []
         block_name = self.name + "/~/"
-        x = jnp.mean(inputs, axis=(1, 2))  # Kind of average pooling layer
+        x = self.mean_layer(inputs)
         # x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
         x = self.logits_layer(x)
 
@@ -537,7 +542,8 @@ class LinearBlockV2(hk.Module):
             bn_config: Optional[Mapping[str, FloatStrOrBool]],
             with_bn: bool,
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None):
+            preceding_activation_name: Optional[str] = None,
+            avg_pool_layer: bool = False):
         super().__init__(name=name)
         self.activation_mapping = {}
         self.preceding_activation_name = preceding_activation_name
@@ -550,11 +556,15 @@ class LinearBlockV2(hk.Module):
         self.activation_layer = activation_fn()
         # self.activation_layer2 = activation_fn()
         self.is_training = is_training
+        if avg_pool_layer:
+            self.mean_layer = hk.AvgPool(window_shape=(1, 4, 4, 1), strides=(1, 4, 4, 1), padding="VALID")
+        else:
+            self.mean_layer = Partial(jnp.mean, axis=(1, 2))  # Kind of average pooling layer
 
     def __call__(self, inputs):
         activations = []
         block_name = self.name + "/~/"
-        x = jnp.mean(inputs, axis=(1, 2))  # Kind of average pooling layer
+        x = self.mean_layer(inputs)
         # x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
         x = self.fc_layer(x)
         if self.with_bn:
@@ -610,7 +620,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                  v2_linear_block: bool = False,
                  name: Optional[str] = None,
                  initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
-                 strides: Sequence[int] = (1, 2, 2, 2),):
+                 strides: Sequence[int] = (1, 2, 2, 2),
+                 max_pool_layer: bool = True,
+                 avg_pool_layer: bool = False):
 
     # act = activation_fn
 
@@ -636,7 +648,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                                                             with_bn=with_bn,
                                                             bn_config=bn_config,
                                                             resnet_block=resnet_block)
-        if i == 0:
+        if i == 0 and max_pool_layer:
             max_pool = Partial(MaxPool, window_shape=(1, 3, 3, 1), strides=(1, 2, 2, 1), padding="SAME")
             block_train_layers[0] = [max_pool] + block_train_layers[0]
             block_test_layers[0] = [max_pool] + block_test_layers[0]
@@ -665,10 +677,10 @@ def resnet_model(blocks_per_group: Sequence[int],
     if v2_linear_block:
         train_layers.append([Partial(LinearBlockV2, is_training=True, num_classes=num_classes, activation_fn=activation_fn,
                                      fc_config=(default_fc_layer_config, default_fc2_layer_config), logits_config=logits_config, bn_config=bn_config,
-                                     with_bn=with_bn)])
+                                     with_bn=with_bn, avg_pool_layer=avg_pool_layer)])
         test_layers.append([Partial(LinearBlockV2, is_training=False, num_classes=num_classes, activation_fn=activation_fn,
                                     fc_config=(default_fc_layer_config, default_fc2_layer_config), logits_config=logits_config, bn_config=bn_config,
-                                    with_bn=with_bn)])
+                                    with_bn=with_bn, avg_pool_layer=avg_pool_layer)])
     else:
         train_layers.append(
             [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config)])
@@ -703,22 +715,26 @@ def resnet18(size: Union[int, Sequence[int]],
              strides: Sequence[int] = (1, 2, 2, 2),
              with_bn: bool = True,
              bn_config: dict = base_bn_config,
-             version: str = 'V1'):
+             version: str = 'V1',
+             v2_linear_block=False):
 
     assert version in ["V1", "V2"], "version must be either V1 or V2"
 
     if type(size) == int:
         init_conv_size = size
         sizes = [[size*i]*4 for i in [1, 2, 4, 8]]
-        fc_size = 4 * size
+        if v2_linear_block:
+            fc_size = 4 * size
         # fc2_size = 2*size
     else:
         init_conv_size = size[0]
-        fc_size = size[-1]
-        # fc2_size = size[-1]
-        sizes = size[1:-1]
+        if v2_linear_block:
+            fc_size = size[-1]
+            # fc2_size = size[-1]
+            sizes = size[1:-1]
+        else:
+            sizes = size[1:]
         # sizes = size[1:-2]
-        # sizes = size[1:]
         sizes = [sizes[i:i+4] for i in range(0, 16, 4)]
 
     resnet_config = {
@@ -729,8 +745,9 @@ def resnet18(size: Union[int, Sequence[int]],
                     "bn_config": bn_config
                     }
     default_initial_conv_config["output_channels"] = init_conv_size
-    default_fc_layer_config["output_size"] = fc_size
-    # default_fc2_layer_config["output_size"] = fc2_size
+    if v2_linear_block:
+        default_fc_layer_config["output_size"] = fc_size
+        # default_fc2_layer_config["output_size"] = fc2_size
 
     if version == "V1":
         resnet_block_type = ResnetBlockV1
@@ -744,7 +761,7 @@ def resnet18(size: Union[int, Sequence[int]],
                         logits_config=logits_config,
                         with_bn=with_bn,
                         resnet_block=resnet_block_type,
-                        v2_linear_block=True,  # TODO: switch to resnet18/resnet19 name convention
+                        v2_linear_block=v2_linear_block,
                         **resnet_config)
 
 
@@ -800,4 +817,55 @@ def resnet50(size: Union[int, Sequence[int]],
                         with_bn=with_bn,
                         resnet_block=resnet_block_type,
                         v2_linear_block=v2_lin_block,
+                        **resnet_config)
+
+
+##############################
+# SrigL models: https://arxiv.org/pdf/2305.02299.pdf
+# https://github.com/calgaryml/condensed-sparsity/blob/main/src/rigl_torch/models/resnet.py
+##############################
+srigl_initial_conv_config = {"kernel_shape": 3,
+                               "stride": 1,
+                               "with_bias": False,
+                               "padding": "SAME",
+                               "name": "initial_conv",
+                               "w_init": kaiming_normal}
+
+
+def srigl_resnet18(size: Union[int, Sequence[int]],
+             num_classes: int,
+             activation_fn: hk.Module = ReluActivationModule,
+             logits_config: Optional[Mapping[str, Any]] = default_logits_config,
+             initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = srigl_initial_conv_config,
+             strides: Sequence[int] = (1, 2, 2, 2),
+             with_bn: bool = True,
+             bn_config: dict = base_bn_config,):
+
+    if type(size) == int:
+        init_conv_size = size
+        sizes = [[size*i]*4 for i in [1, 2, 4, 8]]
+    else:
+        init_conv_size = size[0]
+        sizes = size[1:]
+        sizes = [sizes[i:i+4] for i in range(0, 16, 4)]
+
+    resnet_config = {
+                    "blocks_per_group": (2, 2, 2, 2),
+                    "bottleneck": False,
+                    "channels_per_group": sizes,  # typical resnet18 size = 64
+                    "use_projection": (False, True, True, True),
+                    "bn_config": bn_config
+                    }
+    initial_conv_config["output_channels"] = init_conv_size
+
+    return resnet_model(num_classes=num_classes,
+                        activation_fn=activation_fn,
+                        initial_conv_config=initial_conv_config,
+                        strides=strides,
+                        logits_config=logits_config,
+                        with_bn=with_bn,
+                        resnet_block=ResnetBlockV1,
+                        v2_linear_block=False,
+                        max_pool_layer=False,
+                        avg_pool_layer=True,
                         **resnet_config)
