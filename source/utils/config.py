@@ -17,7 +17,7 @@ from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_
 from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_act_post_bn
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.vgg16 import vgg16
-from models.resnet import resnet18, resnet50
+from models.resnet import resnet18, resnet50, srigl_resnet18
 
 baseline_pruning_method_choice = {
     "WMP": jaxpruner.MagnitudePruning,
@@ -48,6 +48,7 @@ dataset_choice = {
     "fashion mnist": load_fashion_mnist_tf,
     # "fashion mnist-torch": load_fashion_mnist_torch,
     "cifar10": load_cifar10_tf,
+    "cifar10_srigl": Partial(load_cifar10_tf, dataset="cifar10_srigl"),
     # "cifar10-ffcv": load_cifar10_ffcv,
     # "cifar10-torch": load_cifar10_torch,
     "cifar100": load_cifar100_tf,
@@ -88,6 +89,7 @@ architecture_choice = {
     "conv_6_2": conv_6_2,
     "vgg16": None,  # TODO: Encode non-bn version of vgg16
     "resnet18": Partial(resnet18, with_bn=False),
+    "srigl_resnet18": Partial(srigl_resnet18, with_bn=False),
     # "resnet18_v2": Partial(resnet18, with_bn=False, version="V2"),  # TODO: support acti_map
     "resnet50": Partial(resnet50, with_bn=False)
 }
@@ -104,6 +106,8 @@ bn_architecture_choice = {
     "conv_6_2": conv_6_2_bn,
     "vgg16": vgg16,
     "resnet18": resnet18,
+    "resnet19": Partial(resnet18, v2_linear_block=True),
+    "srigl_resnet18": srigl_resnet18,
     # "resnet18_v2": Partial(resnet18, version="V2"), # TODO: support acti_map
     "resnet50": resnet50,
 }
@@ -140,6 +144,7 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
     "mnist": 10,
     "fashion mnist": 10,
     "cifar10": 10,
+    "cifar10_srigl": 10,
     "cifar10-ffcv": 10,
     "cifar100": 100,
     "imagenet": 1000,
