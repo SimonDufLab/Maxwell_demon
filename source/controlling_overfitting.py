@@ -200,7 +200,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      aim_hash=None, slurm_jobid=SLURM_JOBID, exp_name=exp_name_,
                                      curr_starting_size=exp_config.size, curr_reg_param=exp_config.reg_params[0],
                                      dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
-                                     curr_decaying_reg_param=exp_config.reg_params[0])
+                                     curr_decaying_reg_param=exp_config.reg_params[0],
+                                     best_accuracy=0.0, best_params_count=None, best_total_neurons=None)
             # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
             #     pickle.dump(run_state, f)
 
@@ -631,6 +632,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
         activation_layer_order = list(state.keys())
+        initial_params_count = utl.count_params(params)
         if load_from_preexisting_model_state:
             params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
         # frozen_layer_lists = utl.extract_layer_lists(params)
@@ -649,9 +651,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
         # total_neurons, total_per_layer = starting_neurons, starting_per_layerç
         total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
-        init_total_neurons = copy.copy(total_neurons)
-        init_total_per_layer = copy.copy(total_per_layer)
-        initial_params_count = utl.count_params(params)
+        init_total_neurons = copy.copy(starting_neurons)
+        init_total_per_layer = copy.copy(starting_per_layer)
 
         # Visualize NN with tabulate
         # print(hk.experimental.tabulate(net.init)(next(train)))
@@ -677,11 +678,24 @@ def run_exp(exp_config: ExpConfig) -> None:
             starting_step = run_state["training_step"]
             decaying_reg_param = run_state["decaying_reg_param"]
             dropout_key = run_state["dropout_key"]
+            best_acc = run_state["best_accuracy"]
+            best_params_count = run_state["best_params_count"]
+            best_total_neurons = run_state["best_total_neurons"]
             load_from_preexisting_model_state = False
         else:
             starting_step = 0
+            best_acc = 0
+            best_params_count = initial_params_count
+            best_total_neurons = init_total_neurons
+
         print(f"Continuing training from step {starting_step} and reg_param {reg_param}")
         for step in range(starting_step, exp_config.training_steps + add_steps):
+            if (step > 0) and (step % steps_per_epoch == 0):  # Keep track of the best accuracy along training
+                curr_acc = final_accuracy_fn(params, state, test_eval)
+                if curr_acc > best_acc:
+                    best_acc = curr_acc
+                    best_params_count = utl.count_params(params)
+                    best_total_neurons = utl.get_total_neurons(exp_config.architecture, new_sizes)[0]
             # Update decaying reg_param if needed:
             if exp_config.reg_param_schedule and step < exp_config.training_steps:
                 decaying_reg_param = reg_sched(step)
@@ -693,7 +707,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 utl.checkpoint_exp(run_state, params, state, opt_state, curr_epoch=step//steps_per_epoch,
                                    curr_step=step, curr_arch_sizes=new_sizes, curr_starting_size=size,
                                    curr_reg_param=reg_param, dropout_key=dropout_key,
-                                   decaying_reg_param=decaying_reg_param)
+                                   decaying_reg_param=decaying_reg_param, best_acc=best_acc,
+                                   best_params_count=best_params_count, best_total_neurons=best_total_neurons)
                 print(
                     f"Checkpointing performed in: {timedelta(seconds=time.time() - chckpt_init_time)}")
             # Record metrics and prune model if needed:
@@ -835,6 +850,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         log_params_sparsity_step = final_params_count / initial_params_count * 1000
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of params remaining",
+                      step=log_params_sparsity_step)
+        log_sparsity_step = jax.device_get(best_total_neurons / init_total_neurons) * 1000
+        exp_run.track(best_acc,
+                      name="Best accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
+        log_params_sparsity_step = best_params_count / initial_params_count * 1000
+        exp_run.track(best_acc,
+                      name="Best accuracy after convergence w/r percent*10 of params remaining",
                       step=log_params_sparsity_step)
         # if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
         #     params_vec, _ = ravel_pytree(params)
