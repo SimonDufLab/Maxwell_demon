@@ -2502,6 +2502,9 @@ class RunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_
     curr_reg_param: Optional[float]  # To use with exps that loop over reg_param
     dropout_key: Optional[jax.random.PRNGKey]
     decaying_reg_param: Optional[float]
+    best_accuracy: float  # Best accuracy so far
+    best_params_count: Optional[int]  # Number of remaining params for the best run so far
+    best_total_neurons: Optional[int]  # Number of remaining neurons for the best run so far
 
 
 def load_run_state(checkpoint_dir: Path) -> Optional[RunState]: # Taken from https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
@@ -2533,7 +2536,8 @@ def load_run_state(checkpoint_dir: Path) -> Optional[RunState]: # Taken from htt
 
 
 def checkpoint_exp(run_state: RunState, params, state, opt_state, curr_epoch: int, curr_step: int,
-                   curr_arch_sizes, curr_starting_size, curr_reg_param, dropout_key, decaying_reg_param):
+                   curr_arch_sizes, curr_starting_size, curr_reg_param, dropout_key, decaying_reg_param,
+                   best_acc, best_params_count, best_total_neurons):
     run_state["epoch"] = curr_epoch
     run_state["training_step"] = curr_step
     run_state["curr_arch_sizes"] = curr_arch_sizes
@@ -2541,6 +2545,9 @@ def checkpoint_exp(run_state: RunState, params, state, opt_state, curr_epoch: in
     run_state["curr_reg_param"] = curr_reg_param
     run_state["dropout_key"] = dropout_key
     run_state["decaying_reg_param"] = decaying_reg_param
+    run_state["best_accuracy"] = best_acc
+    run_state["best_params_count"] = best_params_count
+    run_state["best_total_neurons"] = best_total_neurons
 
     with open(os.path.join(run_state["model_dir"], "checkpoint_run_state.pkl"), "wb") as f:
         pickle.dump(run_state, f)
