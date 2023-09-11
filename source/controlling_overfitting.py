@@ -666,8 +666,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             reg_param_decay_period = exp_config.training_steps // decay_cycles
 
         if exp_config.reg_param_schedule:
-            reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](exp_config.training_steps,
-                                                                                  reg_param)
+            if exp_config.zero_end_reg_param:
+                sched_end = int(0.9*exp_config.training_steps)
+            else:
+                sched_end = exp_config.training_steps
+            reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, reg_param)
 
         if exp_config.prune_at_end:
             pruning_reg_param, pruning_lr, add_steps = exp_config.prune_at_end
