@@ -627,7 +627,13 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_accuracy_fn = utl.accuracy_given_model(lin_net, with_dropout=with_dropout)
             lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
 
-        params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+        if load_from_preexisting_model_state:
+            _architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
+            _net, _ = build_models(*_architecture, with_dropout=with_dropout)
+            params, state = _net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+            del _net
+        else:
+            params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         # initial_params = utl.jax_deep_copy(params)  # Keep a copy of the initial params for relative change metric
         init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
@@ -649,7 +655,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
-        # total_neurons, total_per_layer = starting_neurons, starting_per_layerç
+        # total_neurons, total_per_layer = starting_neurons, starting_per_layer
         total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
         init_total_neurons = copy.copy(starting_neurons)
         init_total_per_layer = copy.copy(starting_per_layer)
@@ -681,9 +687,14 @@ def run_exp(exp_config: ExpConfig) -> None:
             starting_step = run_state["training_step"]
             decaying_reg_param = run_state["decaying_reg_param"]
             dropout_key = run_state["dropout_key"]
-            best_acc = run_state["best_accuracy"]
-            best_params_count = run_state["best_params_count"]
-            best_total_neurons = run_state["best_total_neurons"]
+            try:  # TODO Remove after completing all currently running from previous version
+                best_acc = run_state["best_accuracy"]
+                best_params_count = run_state["best_params_count"]
+                best_total_neurons = run_state["best_total_neurons"]
+            except KeyError:
+                best_acc = 0
+                best_params_count = initial_params_count
+                best_total_neurons = init_total_neurons
             load_from_preexisting_model_state = False
         else:
             starting_step = 0
