@@ -869,3 +869,44 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
                         max_pool_layer=False,
                         avg_pool_layer=True,
                         **resnet_config)
+
+
+def srigl_resnet50(size: Union[int, Sequence[int]],
+             num_classes: int,
+             activation_fn: hk.Module = ReluActivationModule,
+             logits_config: Optional[Mapping[str, Any]] = default_logits_config,
+             initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = srigl_initial_conv_config,
+             strides: Sequence[int] = (1, 2, 2, 2),
+             with_bn: bool = True,
+             bn_config: dict = base_bn_config):
+
+    blocks_per_group = [3, 4, 6, 3]
+    if type(size) == int:
+        init_conv_size = size
+        sizes = [[size*(2**i), size*(2**i), 4*size*(2**i)]*blocks_per_group[i] for i in range(4)]  #[1, 2, 4, 8]]
+    else:
+        init_conv_size = size[0]
+        sizes = size[1:]
+        sizes = [sizes[i:j] for i, j in ((0, 9), (9, 21), (21, 39), (39, 48))]
+
+    resnet_config = {
+                    "blocks_per_group": (3, 4, 6, 3),
+                    "bottleneck": True,
+                    "channels_per_group": sizes,  # typical resnet50 size = 64 (so 256 in first block after bottleneck)
+                    "use_projection": (True, True, True, True),
+                    "bn_config": bn_config
+                    }
+    initial_conv_config["output_channels"] = init_conv_size
+
+    return resnet_model(num_classes=num_classes,
+                        activation_fn=activation_fn,
+                        initial_conv_config=initial_conv_config,
+                        strides=strides,
+                        logits_config=logits_config,
+                        with_bn=with_bn,
+                        resnet_block=ResnetBlockV1,
+                        v2_linear_block=False,
+                        max_pool_layer=False,
+                        avg_pool_layer=True,
+                        **resnet_config)
+

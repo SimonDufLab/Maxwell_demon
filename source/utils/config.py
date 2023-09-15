@@ -17,7 +17,7 @@ from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_
 from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_act_post_bn
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.vgg16 import vgg16
-from models.resnet import resnet18, resnet50, srigl_resnet18
+from models.resnet import resnet18, resnet50, srigl_resnet18, srigl_resnet50
 
 baseline_pruning_method_choice = {
     "WMP": jaxpruner.MagnitudePruning,
@@ -91,7 +91,8 @@ architecture_choice = {
     "resnet18": Partial(resnet18, with_bn=False),
     "srigl_resnet18": Partial(srigl_resnet18, with_bn=False),
     # "resnet18_v2": Partial(resnet18, with_bn=False, version="V2"),  # TODO: support acti_map
-    "resnet50": Partial(resnet50, with_bn=False)
+    "resnet50": Partial(resnet50, with_bn=False),
+    "srigl_resnet50": Partial(srigl_resnet50, with_bn=False)
 }
 
 architecture_choice_dropout = {
@@ -110,6 +111,7 @@ bn_architecture_choice = {
     "srigl_resnet18": srigl_resnet18,
     # "resnet18_v2": Partial(resnet18, version="V2"), # TODO: support acti_map
     "resnet50": resnet50,
+    "srigl_resnet50": srigl_resnet50,
 }
 
 bn_config_choice = {
