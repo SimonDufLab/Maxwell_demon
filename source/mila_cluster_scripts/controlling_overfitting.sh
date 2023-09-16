@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=controlling_overfitting
-#SBATCH --partition=main                           # Ask for unkillable job
+#SBATCH --partition=long                           # Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
 #SBATCH --mem=24G   #24G for Resnet18                                        # Ask for 10 GB of RAM
-#SBATCH --time=8:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+#SBATCH --time=4:30:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
 #SBATCH -x 'cn-d[001-004], cn-g[005-012,017-026]'  # Excluding DGX system, will require a jaxlib update
 
 # Make sure we are located in the right directory and on right branch
@@ -112,6 +112,31 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #python source/controlling_overfitting.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=4 info=Resnet19_dyn_pruning_mom_base_new_opt_full_len 'reg_params="(0.01, 0.05, 0.1)"' optimizer=adam_to_momentum wd_param=0.00001 lr=1.0 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True init_seed=62
 #wait $!
 
+#########################
+#Structured RigL setup:
+
+#python source/controlling_overfitting.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=4 info=Resnet18_srigl_final_adam 'reg_params="(0.0,)"' optimizer=adam wd_param=0.0 lr=0.005 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True preempt_handling=True checkpoint_freq=5 init_seed=61
+#wait $!
+
+# Adam only
+#python source/controlling_overfitting.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=4 info=Resnet18_srigl_final_adam 'reg_params="(0.0000005, 0.000001, 0.000005)"' optimizer=adam wd_param=0.0 lr=0.005 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=cdg_l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True preempt_handling=True checkpoint_freq=5 init_seed=65 reg_param_schedule=one_cycle
+#wait $!
+
+#python source/controlling_overfitting.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=4 info=Resnet18_srigl_final_adam 'reg_params="(0.00001, 0.00005, 0.0001)"' optimizer=adam wd_param=0.0 lr=0.005 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=cdg_l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True preempt_handling=True checkpoint_freq=5 init_seed=65 reg_param_schedule=one_cycle
+#wait $!
+
+#python source/controlling_overfitting.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=4 info=Resnet18_srigl_final_adam 'reg_params="(0.0005, 0.001, 0.005)"' optimizer=adam wd_param=0.0 lr=0.005 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=cdg_l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True preempt_handling=True checkpoint_freq=5 init_seed=65 reg_param_schedule=one_cycle
+#wait $!
+
+python source/controlling_overfitting.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=4 info=Resnet18_srigl_final_adam 'reg_params="(0.006, 0.007, 0.008)"' optimizer=adam wd_param=0.0 lr=0.005 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=cdg_l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True preempt_handling=True checkpoint_freq=5 init_seed=65 reg_param_schedule=one_cycle
+wait $!
+
+#Momentum only
+#python source/controlling_overfitting.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=4 info=Resnet18_srig_final_momentum 'reg_params="(0.01, 0.05, 0.1)"' optimizer=momentum9 wd_param=0.0 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True preempt_handling=True checkpoint_freq=5 init_seed=65 reg_param_schedule=one_cycle
+#wait $!
+
+########################
+
 #python source/controlling_overfitting.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 size=64 with_bn=False lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet19_l2_acti_distribution 'reg_params="(0.0, 0.000001, 0.000005, 0.00001, 0.00005, 0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05)"' optimizer=adam wd_param=0.0005 lr=0.0001 train_batch_size=256 augment_dataset=True gradient_clipping=True noisy_label=0.0 regularizer=cdg_l2 activation=relu zero_end_reg_param=False save_wanda=True dynamic_pruning=False init_seed=21
 #wait $!
 
@@ -127,8 +152,9 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #python source/controlling_overfitting.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 "size='(64, 4096)'" with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 zero_end_reg_param=False info=vgg16_dense 'reg_params="(0.0,)"' optimizer=adam wd_param=0.0005 lr=0.05 train_batch_size=256 augment_dataset=True gradient_clipping=True noisy_label=0.0 regularizer=None activation=relu save_wanda=False dynamic_pruning=False init_seed=61
 #wait $!
 
-python source/controlling_overfitting.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 "size='(64, 4096)'" with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=2 zero_end_reg_param=True info=vgg16_l2_dyn 'reg_params="(0.0, 0.000001, 0.000005, 0.00001, 0.00005)"' optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu save_wanda=False dynamic_pruning=True init_seed=79
-wait $!
+# vgg mains
+#python source/controlling_overfitting.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 "size='(64, 4096)'" with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=2 zero_end_reg_param=True info=vgg16_l2_dyn 'reg_params="(0.0, 0.000001, 0.000005, 0.00001, 0.00005)"' optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu save_wanda=False dynamic_pruning=True init_seed=79
+#wait $!
 
 #python source/controlling_overfitting.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 "size='(64, 4096)'" with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=2 zero_end_reg_param=True info=vgg16_l2_dyn 'reg_params="(0.0001, 0.0005, 0.001, 0.005, 0.01, 0.05)"' optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu save_wanda=False dynamic_pruning=True init_seed=79
 #wait $!
