@@ -117,7 +117,17 @@ echo "Checking if tcmalloc was correctly attributed to LD_PRELOAD"
 echo $LD_PRELOAD
 
 # Classic setting; for test
-python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=1000 record_freq=500 pruning_freq=12500 size=64 with_bn=True lr_schedule=warmup_cosine_decay normalize_inputs=True reg_param_decay_cycles=4 info=Resnet50_momentum_warmup_cosinedecay_new_opt 'reg_params="(0.0008,)"' optimizer=adam_to_momentum wd_param=0.0001 lr=10.0 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=cdg_l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True init_seed=33
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=1000 record_freq=500 pruning_freq=12500 size=64 with_bn=True lr_schedule=warmup_cosine_decay normalize_inputs=True reg_param_decay_cycles=4 info=Resnet50_momentum_warmup_cosinedecay_new_opt 'reg_params="(0.00001,)"' optimizer=adam_to_momentum wd_param=0.0001 lr=10.0 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True init_seed=33 preempt_handling=True jobid=3586130
+#wait $!
+
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=1000 record_freq=500 pruning_freq=12500 size=64 with_bn=True lr_schedule=warmup_cosine_decay normalize_inputs=True reg_param_decay_cycles=4 info=Resnet50_momentum_warmup_cosinedecay 'reg_params="(0.00175,)"' optimizer=momentum9 wd_param=0.0001 lr=0.1 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=cdg_l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True init_seed=33 preempt_handling=True
+#wait $!
+
+###################
+# SrigL setup
+# Momentum reg_param values: 0.0, 0.0001, 0.0005, 0.0008, 0.001, 0.00125, 0.0015, 0.00175, 0.002, 0.005, 0.01
+
+python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='srigl_resnet50' training_steps=256001 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=warmup_piecewise_decay "lr_decay_steps='(30, 70, 90)'" lr_decay_scaling_factor=0.1 normalize_inputs=True reg_param_decay_cycles=4 reg_param_schedule=one_cycle info=Resnet50_srigl_momentum 'reg_params="(0.00001,)"' optimizer=momentum9 wd_param=0.0 lr=0.2 train_batch_size=512 eval_batch_size=512 death_batch_size=512 augment_dataset=True gradient_clipping=False noisy_label=0.0 label_smoothing=0.1 regularizer=cdg_l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True preempt_handling=True init_seed=31
 wait $!
 
 ####################

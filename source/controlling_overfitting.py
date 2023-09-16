@@ -186,6 +186,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             SLURM_JOBID = exp_config.jobid
         else:
             SLURM_JOBID = os.environ["SLURM_JOBID"]
+            exp_config.jobid = SLURM_JOBID
         saving_dir = SCRATCH / exp_name_ / SLURM_JOBID
 
         # Create the directory if it does not exist
@@ -628,9 +629,12 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_full_accuracy_fn = utl.create_full_accuracy_fn(lin_accuracy_fn, test_size // eval_size)
 
         if load_from_preexisting_model_state:
-            _architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-            _net, _ = build_models(*_architecture, with_dropout=with_dropout)
+            _architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+            exp_config.architecture]
+            _architecture = _architecture(size, classes, activation_fn=activation_fn, **net_config)
+            _net, raw_net = build_models(*_architecture, with_dropout=with_dropout)
             params, state = _net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+            del _architecture
             del _net
         else:
             params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
@@ -705,6 +709,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         print(f"Continuing training from step {starting_step} and reg_param {reg_param}")
         for step in range(starting_step, exp_config.training_steps + add_steps):
             if (step > 0) and (step % steps_per_epoch == 0):  # Keep track of the best accuracy along training
+                architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[  # TODO: those line should not be necessary ...
+                    exp_config.architecture]
+                architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+                net = build_models(*architecture)[0]
+                accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+                final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+
                 curr_acc = final_accuracy_fn(params, state, test_eval)
                 if curr_acc > best_acc:
                     best_acc = curr_acc
