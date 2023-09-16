@@ -2,6 +2,8 @@
 by applying either cdg_l1 or cdg_l2 loss"""
 
 import copy
+
+import omegaconf.listconfig
 import optax
 import jax
 import jax.numpy as jnp
@@ -18,7 +20,7 @@ import json
 import gc
 import signal
 from dataclasses import dataclass, field, asdict
-from typing import Optional, Tuple, Any, List, Dict
+from typing import Optional, Tuple, Any, List, Dict, Union
 from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
@@ -55,7 +57,7 @@ class ExpConfig:
     gradient_clipping: bool = False
     lr_schedule: str = "None"
     final_lr: float = 1e-6
-    lr_decay_steps: int = 5  # Number of epochs after which lr is decayed
+    lr_decay_steps: Any = 5  # Number of epochs after which lr is decayed
     lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
     train_batch_size: int = 512
     eval_batch_size: int = 512
@@ -65,6 +67,7 @@ class ExpConfig:
     dataset: str = "mnist"
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
+    label_smoothing: float = 0.0  # Level of smoothing applied during the loss calculation, 0.0 -> no smoothing
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
     noisy_label: float = 0.0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     permuted_img_ratio: float = 0  # ratio ([0,1]) of training image in training ds to randomly permute their pixels
@@ -345,7 +348,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 decaying_reg_param = pruning_reg_param
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg, reg_param=pruning_reg_param,
                                                classes=classes, with_dropout=with_dropout,
-                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                               label_smoothing=exp_config.label_smoothing)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.pruning_reg,
                                                        reg_param=pruning_reg_param,
                                                        classes=classes, is_training=False, with_dropout=with_dropout,
@@ -369,7 +373,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # update_fn.clear_cache()
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
                                                classes=classes, with_dropout=with_dropout,
-                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                               label_smoothing=exp_config.label_smoothing)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                        reg_param=decaying_reg_param,
                                                        classes=classes, is_training=False, with_dropout=with_dropout,
@@ -490,7 +495,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                    reg_param=decaying_reg_param, classes=classes,
                                                    with_dropout=with_dropout,
-                                                   exclude_bias_bn_from_reg=exp_config.masked_reg)
+                                                   exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                                   label_smoothing=exp_config.label_smoothing)
                     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                            reg_param=decaying_reg_param,
                                                            classes=classes,
@@ -536,7 +542,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # utl.clear_caches()
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
                                                classes=classes, with_dropout=with_dropout,
-                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                               label_smoothing=exp_config.label_smoothing)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                        reg_param=decaying_reg_param,
                                                        classes=classes, is_training=False, with_dropout=with_dropout,
@@ -599,7 +606,10 @@ def run_exp(exp_config: ExpConfig) -> None:
             opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
                                        gamma=exp_config.noise_gamma))
         else:
-            decay_boundaries = [steps_per_epoch * exp_config.lr_decay_steps * (i+1) for i in range((exp_config.training_steps//steps_per_epoch)//exp_config.lr_decay_steps)]
+            if isinstance(exp_config.lr_decay_steps, omegaconf.listconfig.ListConfig):  # TODO: This is dirty...
+                decay_boundaries = [steps_per_epoch * lr_decay_step for lr_decay_step in exp_config.lr_decay_steps]
+            else:
+                decay_boundaries = [steps_per_epoch * exp_config.lr_decay_steps * (i+1) for i in range((exp_config.training_steps//steps_per_epoch)//exp_config.lr_decay_steps)]
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
                                                                       exp_config.final_lr,
                                                                       decay_boundaries,
@@ -610,7 +620,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Set training/monitoring functions
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
                                        classes=classes, with_dropout=with_dropout,
-                                       exclude_bias_bn_from_reg=exp_config.masked_reg)
+                                       exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                       label_smoothing=exp_config.label_smoothing)
         test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=reg_param,
                                                classes=classes, is_training=False, with_dropout=with_dropout,
                                                exclude_bias_bn_from_reg=exp_config.masked_reg)
