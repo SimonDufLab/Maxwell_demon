@@ -811,10 +811,10 @@ def exclude_bn_and_bias_params(dict_params):
 
 
 def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, is_training=True, with_dropout=False,
-                            mask_head=False, reduce_head_gap=False, exclude_bias_bn_from_reg=None):
+                            mask_head=False, reduce_head_gap=False, exclude_bias_bn_from_reg=None, label_smoothing=0):
     """ Build the cross-entropy loss given the model"""
-    if not classes:
-        classes = 10
+    # if not classes:
+    #     classes = 10
 
     assert exclude_bias_bn_from_reg in [None, 'all', 'scale'], "Can only exclude some params from reg loss with all or scale rn."
     if exclude_bias_bn_from_reg:
@@ -859,6 +859,8 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             next_dropout_key, rng = jax.random.split(dropout_key)
             (logits, activations), state = model.apply(params, state, rng, batch, return_activations=True, is_training=is_training)
             labels = jax.nn.one_hot(batch[1], classes)
+            if label_smoothing > 0:
+                labels = labels * (1 - label_smoothing) + label_smoothing / classes
 
             if mask_head:
                 # softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits, where=(logits+labels) > 0, initial=0))
@@ -888,6 +890,8 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         def _loss(params: hk.Params, state: hk.State, batch: Batch, _reg_param: float = reg_param) -> Union[jnp.ndarray, Any]:
             (logits, activations), state = model_apply_fn(params, state, x=batch, return_activations=True, is_training=is_training)
             labels = jax.nn.one_hot(batch[1], classes)
+            if label_smoothing > 0:
+                labels = labels * (1 - label_smoothing) + label_smoothing / classes
 
             if mask_head:
                 # softmax_xent = -jnp.sum(labels * jax.nn.log_softmax(logits, where=(logits+labels) > 0, initial=0))
@@ -1175,11 +1179,10 @@ srigl_data_augmentation_tf = tf.keras.Sequential([
 
 @tf.function
 def augment_train_imagenet_dataset(image, label):
-    # Randomly flip the image horizontally
-    image = tf.image.random_flip_left_right(image)
-
     # Randomly crop the image
     image = tf.image.random_crop(image, [224, 224, 3])  # assuming image has 3 color channels
+    # Randomly flip the image horizontally
+    image = tf.image.random_flip_left_right(image)
     return image, label
 
 # process_test_imagenet_dataset = tf.keras.Sequential([
@@ -1194,14 +1197,25 @@ def process_test_imagenet_dataset(image, label):
 
 
 @tf.function
-def resize_tf_dataset(images, labels, dataset):
-    """Final data augmentation step for cifar10, consisting of a resizing to 64x64"""
+def resize_tf_dataset(images, labels, dataset, is_training=False):
+    """Final data augmentation step for cifar10 and imagenet, consisting of resizing."""
     if dataset == 'cifar10':
         # Resize images to 64x64
         images = tf.image.resize(images, [64, 64])
-    if dataset == "imagenet":
-        # Resize images to 256x256
-        images = tf.image.resize(images, [256, 256])
+    elif dataset == "imagenet":
+        if is_training:
+            # Generate a random number to decide the resizing dimensions
+            random_num = tf.random.uniform(shape=[], minval=0, maxval=1)
+
+            if random_num < 0.5:
+                # Resize images to 480x480 with 50% probability when training
+                images = tf.image.resize(images, [480, 480])
+            else:
+                # Resize images to 256x256 with 50% probability when training
+                images = tf.image.resize(images, [256, 256])
+        else:
+            # Resize images to 256x256 when not training
+            images = tf.image.resize(images, [256, 256])
     return images, labels
 
 
@@ -1386,25 +1400,30 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
     ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
-    ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet"), num_parallel_calls=tf.data.AUTOTUNE)
-    if normalize:
-        ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
     # ds = ds.cache()
     # ds = ds.shuffle(50000, seed=0, reshuffle_each_iteration=True)
     if other_bs:
         ds1 = ds
+        ds1 = ds1.map(Partial(resize_tf_dataset, dataset="imagenet", is_training=is_training),
+                      num_parallel_calls=tf.data.AUTOTUNE)
         if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
             ds1 = ds1.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
             ds1 = ds1.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
             ds1 = ds1.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+        if normalize:
+            ds1 = ds1.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
         ds1 = ds1.batch(batch_size)
         ds1 = ds1.prefetch(tf.data.AUTOTUNE)
         ds1 = ds1.repeat()
         all_ds = [ds1]
         for bs in other_bs:
             ds2 = ds
+            ds2 = ds2.map(Partial(resize_tf_dataset, dataset="imagenet", is_training=False),
+                          num_parallel_calls=tf.data.AUTOTUNE)
             ds2 = ds2.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            if normalize:
+                ds2 = ds2.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
             # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
             ds2 = ds2.batch(bs)
             ds2 = ds2.prefetch(tf.data.AUTOTUNE)
@@ -1420,11 +1439,15 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         else:
             return tf_iterators
     else:
+        ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet", is_training=is_training),
+                    num_parallel_calls=tf.data.AUTOTUNE)
         if is_training and data_augmentation:
             ds = ds.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
             ds = ds.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
             ds = ds.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+        if normalize:
+            ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(batch_size)
         ds = ds.prefetch(tf.data.AUTOTUNE)
         ds = ds.repeat()
@@ -1867,7 +1890,7 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
 ##############################
 # lr scheduler utilities
 ##############################
-def constant_schedule(training_steps, base_lr, final_lr, decay_bounds):
+def constant_schedule(training_steps, base_lr, final_lr, decay_bounds, scaling_factor):
     return optax.constant_schedule(base_lr)
 
 
@@ -1899,6 +1922,27 @@ def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling
     return optax.warmup_cosine_decay_schedule(init_value=0.0, peak_value=base_lr,
                                               warmup_steps=warmup_steps, decay_steps=training_steps)
 
+
+def warmup_piecewise_decay_schedule(
+    training_steps: int,
+    base_lr: float,
+    final_lr: float,
+    decay_bounds: List,
+    scaling_factor: float
+) -> optax.Schedule:
+    """Linear warmup followed by piecewise decay
+    """
+    warmup_steps = int(0.05 * training_steps)  # warmup is done for 5% of training_steps
+    bound_dict = {i-warmup_steps: scaling_factor for i in decay_bounds}
+    schedules = [
+        optax.linear_schedule(
+            init_value=1e-6,
+            end_value=base_lr,
+            transition_steps=warmup_steps),
+        optax.piecewise_constant_schedule(
+            init_value=base_lr,
+            boundaries_and_scales=bound_dict)]
+    return optax.join_schedules(schedules, [warmup_steps])
 
 ##############################
 # Modified optax optimizer
