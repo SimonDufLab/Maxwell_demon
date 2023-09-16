@@ -58,6 +58,7 @@ class ExpConfig:
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
     noisy_label: float = 0.0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
+    label_smoothing: float = 0.0  # Level of smoothing applied during the loss calculation, 0.0 -> no smoothing
     permuted_img_ratio: float = 0  # ratio ([0,1]) of training image in training ds to randomly permute their pixels
     gaussian_img_ratio: float = 0  # ratio ([0,1]) of img to replace by gaussian noise; same mean and variance as ds
     architecture: str = "mlp_3"
@@ -238,7 +239,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     # Set training/monitoring functions
     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                   classes=classes, with_dropout=with_dropout)
+                                   classes=classes, with_dropout=with_dropout, label_smoothing=exp_config.label_smoothing)
     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                            classes=classes, is_training=False, with_dropout=with_dropout)
     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
@@ -346,7 +347,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             test_loss_fn.clear_cache()
             update_fn.clear_cache()
             loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                           classes=classes, with_dropout=with_dropout)
+                                           classes=classes, with_dropout=with_dropout, label_smoothing=exp_config.label_smoothing)
             test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                    reg_param=decaying_reg_param,
                                                    classes=classes, is_training=False, with_dropout=with_dropout)
@@ -404,7 +405,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # Recompile training/monitoring functions
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                reg_param=decaying_reg_param, classes=classes,
-                                               with_dropout=with_dropout)
+                                               with_dropout=with_dropout, label_smoothing=exp_config.label_smoothing)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                        reg_param=decaying_reg_param,
                                                        classes=classes,

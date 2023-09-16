@@ -9,7 +9,7 @@ import utils.scores as scores
 # from utils.utils import load_mnist_torch, load_cifar10_torch, load_fashion_mnist_torch
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf, load_imagenet_tf, load_cifar100_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule, one_cycle_schedule, fix_step_decay
-from utils.utils import warmup_cosine_decay
+from utils.utils import warmup_cosine_decay, warmup_piecewise_decay_schedule
 from models.mlp import mlp_3, mlp_3_bn, mlp_3_reg
 from models.mlp import mlp_3_act_pre_relu, mlp_3_act_pre_bn, mlp_3_act_post_bn
 from models.mlp import mlp_3_dropout
@@ -17,7 +17,7 @@ from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_
 from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_act_post_bn
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.vgg16 import vgg16
-from models.resnet import resnet18, resnet50, srigl_resnet18
+from models.resnet import resnet18, resnet50, srigl_resnet18, srigl_resnet50
 
 baseline_pruning_method_choice = {
     "WMP": jaxpruner.MagnitudePruning,
@@ -71,7 +71,8 @@ lr_scheduler_choice = {
     'piecewise_constant': piecewise_constant_schedule,
     'cosine_decay': cosine_decay,
     'warmup_cosine_decay': warmup_cosine_decay,
-    'one_cycle': one_cycle_schedule
+    'one_cycle': one_cycle_schedule,
+    'warmup_piecewise_decay': warmup_piecewise_decay_schedule,
 }
 
 reg_param_scheduler_choice = {
@@ -91,7 +92,8 @@ architecture_choice = {
     "resnet18": Partial(resnet18, with_bn=False),
     "srigl_resnet18": Partial(srigl_resnet18, with_bn=False),
     # "resnet18_v2": Partial(resnet18, with_bn=False, version="V2"),  # TODO: support acti_map
-    "resnet50": Partial(resnet50, with_bn=False)
+    "resnet50": Partial(resnet50, with_bn=False),
+    "srigl_resnet50": Partial(srigl_resnet50, with_bn=False)
 }
 
 architecture_choice_dropout = {
@@ -110,6 +112,7 @@ bn_architecture_choice = {
     "srigl_resnet18": srigl_resnet18,
     # "resnet18_v2": Partial(resnet18, version="V2"), # TODO: support acti_map
     "resnet50": resnet50,
+    "srigl_resnet50": srigl_resnet50,
 }
 
 bn_config_choice = {
