@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
 #SBATCH --mem=24G   #24G for Resnet18                                        # Ask for 10 GB of RAM
-#SBATCH --time=1:30:00 #around 15min with onecycle                             # The job will run for 2.5 hours
+#SBATCH --time=2:30:00 #around 15min with onecycle                             # The job will run for 2.5 hours
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -66,10 +66,19 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    save_wanda: bool = False  # Whether to save weights and activations value or not
 #    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
+# run for pruning_density in [0, 0.1, 0.25, 0.4, 0.5, 0.6, 0.7, 0.8, 0.85, 0.9
+
 # res
 #python source/structured_baseline.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=1000 record_freq=100 full_ds_eval_freq=1000 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True info=Resnet19_earlycrop_it_leaky pruning_criterion=earlycrop optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=leaky_relu save_wanda=False modulate_target_density=False pruning_steps=5 pruning_density=0.0 init_seed=23
 #wait $!
 
-python source/structured_baseline.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 full_ds_eval_freq=1000 "size='(64, 4096)'"  with_bn=True lr_schedule=one_cycle normalize_inputs=True info=vgg16_snap pruning_criterion=snap optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu save_wanda=False modulate_target_density=False pruning_steps=5 pruning_density=0.0 init_seed=25
+#python source/structured_baseline.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 full_ds_eval_freq=1000 "size='(64, 4096)'"  with_bn=True lr_schedule=one_cycle normalize_inputs=True info=vgg16_snap_test_preempt pruning_criterion=snap optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu save_wanda=False modulate_target_density=False pruning_steps=5 pruning_density=0.0 init_seed=25 preempt_handling=True
+#wait $!
+
+#########################################
+# SriGL setup
+
+# res
+python source/structured_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 full_ds_eval_freq=20000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False info=Resnet18_srigl_structured pruning_criterion=snap optimizer=momentum9 wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu save_wanda=False preempt_handling=True checkpoint_freq=5 modulate_target_density=False pruning_steps=5 pruning_density=0.1 init_seed=21
 wait $!
 
