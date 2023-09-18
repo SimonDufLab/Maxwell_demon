@@ -51,6 +51,7 @@ class ExpConfig:
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
     train_batch_size: int = 512
     eval_batch_size: int = 512
     death_batch_size: int = 512
@@ -162,9 +163,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:  # Initialize the run_state
             run_state = utl.RunState(epoch=0, training_step=0, model_dir=saving_dir, curr_arch_sizes=exp_config.size,
                                      aim_hash=None, slurm_jobid=SLURM_JOBID, exp_name=exp_name,
-                                     curr_starting_size=exp_config.size, curr_reg_param=exp_config.reg_params[0],
+                                     curr_starting_size=exp_config.size, curr_reg_param=exp_config.reg_param,
                                      dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
-                                     curr_decaying_reg_param=exp_config.reg_params[0],
+                                     curr_decaying_reg_param=exp_config.reg_param,
                                      best_accuracy=0.0, best_params_count=None, best_total_neurons=None)
             # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
             #     pickle.dump(run_state, f)
@@ -201,6 +202,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             pick_architecture(with_dropout=True).keys())
         net_config = {"dropout_rate": exp_config.dropout_rate}
     else:
+        dropout_key=None
         net_config = {}
 
     if not exp_config.with_bias:
