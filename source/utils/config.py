@@ -157,6 +157,7 @@ pruning_criterion_choice = {
     "earlycrop": (scores.early_crop_score, scores.test_earlycrop_pruning_step),
     "earlysnap": (scores.snap_score, scores.test_earlycrop_pruning_step),
     "snap": (scores.snap_score, scores.prune_before_training),
+    "crop-it": (scores.early_crop_score, scores.prune_before_training)
 }
 
 
