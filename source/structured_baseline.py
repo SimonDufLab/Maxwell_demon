@@ -50,7 +50,7 @@ class ExpConfig:
     gradient_clipping: bool = False
     lr_schedule: str = "None"
     final_lr: float = 1e-6
-    lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_steps: Any = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
     lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
     train_batch_size: int = 512
     eval_batch_size: int = 512
@@ -139,6 +139,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.size = literal_eval(exp_config.size)
     if type(exp_config.epsilon_close) == str:
         exp_config.epsilon_close = literal_eval(exp_config.epsilon_close)
+    if type(exp_config.lr_decay_steps) == str:
+        exp_config.lr_decay_steps = literal_eval(exp_config.lr_decay_steps)
 
     activation_fn = activation_choice[exp_config.activation]
 
