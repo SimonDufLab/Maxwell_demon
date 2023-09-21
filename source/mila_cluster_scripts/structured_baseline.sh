@@ -79,6 +79,6 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 # SriGL setup
 
 # res
-python source/structured_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 full_ds_eval_freq=20000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False info=Resnet18_srigl_structured pruning_criterion=snap optimizer=momentum9 wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu save_wanda=False preempt_handling=True checkpoint_freq=5 modulate_target_density=False pruning_steps=5 pruning_density=0.1 init_seed=21
+python source/structured_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 full_ds_eval_freq=20000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False info=Resnet18_srigl_structured pruning_criterion=earlysnap optimizer=momentum9 wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu save_wanda=False preempt_handling=True checkpoint_freq=5 modulate_target_density=False pruning_steps=5 pruning_density=0.1 init_seed=21
 wait $!
 

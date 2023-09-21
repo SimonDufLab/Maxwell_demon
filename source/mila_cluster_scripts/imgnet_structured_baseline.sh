@@ -1,10 +1,10 @@
 #!/bin/bash
 
 #SBATCH --job-name=imgnet_structured_baseline
-#SBATCH --partition=long                           # Ask for unkillable job
-#SBATCH --cpus-per-task=16                                # Ask for 2 CPUs
+#SBATCH --partition=main                           # Ask for unkillable job
+#SBATCH --cpus-per-task=8 #16                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:a100l:1                                     # Ask for 1 GPU
-#SBATCH --mem=256G   #24G for Resnet18                                        # Ask for 10 GB of RAM
+#SBATCH --mem=48G #256G   #24G for Resnet18                                        # Ask for 10 GB of RAM
 #SBATCH --time=48:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
 # #SBATCH -x 'cn-b[001-005], cn-d[001-004], cn-g[005-012,017-026], cn-e[002-003], kepler5'  # Excluding DGX system, will require a jaxlib update and kepler 5 that have 16GB GPU memory
 
@@ -90,5 +90,5 @@ echo $LD_PRELOAD
 #wait $!
 
 # for resnet, ~80% param sparsity --> pruning density = 0.4, 0.45, 0.5
-python source/structured_baseline.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=2000 record_freq=500 full_ds_eval_freq=600000 size=64 with_bn=True lr_schedule=warmup_piecewise_decay "lr_decay_steps='(30, 70, 90)'" lr_decay_scaling_factor=0.1 normalize_inputs=True info=Resnet50_structured_imgnet_srigl_momentum pruning_criterion=earlycrop optimizer=momentum9 wd_param=0.0001 lr=0.1 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 label_smoothing=0.1 regularizer=None activation=relu save_wanda=False modulate_target_density=False pruning_steps=5 pruning_density=0.5 preempt_handling=True init_seed=21
+python source/structured_baseline.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=2000 record_freq=500 full_ds_eval_freq=600000 size=64 with_bn=True lr_schedule=warmup_piecewise_decay "lr_decay_steps='(30, 70, 90)'" lr_decay_scaling_factor=0.1 normalize_inputs=True info=Resnet50_structured_imgnet_srigl_adam pruning_criterion=earlycrop optimizer=adam wd_param=0.0001 lr=0.001 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 label_smoothing=0.1 regularizer=None activation=relu save_wanda=False modulate_target_density=False pruning_steps=5 pruning_density=0.5 preempt_handling=True init_seed=31
 wait $!
