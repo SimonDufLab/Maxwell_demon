@@ -1475,7 +1475,7 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     subset: If only want a subset, number of classes to build the subset from
     """
     if "srigl" in dataset:
-        _dataset = dataset[:-6]
+        _dataset = dataset[:-6]  # _dataset only used for loading
         augmentation_routine = srigl_data_augmentation_tf
     else:
         _dataset = dataset

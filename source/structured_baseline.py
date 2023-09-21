@@ -188,7 +188,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.save_wanda:
         # Create pickle directory
-        pickle_dir_path = log_path + exp_name + time.strftime(
+        pickle_dir_path = log_path + "/metadata/" + exp_name + time.strftime(
             "/%Y-%m-%d---%B %d---%H:%M:%S/")
         os.makedirs(pickle_dir_path)
         # Dump config file in it as well
