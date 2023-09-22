@@ -17,6 +17,7 @@ from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
+import omegaconf.listconfig
 import functools
 import jaxpruner
 
@@ -41,12 +42,13 @@ class ExpConfig:
     report_freq: int = 2500
     record_freq: int = 250
     pruning_freq: int = 1000
-    live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
+    # live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     lr: float = 1e-3
     gradient_clipping: bool = False
     lr_schedule: str = "None"
     final_lr: float = 1e-6
-    lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_steps: Any = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
     train_batch_size: int = 512
     eval_batch_size: int = 512
     death_batch_size: int = 512
@@ -114,7 +116,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     if exp_config.wd_param == 'None':
         exp_config.wd_param = None
     assert (not (("adamw" in exp_config.optimizer) and bool(
-        exp_config.regularizer))) or bool(exp_config.wd_param), "Don't use wd along regularization loss"
+        exp_config.regularizer))) or bool(
+        exp_config.wd_param), "Set wd_param if adamw is used with a regularization loss"
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
     if type(exp_config.epsilon_close) == str:
@@ -130,12 +133,13 @@ def run_exp(exp_config: ExpConfig) -> None:
     activation_fn = activation_choice[exp_config.activation]
 
     # Logger config
-    exp_run = Run(repo="./Neurips2023_baseline", experiment=exp_name_)
+    log_path = "./ICLR2023_jaxpruner_baseline"
+    exp_run = Run(repo=log_path, experiment=exp_name_)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
     if exp_config.save_wanda:
         # Create pickle directory
-        pickle_dir_path = "./Neurips2023_baseline/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+        pickle_dir_path = log_path + "/metadata/" + exp_name_ + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
         os.makedirs(pickle_dir_path)
         # Dump config file in it as well
         with open(pickle_dir_path + 'config.json', 'w') as fp:
@@ -185,6 +189,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
+    steps_per_epoch = train_ds_size // exp_config.train_batch_size
 
     if exp_config.save_wanda:
         # Recording metadata about activations that will be pickled
@@ -208,20 +213,29 @@ def run_exp(exp_config: ExpConfig) -> None:
         net, _ = build_models(*architecture, with_dropout=with_dropout)
 
         optimizer = optimizer_choice[exp_config.optimizer]
+        opt_chain = []
+        if exp_config.gradient_clipping:
+            opt_chain.append(optax.clip(10))
         if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
             if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                 optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
             else:
                 optimizer = Partial(optimizer, weight_decay=exp_config.reg_param)
-        opt_chain = []
-        if exp_config.gradient_clipping:
-            opt_chain.append(optax.clip(10))
+        elif exp_config.wd_param:  # TODO: Maybe exclude adamw?
+            opt_chain.append(optax.add_decayed_weights(weight_decay=exp_config.wd_param))
 
         if 'noisy' in exp_config.optimizer:
             assert False, "Removed noisy optimizer option for this exp"
         else:
+            if isinstance(exp_config.lr_decay_steps, omegaconf.listconfig.ListConfig):  # TODO: This is dirty...
+                decay_boundaries = [steps_per_epoch * lr_decay_step for lr_decay_step in exp_config.lr_decay_steps]
+            else:
+                decay_boundaries = [steps_per_epoch * exp_config.lr_decay_steps * (i + 1) for i in
+                                    range((exp_config.training_steps // steps_per_epoch) // exp_config.lr_decay_steps)]
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
-                                                                      exp_config.final_lr, exp_config.lr_decay_steps)
+                                                                      exp_config.final_lr,
+                                                                      decay_boundaries,
+                                                                      exp_config.lr_decay_scaling_factor)
             opt_chain.append(optimizer(lr_schedule))
         opt = optax.chain(*opt_chain)
         accuracies_log = []
@@ -443,13 +457,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                               step=step,
                               context={"sparsity level": str(sparsity)})
 
-            if ((step+1) % exp_config.live_freq == 0) and (step+2 < exp_config.training_steps):
-                current_dead_neurons = scan_death_check_fn(params, state, test_death)
-                current_dead_neurons_count, _ = utl.count_dead_neurons(current_dead_neurons)
-                del current_dead_neurons
-                del _
-                exp_run.track(jax.device_get(total_neurons - current_dead_neurons_count),
-                              name=f"Live neurons at training step {step+1}", step=starting_neurons)
+            # if ((step+1) % exp_config.live_freq == 0) and (step+2 < exp_config.training_steps):
+            #     current_dead_neurons = scan_death_check_fn(params, state, test_death)
+            #     current_dead_neurons_count, _ = utl.count_dead_neurons(current_dead_neurons)
+            #     del current_dead_neurons
+            #     del _
+            #     exp_run.track(jax.device_get(total_neurons - current_dead_neurons_count),
+            #                   name=f"Live neurons at training step {step+1}", step=starting_neurons)
 
             # Train step over single batch
             if with_dropout:
@@ -557,22 +571,22 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_run.track(final_accuracy,
                       name="Accuracy after convergence w/r percent*10 of params remaining",
                       step=log_params_sparsity_step)
-        if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
-            params_vec, _ = ravel_pytree(params)
-            initial_params_vec, _ = ravel_pytree(initial_params)
-            exp_run.track(
-                jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
-                name="Relative change in norm of weights from init after convergence w/r sparsity",
-                step=log_step)
-        activations_max_dist = Distribution(activations_max, bin_count=100)
-        exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
-                      context={"sparsity level": str(sparsity)})
-        activations_mean_dist = Distribution(activations_mean, bin_count=100)
-        exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
-                      context={"sparsity level": str(sparsity)})
-        activations_count_dist = Distribution(activations_count, bin_count=50)
-        exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
-                      context={"sparsity level": str(sparsity)})
+        # if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
+        #     params_vec, _ = ravel_pytree(params)
+        #     initial_params_vec, _ = ravel_pytree(initial_params)
+        #     exp_run.track(
+        #         jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
+        #         name="Relative change in norm of weights from init after convergence w/r sparsity",
+        #         step=log_step)
+        # activations_max_dist = Distribution(activations_max, bin_count=100)
+        # exp_run.track(activations_max_dist, name='Maximum activation distribution after convergence', step=0,
+        #               context={"sparsity level": str(sparsity)})
+        # activations_mean_dist = Distribution(activations_mean, bin_count=100)
+        # exp_run.track(activations_mean_dist, name='Mean activation distribution after convergence', step=0,
+        #               context={"sparsity level": str(sparsity)})
+        # activations_count_dist = Distribution(activations_count, bin_count=50)
+        # exp_run.track(activations_count_dist, name='Activation count per neuron after convergence', step=0,
+        #               context={"sparsity level": str(sparsity)})
 
         # Making sure compiled fn cache was cleared
         loss.clear_cache()
