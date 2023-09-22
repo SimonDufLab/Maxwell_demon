@@ -17,6 +17,7 @@ from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
+from pathlib import Path
 import omegaconf.listconfig
 import functools
 import jaxpruner
@@ -81,6 +82,9 @@ class ExpConfig:
     pruning_method: str = "WMP"  # See config.py for option
     dropout_rate: float = 0
     with_rng_seed: int = 428
+    preempt_handling: bool = False  # Frequent checkpointing to handle SLURM preemption
+    jobid: Optional[str] = None  # Manually restart previous job from checkpoint
+    checkpoint_freq: int = 5  # in epochs
     save_wanda: bool = False  # Whether to save weights and activations value or not
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
@@ -132,10 +136,46 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     activation_fn = activation_choice[exp_config.activation]
 
+    # Check for checkpoints
+    load_from_preexisting_model_state = False
+    if exp_config.preempt_handling:
+        SCRATCH = Path(os.environ["SCRATCH"])
+        if exp_config.jobid:
+            SLURM_JOBID = exp_config.jobid
+        else:
+            SLURM_JOBID = os.environ["SLURM_JOBID"]
+            exp_config.jobid = SLURM_JOBID
+        saving_dir = SCRATCH / exp_name_ / SLURM_JOBID
+
+        # Create the directory if it does not exist
+        os.makedirs(saving_dir, exist_ok=True)
+
+        # Check for previous checkpoints
+        run_state = utl.load_run_state(saving_dir)
+        if run_state:
+            load_from_preexisting_model_state = True
+        else:  # Initialize the run_state
+            run_state = utl.JaxPrunerRunState(epoch=0, training_step=0, model_dir=saving_dir,
+                                              aim_hash=None, slurm_jobid=SLURM_JOBID, exp_name=exp_name_,
+                                              curr_pruning_density=exp_config.spar_levels[0],
+                                              dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
+                                              decaying_reg_param=exp_config.reg_param)
+            # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
+            #     pickle.dump(run_state, f)
+
+            # Dump config file in it as well
+            with open(os.path.join(saving_dir, 'config.json'), 'w') as fp:
+                json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
+        aim_hash = run_state["aim_hash"]
+    else:
+        aim_hash = None
+
     # Logger config
     log_path = "./ICLR2023_jaxpruner_baseline"
-    exp_run = Run(repo=log_path, experiment=exp_name_)
+    exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash, force_resume=True)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
+    if exp_config.preempt_handling:
+        run_state["aim_hash"] = exp_run.hash
 
     if exp_config.save_wanda:
         # Create pickle directory
@@ -154,6 +194,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             pick_architecture(with_dropout=True).keys())
         net_config = {"dropout_rate": exp_config.dropout_rate}
     else:
+        dropout_key = None
         net_config = {}
 
     if not exp_config.with_bias:
@@ -200,7 +241,12 @@ def run_exp(exp_config: ExpConfig) -> None:
             count: List[int] = field(default_factory=list)
         activations_meta = ActivationMeta()
 
-    for sparsity in exp_config.spar_levels:  # Vary the regularizer parameter to measure impact on overfitting
+    if exp_config.preempt_handling:
+        beginning_index = exp_config.spar_levels.index(run_state["curr_pruning_density"])
+        spars_iterate = exp_config.spar_levels[beginning_index:]
+    else:
+        spars_iterate = exp_config.spar_levels
+    for sparsity in spars_iterate:  # Vary the regularizer parameter to measure impact on overfitting
 
         size = exp_config.size
         # Make the network and optimiser
@@ -301,12 +347,15 @@ def run_exp(exp_config: ExpConfig) -> None:
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
 
-        params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
-        initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
-        init_state = copy.deepcopy(state)
-        opt_state = opt.init(params)
+        if load_from_preexisting_model_state:
+            params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
+        else:
+            params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+            opt_state = opt.init(params)
+        # initial_params = copy.deepcopy(params)  # Keep a copy of the initial params for relative change metric
+        # init_state = copy.deepcopy(state)
         frozen_layer_lists = utl.extract_layer_lists(params)
-        ordered_layers = utl.extract_ordered_layers(params)
+        # ordered_layers = utl.extract_ordered_layers(params)
         # print(jax.tree_map(jnp.shape, params))
 
         starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
@@ -322,7 +371,16 @@ def run_exp(exp_config: ExpConfig) -> None:
         reg_param_decay_period = exp_config.training_steps // decay_cycles
 
         subrun_start_time = time.time()
-        for step in range(exp_config.training_steps):
+
+        if load_from_preexisting_model_state:
+            starting_step = run_state["training_step"]
+            decaying_reg_param = run_state["decaying_reg_param"]
+            dropout_key = run_state["dropout_key"]
+            load_from_preexisting_model_state = False
+        else:
+            starting_step = 0
+        print(f"Continuing training from step {starting_step} and sparsity_level {sparsity}")
+        for step in range(starting_step, exp_config.training_steps):
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                     (not (step % exp_config.training_steps == 0)):
                 decaying_reg_param = decaying_reg_param / 10
@@ -337,6 +395,16 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        reg_param=decaying_reg_param,
                                                        classes=classes, is_training=False, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+
+            if (step > 0) and exp_config.preempt_handling and (step % (exp_config.checkpoint_freq * steps_per_epoch) == 0):
+                print(
+                    f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time() - subrun_start_time)}")
+                chckpt_init_time = time.time()
+                utl.jaxpruner_checkpoint_exp(run_state, params, state, opt_state, curr_epoch=step//steps_per_epoch,
+                                             curr_step=step, curr_pruning_density=sparsity, dropout_key=dropout_key,
+                                             decaying_reg_param=decaying_reg_param)
+                print(
+                    f"Checkpointing performed in: {timedelta(seconds=time.time() - chckpt_init_time)}")
 
             if step % exp_config.record_freq == 0:
                 train_loss = test_loss_fn(params, state, next(train_eval))

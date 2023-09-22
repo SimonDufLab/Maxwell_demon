@@ -204,7 +204,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      aim_hash=None, slurm_jobid=SLURM_JOBID, exp_name=exp_name_,
                                      curr_starting_size=exp_config.size, curr_reg_param=exp_config.reg_params[0],
                                      dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
-                                     curr_decaying_reg_param=exp_config.reg_params[0],
+                                     decaying_reg_param=exp_config.reg_params[0],
                                      best_accuracy=0.0, best_params_count=None, best_total_neurons=None)
             # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
             #     pickle.dump(run_state, f)

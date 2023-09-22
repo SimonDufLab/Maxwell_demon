@@ -2551,6 +2551,24 @@ class RunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_
     best_total_neurons: Optional[int]  # Number of remaining neurons for the best run so far
 
 
+class JaxPrunerRunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
+    """Typed dictionary containing the state of the training run which is saved at each epoch.
+
+    Using type hints helps prevent bugs and makes your code easier to read for both humans and
+    machines (e.g. Copilot). This leads to less time spent debugging and better code suggestions.
+    """
+
+    epoch: int
+    training_step: int
+    model_dir: str  # Parent dir contains params, model state and opt_state pytrees in separate children dir
+    aim_hash: Optional[str]  # Unique hash identifying experiment in aim (logger)
+    slurm_jobid: str  # Unique experiment identifier attributed by SLURM
+    exp_name: str
+    curr_pruning_density: Optional[float]  # For the loop over multiple pruning_density
+    dropout_key: Optional[jax.random.PRNGKey]
+    decaying_reg_param: Optional[float]
+
+
 def load_run_state(checkpoint_dir: Path) -> Optional[RunState]: # Taken from https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
     """Loads the latest checkpoint if possible, otherwise returns `None`."""
     checkpoint_file = checkpoint_dir / "checkpoint_run_state.pkl"
@@ -2599,6 +2617,20 @@ def checkpoint_exp(run_state: RunState, params, state, opt_state, curr_epoch: in
     # Update weights
     save_all_pytree_states(run_state["model_dir"], params, state, opt_state)
 
+
+def jaxpruner_checkpoint_exp(run_state: JaxPrunerRunState, params, state, opt_state, curr_epoch: int, curr_step: int,
+                   curr_pruning_density, dropout_key, decaying_reg_param):
+    run_state["epoch"] = curr_epoch
+    run_state["training_step"] = curr_step
+    run_state["curr_pruning_density"] = curr_pruning_density
+    run_state["dropout_key"] = dropout_key
+    run_state["decaying_reg_param"] = decaying_reg_param
+
+    with open(os.path.join(run_state["model_dir"], "checkpoint_run_state.pkl"), "wb") as f:
+        pickle.dump(run_state, f)
+
+    # Update weights
+    save_all_pytree_states(run_state["model_dir"], params, state, opt_state)
 
 def signal_handler(signum: int, frame: Optional[FrameType]):  # Taken from: https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
     """Called before the job gets pre-empted or reaches the time-limit.
