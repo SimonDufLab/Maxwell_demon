@@ -274,7 +274,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         optimizer = optimizer_choice[exp_config.optimizer]
         opt_chain = []
-        if "adamw" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw
+        if "w" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw # TODO: dangerous condition
             if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                 optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
             else:

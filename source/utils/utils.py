@@ -2045,6 +2045,25 @@ def adamw_cdg(
     )
 
 
+def sgdw(
+    learning_rate: ScalarOrSchedule,
+    momentum: Optional[float] = None,
+    nesterov: bool = False,
+    accumulator_dtype: Optional[Any] = None,
+    weight_decay: float = 0.0,
+    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
+) -> base.GradientTransformation:
+    """ SGD optimizer from optax, augmented with weight decay.
+    The weight decay is multiplied by lr, consistent with pytorch implementation
+    """
+    return combine.chain(
+        (transform.trace(decay=momentum, nesterov=nesterov, accumulator_dtype=accumulator_dtype)
+            if momentum is not None else base.identity()),
+            transform.add_decayed_weights(weight_decay, mask),
+            _scale_by_learning_rate(learning_rate)
+            )
+
+
 ##############################
 # Baseline pruning
 ##############################
