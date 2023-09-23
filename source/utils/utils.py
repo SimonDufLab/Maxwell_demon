@@ -2057,11 +2057,11 @@ def sgdw(
     The weight decay is multiplied by lr, consistent with pytorch implementation
     """
     return combine.chain(
+        transform.add_decayed_weights(weight_decay, mask),
         (transform.trace(decay=momentum, nesterov=nesterov, accumulator_dtype=accumulator_dtype)
             if momentum is not None else base.identity()),
-            transform.add_decayed_weights(weight_decay, mask),
-            _scale_by_learning_rate(learning_rate)
-            )
+        _scale_by_learning_rate(learning_rate)
+        )
 
 
 ##############################
