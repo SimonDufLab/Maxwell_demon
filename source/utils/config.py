@@ -37,6 +37,7 @@ optimizer_choice = {
     "sgd": optax.sgd,
     "noisy_sgd": optax.noisy_sgd,
     "momentum9": Partial(optax.sgd, momentum=0.9),
+    "momentum9w": Partial(utl.sgdw, momentum=0.9),
     "nesterov9": Partial(optax.sgd, momentum=0.9, nesterov=True),
     "momentum7": Partial(optax.sgd, momentum=0.7),
     "nesterov7": Partial(optax.sgd, momentum=0.7, nesterov=True)
