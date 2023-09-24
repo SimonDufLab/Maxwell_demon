@@ -332,8 +332,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
-        starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
-        total_neurons, total_per_layer = starting_neurons, starting_per_layer
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, size)
+        init_total_neurons = copy.copy(total_neurons)
+        init_total_per_layer = copy.copy(total_per_layer)
 
         for step in range(exp_config.training_steps):
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
@@ -623,14 +624,14 @@ def run_exp(exp_config: ExpConfig) -> None:
         # std_final_live_neurons = jnp.std(batches_final_live_neurons, axis=0)
 
         exp_run.track(jax.device_get(avg_final_live_neurons),
-                      name="On average, live neurons after convergence w/r total neurons", step=starting_neurons)
-        exp_run.track(jax.device_get(avg_final_live_neurons / total_neurons),
-                      name="Average live neurons ratio after convergence w/r total neurons", step=starting_neurons)
+                      name="On average, live neurons after convergence w/r total neurons", step=init_total_neurons)
+        exp_run.track(jax.device_get(avg_final_live_neurons / init_total_neurons),
+                      name="Average live neurons ratio after convergence w/r total neurons", step=init_total_neurons)
         total_live_neurons = total_neurons
         exp_run.track(jax.device_get(total_live_neurons),
-                      name="Live neurons after convergence w/r total neurons", step=starting_neurons)
-        exp_run.track(jax.device_get(total_live_neurons/total_neurons),
-                      name="Live neurons ratio after convergence w/r total neurons", step=starting_neurons)
+                      name="Live neurons after convergence w/r total neurons", step=init_total_neurons)
+        exp_run.track(jax.device_get(total_live_neurons/init_total_neurons),
+                      name="Live neurons ratio after convergence w/r total neurons", step=init_total_neurons)
         if exp_config.epsilon_close:
             for eps in exp_config.epsilon_close:
                 eps_final_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
@@ -646,31 +647,31 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 exp_run.track(jax.device_get(eps_avg_final_live_neurons),
                               name="On average, quasi-live neurons after convergence w/r total neurons",
-                              step=starting_neurons, context={"epsilon": eps})
-                exp_run.track(jax.device_get(eps_avg_final_live_neurons / total_neurons),
+                              step=init_total_neurons, context={"epsilon": eps})
+                exp_run.track(jax.device_get(eps_avg_final_live_neurons / init_total_neurons),
                               name="Average quasi-live neurons ratio after convergence w/r total neurons",
-                              step=starting_neurons, context={"epsilon": eps})
+                              step=init_total_neurons, context={"epsilon": eps})
                 eps_total_live_neurons = total_neurons - eps_final_dead_neurons_count
                 exp_run.track(jax.device_get(eps_total_live_neurons),
-                              name="Quasi-live neurons after convergence w/r total neurons", step=starting_neurons,
+                              name="Quasi-live neurons after convergence w/r total neurons", step=init_total_neurons,
                               context={"epsilon": eps})
-                exp_run.track(jax.device_get(eps_total_live_neurons / total_neurons),
+                exp_run.track(jax.device_get(eps_total_live_neurons / init_total_neurons),
                               name="Quasi-live neurons ratio after convergence w/r total neurons",
-                              step=starting_neurons, context={"epsilon": eps})
+                              step=init_total_neurons, context={"epsilon": eps})
 
         for i, live_in_layer in enumerate(total_per_layer):
-            total_neuron_in_layer = starting_per_layer[i]
+            total_neuron_in_layer = init_total_per_layer[i]
             # live_in_layer = total_neuron_in_layer - layer_dead
             exp_run.track(jax.device_get(live_in_layer),
                           name=f"Live neurons in layer {i} after convergence w/r total neurons",
-                          step=starting_neurons)
+                          step=init_total_neurons)
             exp_run.track(jax.device_get(live_in_layer/total_neuron_in_layer),
                           name=f"Live neurons ratio in layer {i} after convergence w/r total neurons",
-                          step=starting_neurons)
+                          step=init_total_neurons)
         exp_run.track(final_accuracy,
-                      name="Accuracy after convergence w/r total neurons", step=starting_neurons)
+                      name="Accuracy after convergence w/r total neurons", step=init_total_neurons)
         exp_run.track(final_train_acc,
-                      name="Train accuracy after convergence w/r total neurons", step=starting_neurons)
+                      name="Train accuracy after convergence w/r total neurons", step=init_total_neurons)
         # if not exp_config.dynamic_pruning:  # Cannot take norm between initial and pruned params
         #     params_vec, _ = ravel_pytree(params)
         #     initial_params_vec, _ = ravel_pytree(initial_params)
