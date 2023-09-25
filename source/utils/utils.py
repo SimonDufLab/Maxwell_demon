@@ -623,10 +623,15 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
             flag_opt = True
         else:  # Without optax.chain
             _opt_state = opt_state
-        field_names = list(_opt_state[0]._fields)
+        _dict_index = 0
+        for i, _sub_state in enumerate(_opt_state):
+            if len(_sub_state) > 0:  # Finding the dict containing the params state
+                _dict_index = i
+                break  # TODO: Not a robust approach ...
+        field_names = list(_opt_state[_dict_index]._fields)
         if 'count' in field_names:
             field_names.remove('count')
-        filter_in_opt_state = jax_deep_copy([getattr(_opt_state[0], field) for field in field_names])
+        filter_in_opt_state = jax_deep_copy([getattr(_opt_state[_dict_index], field) for field in field_names])
 
     if state:
         filtered_state = jax_deep_copy(state)
@@ -692,13 +697,16 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
 
     if _opt_state:
         cp_state = jax_deep_copy(_opt_state)
-        filtered_opt_state = cp_state[0]
-        empty_state = cp_state[1:]
+        filtered_opt_state = cp_state[_dict_index]
+        empty_state_front = cp_state[:_dict_index]
+        empty_state_tail = cp_state[_dict_index+1:]
+
         for j, field in enumerate(field_names):
             filtered_opt_state = filtered_opt_state._replace(**{field: filter_in_opt_state[j]})
 
+
         if flag_opt:
-            new_opt_state = ((filtered_opt_state,) + empty_state,)
+            new_opt_state = (empty_state_front + (filtered_opt_state,) + empty_state_tail,)
             new_opt_state = opt_state[:-1] + new_opt_state
         else:
             new_opt_state = (filtered_opt_state,)
