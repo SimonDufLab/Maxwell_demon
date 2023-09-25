@@ -25,6 +25,7 @@ from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
+import omegaconf.listconfig
 
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
@@ -53,6 +54,7 @@ class ExpConfig:
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
     train_batch_size: int = 128
     eval_batch_size: int = 512
     death_batch_size: int = 512
@@ -290,9 +292,15 @@ def run_exp(exp_config: ExpConfig) -> None:
             opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
                                        gamma=exp_config.noise_gamma))
         else:
+            if isinstance(exp_config.lr_decay_steps, omegaconf.listconfig.ListConfig):  # TODO: This is dirty...
+                decay_boundaries = [steps_per_epoch * lr_decay_step for lr_decay_step in exp_config.lr_decay_steps]
+            else:
+                decay_boundaries = [steps_per_epoch * exp_config.lr_decay_steps * (i + 1) for i in
+                                    range((exp_config.training_steps // steps_per_epoch) // exp_config.lr_decay_steps)]
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
                                                                       exp_config.final_lr,
-                                                                      exp_config.lr_decay_steps)
+                                                                      decay_boundaries,
+                                                                      exp_config.lr_decay_scaling_factor)
             opt_chain.append(optimizer(lr_schedule))
         opt = optax.chain(*opt_chain)
 
