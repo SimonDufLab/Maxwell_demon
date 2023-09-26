@@ -2576,6 +2576,7 @@ class RunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_
     best_accuracy: float  # Best accuracy so far
     best_params_count: Optional[int]  # Number of remaining params for the best run so far
     best_total_neurons: Optional[int]  # Number of remaining neurons for the best run so far
+    pruned_flag: Optional[bool]  # For structure_baseline experiments; recording if pruning happened or not
 
 
 class JaxPrunerRunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
