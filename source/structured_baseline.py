@@ -168,7 +168,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      curr_starting_size=exp_config.size, curr_reg_param=exp_config.reg_param,
                                      dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
                                      decaying_reg_param=exp_config.reg_param,
-                                     best_accuracy=0.0, best_params_count=None, best_total_neurons=None)
+                                     best_accuracy=0.0, best_params_count=None, best_total_neurons=None,
+                                     pruned_flag=not bool(exp_config.pruning_criterion))
             # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
             #     pickle.dump(run_state, f)
 
@@ -361,6 +362,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         best_acc = run_state["best_accuracy"]
         best_params_count = run_state["best_params_count"]
         best_total_neurons = run_state["best_total_neurons"]
+        pruned_flag = run_state["pruned_flag"]
         load_from_preexisting_model_state = False
     else:
         starting_step = 0
@@ -441,6 +443,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             print(
                 f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time() - run_start_time)}")
             chckpt_init_time = time.time()
+            run_state["pruned_flag"] = pruned_flag
             utl.checkpoint_exp(run_state, params, state, opt_state, curr_epoch=step // steps_per_epoch,
                                curr_step=step, curr_arch_sizes=new_sizes, curr_starting_size=size,
                                curr_reg_param=exp_config.reg_param, dropout_key=dropout_key,
