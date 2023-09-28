@@ -42,10 +42,12 @@ class ExpConfig:
     lr_schedule: str = "None"
     final_lr: float = 1e-6
     lr_decay_steps: int = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
+    lr_decay_scaling_factor: float = 0.1
     train_batch_size: int = 32
     full_batch_size: int = 1000
     optimizer: str = "adam"
     noisy_part_of_signal_only: bool = False  # Take grad to be full-batch gradient minus minibatch gradient
+    gauss_noise_only: bool = False
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
     dataset_size: Optional[int] = None  # How many example to keep from training dataset (to quickly overfit)
@@ -86,6 +88,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         lr_scheduler_choice.keys())
     assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
         bn_config_choice.keys())
+    assert (not exp_config.noisy_part_of_signal_only) or (not exp_config.gauss_noise_only), "Can only apply one type of noise at a time"
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
@@ -153,7 +156,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         opt_chain.append(optax.add_decayed_weights(weight_decay=exp_config.wd_param))
 
     lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
-                                                                  exp_config.final_lr, exp_config.lr_decay_steps)
+                                                              exp_config.final_lr, exp_config.lr_decay_steps,
+                                                              exp_config.lr_decay_scaling_factor)
     opt_chain.append(optimizer(lr_schedule))
     opt = optax.chain(*opt_chain)
 
@@ -163,10 +167,14 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                            classes=classes, is_training=False, with_dropout=with_dropout)
     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-    if not exp_config.noisy_part_of_signal_only:
-        update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+    if exp_config.noisy_part_of_signal_only:
+        update_fn = utl.update_from_sgd_noise(loss, opt, with_dropout=with_dropout)
+    elif exp_config.gauss_noise_only:
+        gauss_noise_key = jax.random.PRNGKey(0)
+        update_fn = utl.update_from_gaussian_noise(loss, opt, exp_config.lr,
+                                                   exp_config.train_batch_size, with_dropout=with_dropout)
     else:
-        update_fn = utl.update_from_noise(loss, opt, with_dropout=with_dropout)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
     scan_len = train_ds_size // death_minibatch_size
     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
@@ -298,10 +306,13 @@ def run_exp(exp_config: ExpConfig) -> None:
             history.update_neuron_noise_ratio(step, params, state, test_loss_fn, train, train_eval)
 
         # Train step over single batch
-        if not exp_config.noisy_part_of_signal_only:
-            params, state, opt_state = update_fn(params, state, opt_state, next(train))
-        else:
+        if exp_config.noisy_part_of_signal_only:
             params, state, opt_state = update_fn(params, state, opt_state, next(train), next(train_eval))
+        elif exp_config.gauss_noise_only:
+            params, state, opt_state, gauss_noise_key = update_fn(params, state, opt_state, next(train), gauss_noise_key)
+        else:
+            params, state, opt_state = update_fn(params, state, opt_state, next(train))
+
 
         # # TODO: remove after testing
         # if step > 501:

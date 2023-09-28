@@ -1099,7 +1099,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
     return _update
 
 
-def update_from_noise(loss, optimizer, with_dropout=False):
+def update_from_sgd_noise(loss, optimizer, with_dropout=False):
     """Modified version of update above that trains only on noisy part of signal (true grad - noisy grad)
        Solely used for small experiments meant to support theoretical assumptions"""
 
@@ -1114,6 +1114,29 @@ def update_from_noise(loss, optimizer, with_dropout=False):
         updates, _opt_state = optimizer.update(jax.tree_map(jnp.subtract, true_grads, noisy_grads), _opt_state, _params)
         new_params = optax.apply_updates(_params, updates)
         return new_params, new_state, _opt_state
+
+    return _update
+
+
+def update_from_gaussian_noise(loss, optimizer, lr, bs, with_dropout=False):
+    """Modified version of update above that trains only on noisy part of signal (true grad - noisy grad)
+       Solely used for small experiments meant to support theoretical assumptions"""
+
+    if with_dropout:
+        sys.exit("Dropout not supported yet for noisy training")
+
+    @jax.jit
+    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                _batch: Batch, rdm_key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
+        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+        flat_grads, unravel_fn = ravel_pytree(grads)
+        next_key, key = jax.random.split(rdm_key)
+        gauss_noise = jax.random.normal(key, flat_grads.shape) * jnp.sqrt(lr/bs)
+        gauss_noise *= (flat_grads>0).astype(jnp.int32)
+        gauss_noise = unravel_fn(gauss_noise)
+        updates, _opt_state = optimizer.update(gauss_noise, _opt_state, _params)
+        new_params = optax.apply_updates(_params, updates)
+        return new_params, new_state, _opt_state, next_key
 
     return _update
 
