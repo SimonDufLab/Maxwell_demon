@@ -342,9 +342,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
 
     starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
-    total_neurons, total_per_layer = starting_neurons, starting_per_layer
-    init_total_neurons = copy.copy(total_neurons)
-    init_total_per_layer = copy.copy(total_per_layer)
+    init_total_neurons = copy.copy(starting_neurons)
+    # init_total_per_layer = copy.copy(total_per_layer)
+    total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)  # Necessary for relaunched exps
 
     decaying_reg_param = copy.deepcopy(exp_config.reg_param)
     decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
