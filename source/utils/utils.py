@@ -40,6 +40,7 @@ from optax._src import base
 from optax._src import wrappers
 from optax._src import combine
 from optax._src import transform
+from optax._src import numerics
 from optax._src.alias import _scale_by_learning_rate
 from jaxpruner import base_updater
 
@@ -1975,6 +1976,7 @@ def warmup_piecewise_decay_schedule(
             boundaries_and_scales=bound_dict)]
     return optax.join_schedules(schedules, [warmup_steps])
 
+
 ##############################
 # Modified optax optimizer
 ##############################
@@ -1982,12 +1984,15 @@ AddDecayedWeightsState = base.EmptyState
 ScalarOrSchedule = Union[float, base.Schedule]
 
 
-def add_cdg_decayed_weights(
-    weight_decay: float = 0.0,
+def add_scheduled_decayed_weights(
+    weight_decay: ScalarOrSchedule = 0.0,
+    flip_sign: bool = False,
+    cdg: bool = False,
     mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None
 ) -> base.GradientTransformation:
-    """Cdg variant of optax weight_decay
-    Add parameter where positive weights are scaled by `weight_decay`
+    """Allows cdg and scheduled variant of optax weight_decay
+    cdg: Add parameter where positive weights are scaled by `weight_decay`
+    schedule: scale wd by provided schedule (steps count fn)
 
     Args:
     weight_decay: A scalar weight decay rate.
@@ -2002,7 +2007,7 @@ def add_cdg_decayed_weights(
 
     def init_fn(params):
         del params
-        return AddDecayedWeightsState()
+        return transform.ScaleByScheduleState(count=jnp.zeros([], jnp.int32))
 
     def cdg_mask(params):
         return jax.tree_util.tree_map(
@@ -2011,9 +2016,19 @@ def add_cdg_decayed_weights(
     def update_fn(updates, state, params):
         if params is None:
             raise ValueError(base.NO_PARAMS_MSG)
-        updates = jax.tree_util.tree_map(
-            lambda g, p: g + weight_decay * p, updates, cdg_mask(params))
-        return updates, state
+        m = -1 if flip_sign else 1
+        if callable(weight_decay):
+            wd = m*weight_decay(state.count)
+        else:
+            wd = m*weight_decay
+        if cdg:
+            updates = jax.tree_util.tree_map(
+                lambda g, p: g + wd * p, updates, cdg_mask(params))
+        else:
+            updates = jax.tree_util.tree_map(
+                lambda g, p: g + wd * p, updates, params)
+        return updates, transform.ScaleByScheduleState(
+            count=numerics.safe_int32_increment(state.count))
 
     # If mask is not `None`, apply mask to the gradient transformation.
     # E.g. it is common to skip weight decay on bias units and batch stats.
@@ -2071,7 +2086,7 @@ def adamw_cdg(
     return combine.chain(
       transform.scale_by_adam(
           b1=b1, b2=b2, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
-      add_cdg_decayed_weights(weight_decay, mask),
+      add_scheduled_decayed_weights(weight_decay, cdg=True, mask=mask),
       _scale_by_learning_rate(learning_rate),
     )
 
@@ -2092,6 +2107,51 @@ def sgdw(
         (transform.trace(decay=momentum, nesterov=nesterov, accumulator_dtype=accumulator_dtype)
             if momentum is not None else base.identity()),
         _scale_by_learning_rate(learning_rate)
+        )
+
+
+def adam_loschilov_wd(
+    learning_rate: ScalarOrSchedule,
+    b1: float = 0.9,
+    b2: float = 0.999,
+    eps: float = 1e-8,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[Any] = None,
+    weight_decay: ScalarOrSchedule = 1e-4,
+    cdg: bool = False,
+    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
+) -> base.GradientTransformation:
+    """
+    Modified version of adamw (cdg optional) where the wd is NOT rescaled by the learning rate, similar to
+    https://arxiv.org/pdf/1711.05101.pdf. Thus, DIFFERENT from pytorch implementation.
+    Also allow to put a schedule on wd.
+    """
+    return combine.chain(
+        transform.scale_by_adam(
+            b1=b1, b2=b2, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
+        _scale_by_learning_rate(learning_rate),
+        add_scheduled_decayed_weights(weight_decay, flip_sign=True, cdg=cdg, mask=mask),  # Flip is done in _scale_by_lr, so doing it manually here
+    )
+
+
+def sgd_loschilov_wd(
+    learning_rate: ScalarOrSchedule,
+    momentum: Optional[float] = None,
+    nesterov: bool = False,
+    accumulator_dtype: Optional[Any] = None,
+    weight_decay: ScalarOrSchedule = 0.0,
+    cdg: bool = False,
+    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
+) -> base.GradientTransformation:
+    """ Modified version of sgdw (cdg optional) where the wd is NOT rescaled by the learning rate, similar to
+    https://arxiv.org/pdf/1711.05101.pdf. Thus, DIFFERENT from pytorch implementation.
+    Also allow to put a schedule on wd.
+    """
+    return combine.chain(
+        (transform.trace(decay=momentum, nesterov=nesterov, accumulator_dtype=accumulator_dtype)
+            if momentum is not None else base.identity()),
+        _scale_by_learning_rate(learning_rate),
+        add_scheduled_decayed_weights(weight_decay, flip_sign=True, cdg=cdg, mask=mask)  # Flip is done in _scale_by_lr, so doing it manually here
         )
 
 
