@@ -40,7 +40,11 @@ optimizer_choice = {
     "momentum9w": Partial(utl.sgdw, momentum=0.9),
     "nesterov9": Partial(optax.sgd, momentum=0.9, nesterov=True),
     "momentum7": Partial(optax.sgd, momentum=0.7),
-    "nesterov7": Partial(optax.sgd, momentum=0.7, nesterov=True)
+    "nesterov7": Partial(optax.sgd, momentum=0.7, nesterov=True),
+    "momentum_loschiwd": Partial(utl.sgd_loschilov_wd, momentum=0.9, cdg=False),
+    "momentum_loschiwd_cdg": Partial(utl.sgd_loschilov_wd, momentum=0.9, cdg=True),
+    "adam_loschiwd": Partial(utl.adam_loschilov_wd, cdg=False),
+    "adam_loschiwd_cdg": Partial(utl.adam_loschilov_wd, cdg=True),
 }
 
 dataset_choice = {
