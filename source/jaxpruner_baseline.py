@@ -29,7 +29,7 @@ import utils.utils as utl
 from utils.utils import build_models
 from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality
 from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice, bn_config_choice
-from utils.config import pick_architecture, baseline_pruning_method_choice
+from utils.config import pick_architecture, baseline_pruning_method_choice, reg_param_scheduler_choice
 
 
 # Experience name -> for aim logger
@@ -72,6 +72,7 @@ class ExpConfig:
     wd_param: Optional[float] = None
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
+    reg_param_schedule: Optional[str] = None  # Schedule for reg_param, priority over reg_param_decay_cycles flag
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
@@ -262,7 +263,25 @@ def run_exp(exp_config: ExpConfig) -> None:
         opt_chain = []
         if exp_config.gradient_clipping:
             opt_chain.append(optax.clip(10))
-        if "w" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw # TODO: dangerous condition
+        if "loschi" in exp_config.optimizer:  # Using reg_param parameters to control wd with those optimizers
+            if exp_config.reg_param_schedule:
+                if exp_config.zero_end_reg_param:
+                    sched_end = int(0.9 * exp_config.training_steps)
+                else:
+                    sched_end = exp_config.training_steps
+                if exp_config.wd_param:
+                    div_factor = reg_param/exp_config.wd_param
+                    final_div_factor = 1.0
+                else:  # default values
+                    div_factor = 25.0
+                    final_div_factor = 1e4
+                wd_schedule = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, reg_param,
+                                                                                        div_factor=div_factor,
+                                                                                        final_div_factor=final_div_factor)
+            else:
+                wd_schedule = reg_param if reg_param > 0.0 else exp_config.wd_param
+            optimizer = Partial(optimizer, weight_decay=wd_schedule)
+        elif "w" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw # TODO: dangerous condition
             if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                 optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)
             else:
@@ -368,7 +387,17 @@ def run_exp(exp_config: ExpConfig) -> None:
         reg_param = exp_config.reg_param
         decaying_reg_param = copy.deepcopy(exp_config.reg_param)
         decay_cycles = exp_config.reg_param_decay_cycles + int(exp_config.zero_end_reg_param)
-        reg_param_decay_period = exp_config.training_steps // decay_cycles
+        if decay_cycles == 2:
+            reg_param_decay_period = int(0.8 * exp_config.training_steps)
+        else:
+            reg_param_decay_period = exp_config.training_steps // decay_cycles
+
+        if exp_config.reg_param_schedule:
+            if exp_config.zero_end_reg_param:
+                sched_end = int(0.9 * exp_config.training_steps)
+            else:
+                sched_end = exp_config.training_steps
+            reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, reg_param)
 
         subrun_start_time = time.time()
 
@@ -382,7 +411,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         print(f"Continuing training from step {starting_step} and sparsity_level {sparsity}")
         for step in range(starting_step, exp_config.training_steps):
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
-                    (not (step % exp_config.training_steps == 0)):
+                    (not (step % (exp_config.training_steps - 1) == 0)) and (not exp_config.reg_param_schedule):
                 decaying_reg_param = decaying_reg_param / 10
                 if (exp_config.training_steps // reg_param_decay_period) == decay_cycles:
                     decaying_reg_param = 0
@@ -395,7 +424,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        reg_param=decaying_reg_param,
                                                        classes=classes, is_training=False, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
-
+            if exp_config.reg_param_schedule and step < exp_config.training_steps:
+                decaying_reg_param = reg_sched(step)
             if (step > 0) and exp_config.preempt_handling and (step % (exp_config.checkpoint_freq * steps_per_epoch) == 0):
                 print(
                     f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time() - subrun_start_time)}")
