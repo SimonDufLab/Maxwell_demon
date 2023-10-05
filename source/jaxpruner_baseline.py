@@ -270,16 +270,16 @@ def run_exp(exp_config: ExpConfig) -> None:
                 else:
                     sched_end = exp_config.training_steps
                 if exp_config.wd_param:
-                    div_factor = reg_param/exp_config.wd_param
+                    div_factor = exp_config.reg_param/exp_config.wd_param
                     final_div_factor = 1.0
                 else:  # default values
                     div_factor = 25.0
                     final_div_factor = 1e4
-                wd_schedule = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, reg_param,
+                wd_schedule = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, exp_config.reg_param,
                                                                                         div_factor=div_factor,
                                                                                         final_div_factor=final_div_factor)
             else:
-                wd_schedule = reg_param if reg_param > 0.0 else exp_config.wd_param
+                wd_schedule = exp_config.reg_param if exp_config.reg_param > 0.0 else exp_config.wd_param
             optimizer = Partial(optimizer, weight_decay=wd_schedule)
         elif "w" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw # TODO: dangerous condition
             if exp_config.wd_param:  # wd_param overwrite reg_param when specified
