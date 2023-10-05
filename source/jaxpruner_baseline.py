@@ -437,10 +437,10 @@ def run_exp(exp_config: ExpConfig) -> None:
                     f"Checkpointing performed in: {timedelta(seconds=time.time() - chckpt_init_time)}")
 
             if step % exp_config.record_freq == 0:
-                train_loss = test_loss_fn(params, state, next(train_eval))
+                train_loss = test_loss_fn(params, state, next(train_eval), _reg_param=decaying_reg_param)
                 train_accuracy = accuracy_fn(params, state, next(train_eval))
                 test_accuracy = accuracy_fn(params, state, next(test_eval))
-                test_loss = test_loss_fn(params, state, next(test_eval))
+                test_loss = test_loss_fn(params, state, next(test_eval), _reg_param=decaying_reg_param)
                 train_accuracy, test_accuracy = jax.device_get((train_accuracy, test_accuracy))
                 # Periodically print classification accuracy on train & test sets.
                 if step % exp_config.report_freq == 0:
@@ -565,10 +565,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             # Train step over single batch
             if with_dropout:
-                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train), dropout_key)
+                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train), dropout_key, _reg_param=decaying_reg_param)
                 params = pruner.post_gradient_update(params, opt_state)
             else:
-                params, state, opt_state = update_fn(params, state, opt_state, next(train))
+                params, state, opt_state = update_fn(params, state, opt_state, next(train), _reg_param=decaying_reg_param)
                 params = pruner.post_gradient_update(params, opt_state)
 
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
