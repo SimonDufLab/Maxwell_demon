@@ -2010,9 +2010,9 @@ def add_scheduled_decayed_weights(
         del params
         return transform.ScaleByScheduleState(count=jnp.zeros([], jnp.int32))
 
-    def cdg_mask(params):
+    def cdg_mask(params, count):
         return jax.tree_util.tree_map(
-            lambda x: (x > 0)*x, params)
+            lambda x: ((x > 0)+(count >= sched_end))*x, params)
 
     def update_fn(updates, state, params):
         if params is None:
@@ -2022,9 +2022,9 @@ def add_scheduled_decayed_weights(
             wd = m*weight_decay(state.count)
         else:
             wd = m*weight_decay
-        if cdg and state.count < sched_end:
+        if cdg:
             updates = jax.tree_util.tree_map(
-                lambda g, p: g + wd * p, updates, cdg_mask(params))
+                lambda g, p: g + wd * p, updates, cdg_mask(params, state.count))
         else:
             updates = jax.tree_util.tree_map(
                 lambda g, p: g + wd * p, updates, params)
