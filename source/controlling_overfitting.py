@@ -607,7 +607,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                                         final_div_factor=final_div_factor)
             else:
                 wd_schedule = reg_param if reg_param > 0.0 else exp_config.wd_param
-            optimizer = Partial(optimizer, weight_decay=wd_schedule)
+                sched_end = exp_config.training_steps
+            optimizer = Partial(optimizer, weight_decay=wd_schedule, sched_end=sched_end)
         elif "w" in exp_config.optimizer:  # Pass reg_param to wd argument of adamw #TODO: dangerous condition...
             if exp_config.wd_param:  # wd_param overwrite reg_param when specified
                 optimizer = Partial(optimizer, weight_decay=exp_config.wd_param)

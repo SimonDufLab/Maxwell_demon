@@ -1988,6 +1988,7 @@ def add_scheduled_decayed_weights(
     weight_decay: ScalarOrSchedule = 0.0,
     flip_sign: bool = False,
     cdg: bool = False,
+    sched_end: float = jnp.inf,
     mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None
 ) -> base.GradientTransformation:
     """Allows cdg and scheduled variant of optax weight_decay
@@ -2021,7 +2022,7 @@ def add_scheduled_decayed_weights(
             wd = m*weight_decay(state.count)
         else:
             wd = m*weight_decay
-        if cdg:
+        if cdg and state.count < sched_end:
             updates = jax.tree_util.tree_map(
                 lambda g, p: g + wd * p, updates, cdg_mask(params))
         else:
@@ -2118,6 +2119,7 @@ def adam_loschilov_wd(
     eps_root: float = 0.0,
     mu_dtype: Optional[Any] = None,
     weight_decay: ScalarOrSchedule = 1e-4,
+    sched_end: float = jnp.inf,
     cdg: bool = False,
     mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
 ) -> base.GradientTransformation:
@@ -2130,7 +2132,7 @@ def adam_loschilov_wd(
         transform.scale_by_adam(
             b1=b1, b2=b2, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
         _scale_by_learning_rate(learning_rate),
-        add_scheduled_decayed_weights(weight_decay, flip_sign=True, cdg=cdg, mask=mask),  # Flip is done in _scale_by_lr, so doing it manually here
+        add_scheduled_decayed_weights(weight_decay, flip_sign=True, cdg=cdg, sched_end=sched_end, mask=mask),  # Flip is done in _scale_by_lr, so doing it manually here
     )
 
 
@@ -2140,6 +2142,7 @@ def sgd_loschilov_wd(
     nesterov: bool = False,
     accumulator_dtype: Optional[Any] = None,
     weight_decay: ScalarOrSchedule = 0.0,
+    sched_end: float = jnp.inf,
     cdg: bool = False,
     mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
 ) -> base.GradientTransformation:
@@ -2151,7 +2154,7 @@ def sgd_loschilov_wd(
         (transform.trace(decay=momentum, nesterov=nesterov, accumulator_dtype=accumulator_dtype)
             if momentum is not None else base.identity()),
         _scale_by_learning_rate(learning_rate),
-        add_scheduled_decayed_weights(weight_decay, flip_sign=True, cdg=cdg, mask=mask)  # Flip is done in _scale_by_lr, so doing it manually here
+        add_scheduled_decayed_weights(weight_decay, flip_sign=True, cdg=cdg, sched_end=sched_end, mask=mask)  # Flip is done in _scale_by_lr, so doing it manually here
         )
 
 
