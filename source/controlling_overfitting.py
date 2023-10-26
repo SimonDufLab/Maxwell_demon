@@ -84,6 +84,7 @@ class ExpConfig:
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     reg_param_schedule: Optional[str] = None  # Schedule for reg_param, priority over reg_param_decay_cycles flag
+    reg_param_span: Optional[int] = None # More general than zero_end_reg_param, allow to decide when reg_param schedule falls to 0
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
@@ -706,7 +707,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             reg_param_decay_period = exp_config.training_steps // decay_cycles
 
         if exp_config.reg_param_schedule:
-            if exp_config.zero_end_reg_param:
+            if exp_config.reg_param_span:
+                sched_end = exp_config.reg_param_span
+            elif exp_config.zero_end_reg_param:
                 sched_end = int(0.9*exp_config.training_steps)
             else:
                 sched_end = exp_config.training_steps
