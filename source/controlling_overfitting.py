@@ -593,7 +593,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         opt_chain = []
         if "loschi" in exp_config.optimizer:  # Using reg_param parameters to control wd with those optimizers
             if exp_config.reg_param_schedule:
-                if exp_config.zero_end_reg_param:
+                if exp_config.reg_param_span:
+                    sched_end = exp_config.reg_param_span
+                elif exp_config.zero_end_reg_param:
                     sched_end = int(0.9 * exp_config.training_steps)
                 else:
                     sched_end = exp_config.training_steps
