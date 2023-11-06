@@ -1977,6 +1977,19 @@ def warmup_piecewise_decay_schedule(
     return optax.join_schedules(schedules, [warmup_steps])
 
 
+def linear_warmup(  # Use as a reg_param schedule
+        warmup_steps: int,
+        end_lr: float,
+) -> optax.Schedule:
+    """ Linear warmup followed by constant schedule"""
+    schedules = [
+        optax.linear_schedule(
+            init_value=1e-6,
+            end_value=end_lr,
+            transition_steps=warmup_steps),
+        optax.constant_schedule(end_lr)]
+    return optax.join_schedules(schedules, [warmup_steps])
+
 ##############################
 # Modified optax optimizer
 ##############################

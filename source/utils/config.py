@@ -81,7 +81,8 @@ lr_scheduler_choice = {
 }
 
 reg_param_scheduler_choice = {
-    'one_cycle': optax.cosine_onecycle_schedule
+    'one_cycle': optax.cosine_onecycle_schedule,
+    'warmup': utl.linear_warmup,
 }
 
 # Return the desired architecture along with a bool indicating if there is a
