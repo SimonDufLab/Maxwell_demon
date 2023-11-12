@@ -2372,14 +2372,40 @@ class ActivationModule(hk.Module):
                  ) -> Any:  # Again; switch to jax.Array when version updated on cluster
         c = hk.get_state("gate_constant", inputs.shape[-1:], inputs.dtype, init=jnp.ones)  # c must have shape
         # matching the amount of neurons
+        b = hk.get_state("shift_constant", (1,), inputs.dtype, init=jnp.zeros)
 
-        out = self.activation_fn(c*inputs)
+        out = self.activation_fn(c*inputs - b)
 
         return out
 
     @property
     def gate_constant(self):
         return hk.get_state("gate_constant")
+
+
+def update_gate_constant(state, new_value):
+    """ Helper function to update the shift_constant parameter inside a state_dict"""
+    for activation_layer in state.keys():
+        if "shift_constant" in state[activation_layer].keys():
+            state[activation_layer]["shift_constant"] = float(new_value)
+
+    return state
+
+# @jax.custom_jvp
+# @jax.jit
+# def shifted_relu(x: jax.typing.ArrayLike, b: float = 0.0) -> jax.typing.Array:  # Using a state constant right now instead
+#     """ Direct reimplementation of jax.nn.relu
+#     (https://jax.readthedocs.io/en/latest/_modules/jax/_src/nn/functions.html#relu)
+#
+#     But with the inclusion of a shift parameter (b) that moves the threshold where gradient becomes null
+#
+#     """
+#     return jnp.maximum(x-b, 0)
+#
+#
+# # For behavior at 0, see https://openreview.net/forum?id=urrcVI-_jRm
+# shifted_relu.defjvps(lambda g_x, ans, x, b: jax.lax.select(x-b > 0, g_x, jax.lax.full_like(g_x, 0)),
+#                      lambda g_b, ans, x, b: jax.lax.select(x-b > 0, g_b, jax.lax.full_like(g_b, 0)))
 
 
 class ReluActivationModule(ActivationModule):
