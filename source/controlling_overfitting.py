@@ -64,6 +64,7 @@ class ExpConfig:
     death_batch_size: int = 512
     optimizer: str = "adam"
     activation: str = "relu"  # Activation function used throughout the model
+    shifted_relu: float = 0.0  # Shift value (b) applied on output before activation. To promote dead neurons
     dataset: str = "mnist"
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
@@ -671,6 +672,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             del _net
         else:
             params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+        state = utl.update_gate_constant(state, exp_config.shifted_relu)
         # initial_params = utl.jax_deep_copy(params)  # Keep a copy of the initial params for relative change metric
         init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
