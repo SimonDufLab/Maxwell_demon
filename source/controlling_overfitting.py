@@ -672,11 +672,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             del _net
         else:
             params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
+        activation_layer_order = list(state.keys())
         state = utl.update_gate_constant(state, exp_config.shifted_relu)
         # initial_params = utl.jax_deep_copy(params)  # Keep a copy of the initial params for relative change metric
         init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
-        activation_layer_order = list(state.keys())
         initial_params_count = utl.count_params(params)
         if load_from_preexisting_model_state:
             params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
