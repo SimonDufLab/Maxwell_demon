@@ -71,7 +71,7 @@ class LinearLayer(hk.Module):
         return self.last_act_name
 
 
-def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, tanh_head=False):
+def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, with_bn=False, bn_config={}, tanh_head=False):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units"""
     act = activation_fn
 
@@ -81,8 +81,8 @@ def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, activation_fn=act)]  # hk.Flatten, in in LinearLayer
-    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, activation_fn=act)]
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act)]  # hk.Flatten, in LinearLayer
+    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act)]
     if tanh_head:
         layer_3 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=_tanh)]
     else:
