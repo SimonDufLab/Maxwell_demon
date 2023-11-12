@@ -680,8 +680,9 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
                                 ..., following_neurons_state]
             if layer_name in filtered_state.keys():
                 for dict_key in filtered_state[layer_name].keys():
-                    filtered_state[layer_name][dict_key] = filtered_state[layer_name][dict_key][
-                        ..., following_neurons_state]
+                    if dict_key != "shift_constant":
+                        filtered_state[layer_name][dict_key] = filtered_state[layer_name][dict_key][
+                            ..., following_neurons_state]
 
         # If there is state to prune
         if state and following is not None:  # This is for BN layers, no preceding connections for BN
@@ -2383,11 +2384,12 @@ class ActivationModule(hk.Module):
         return hk.get_state("gate_constant")
 
 
+@jax.jit
 def update_gate_constant(state, new_value):
     """ Helper function to update the shift_constant parameter inside a state_dict"""
     for activation_layer in state.keys():
         if "shift_constant" in state[activation_layer].keys():
-            state[activation_layer]["shift_constant"] = float(new_value)
+            state[activation_layer]["shift_constant"] = jnp.array(new_value, float)
 
     return state
 
