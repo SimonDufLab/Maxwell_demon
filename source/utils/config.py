@@ -108,7 +108,7 @@ architecture_choice_dropout = {
 }
 
 bn_architecture_choice = {
-    "mlp_3": mlp_3_bn,
+    "mlp_3": Partial(mlp_3, with_bn=True),
     "conv_3_2": conv_3_2_bn,
     "conv_4_2": conv_4_2_bn,
     "conv_6_2": conv_6_2_bn,
