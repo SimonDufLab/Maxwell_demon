@@ -15,7 +15,7 @@ class Base_BN:#(hk.Module):
             self,
             is_training: bool,
             bn_config: dict = base_bn_config,
-            name: Optional[str] = None):
+            name: Optional[str] = "bn_layer"):
         # super().__init__(name=name)
         self.name = name
         self.is_training = is_training

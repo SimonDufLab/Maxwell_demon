@@ -673,7 +673,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             params, state = net.init(jax.random.PRNGKey(exp_config.init_seed), next(train))
         activation_layer_order = list(state.keys())
-        state = utl.update_gate_constant(state, exp_config.shifted_relu)
         # initial_params = utl.jax_deep_copy(params)  # Keep a copy of the initial params for relative change metric
         init_state = utl.jax_deep_copy(state)
         opt_state = opt.init(params)
@@ -718,6 +717,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             else:
                 sched_end = exp_config.training_steps
             reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, reg_param)
+        if exp_config.shifted_relu:
+            shift_relu_sched = utl.linear_warmup(exp_config.reg_param_span, exp_config.shifted_relu)
 
         if exp_config.prune_at_end:
             pruning_reg_param, pruning_lr, add_steps = exp_config.prune_at_end
@@ -801,6 +802,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                     params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train),
                                                                     noise_var,
                                                                     noise_key, _reg_param=decaying_reg_param)
+            if exp_config.shifted_relu:
+                state = utl.update_gate_constant(state, shift_relu_sched(step))
 
         if exp_config.record_distribution_data:
             scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
