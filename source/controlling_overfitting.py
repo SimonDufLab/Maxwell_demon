@@ -458,6 +458,18 @@ def run_exp(exp_config: ExpConfig) -> None:
                 #     exp_run.track(decaying_reg_param, name="Current reg_param value", step=step,
                 #                   context={"reg param": utl.size_to_string(reg_param)})
 
+                if exp_config.shifted_relu:
+                    __flag = True
+                    __count = 0
+                    state_layers = list(state.keys())
+                    while __flag:
+                        if "shift_constant" in state[state_layers[__count]]:
+                            print(f"Current negative shift pre-relu: {state[state_layers[__count]]['shift_constant']}")
+                            __flag = False
+                        else:
+                            __count += 1
+
+
                 if exp_config.record_gate_grad_stat:
                     snap_score = scr.snap_score(params, state, test_loss_fn, train_eval, 5)  # Avg on 5 minibatches
                     gate_grad.update(snap_score)
