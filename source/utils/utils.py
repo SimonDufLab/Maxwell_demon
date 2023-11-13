@@ -2389,7 +2389,7 @@ def update_gate_constant(state, new_value):
     """ Helper function to update the shift_constant parameter inside a state_dict"""
     for activation_layer in state.keys():
         if "shift_constant" in state[activation_layer].keys():
-            state[activation_layer]["shift_constant"] = jnp.array(new_value, float)
+            state[activation_layer]["shift_constant"] = jnp.full_like(state[activation_layer]["shift_constant"], new_value)
 
     return state
 
