@@ -321,7 +321,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params, state, opt_state, opt,
                                      total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
-                                     scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn):
+                                     scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn, dead_neurons_union):
             """ Inside a function to make sure variables in function scope are cleared from memory"""
             if step == exp_config.training_steps and bool(add_steps):
                 print("Entered pruning phase")
@@ -432,6 +432,13 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             if step % exp_config.pruning_freq == 0:
                 dead_neurons = scan_death_check_fn(params, state, test_death)
+                if not exp_config.dynamic_pruning:
+                    overlap = jax.tree_map(jnp.logical_and, dead_neurons_union, dead_neurons)
+                    overlap = sum(jax.tree_map(jnp.sum, overlap)) / sum(jax.tree_map(jnp.sum, dead_neurons_union))
+                    dead_neurons_union = jax.tree_map(jnp.logical_or, dead_neurons_union, dead_neurons)
+                    exp_run.track(overlap, name="Cumulative overlap of dead neurons",
+                                  step=step,
+                                  context={"reg param": utl.size_to_string(reg_param)})
                 dead_neurons_count, dead_per_layers = utl.count_dead_neurons(dead_neurons)
                 exp_run.track(dead_neurons_count, name="Dead neurons; whole training dataset",
                               step=step,
@@ -584,7 +591,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
             return (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer, loss, test_loss_fn,
-                    accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn)
+                    accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn, dead_neurons_union)
 
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
@@ -744,6 +751,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             add_steps = 0
 
+        dead_neurons_union = death_check_fn(params, state, next(test_death))
+
         if load_from_preexisting_model_state:
             starting_step = run_state["training_step"]
             decaying_reg_param = run_state["decaying_reg_param"]
@@ -797,12 +806,12 @@ def run_exp(exp_config: ExpConfig) -> None:
             (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer, loss,
              test_loss_fn,
              accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
-             update_fn) = record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params,
+             update_fn, dead_neurons_union) = record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params,
                                                    state, opt_state, opt, total_neurons, total_per_layer, loss,
                                                    test_loss_fn,
                                                    accuracy_fn, death_check_fn, scan_death_check_fn,
                                                    full_train_acc_fn,
-                                                   final_accuracy_fn, update_fn)  # Ugly, but cache is cleared
+                                                   final_accuracy_fn, update_fn, dead_neurons_union)  # Ugly, but cache is cleared
             if (step % exp_config.pruning_freq == 0) and exp_config.dynamic_pruning:
                 # jax.clear_backends()
                 gc.collect()
