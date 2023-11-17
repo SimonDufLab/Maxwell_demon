@@ -802,6 +802,13 @@ def keep_offset_only(dict_params):
     return {k: offset_selection(v) for k, v in dict_params.items()}
 
 
+def keep_scale_only(dict_params):
+    def offset_selection(sub_dict):
+        return {k: v for k, v in sub_dict.items() if "scale" in k}
+
+    return {k: offset_selection(v) for k, v in dict_params.items()}
+
+
 def keep_bn_params_only(dict_params):
     def bn_selection(sub_dict):
         return {k: v for k, v in sub_dict.items() if (("offset" in k) or ("scale" in k))}
@@ -840,7 +847,7 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
     # if not classes:
     #     classes = 10
 
-    assert exclude_bias_bn_from_reg in [None, 'all', 'scale', 'offset_only', 'bn_params_only'], "Can only exclude some params from reg loss with all or scale rn."
+    assert exclude_bias_bn_from_reg in [None, 'all', 'scale', 'offset_only', 'scale_only', 'bn_params_only'], "Can only exclude some params from reg loss with all or scale rn."
     if exclude_bias_bn_from_reg:
         if exclude_bias_bn_from_reg == "all":
             exclude_fn = lambda x: exclude_bn_and_bias_params(x)
@@ -848,6 +855,8 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
             exclude_fn = lambda x: exclude_bn_scale_from_params(x)
         elif exclude_bias_bn_from_reg == "offset_only":
             exclude_fn = lambda x: keep_offset_only(x)
+        elif exclude_bias_bn_from_reg == "scale_only":
+            exclude_fn = lambda x: keep_scale_only(x)
         elif exclude_bias_bn_from_reg == "bn_params_only":
             exclude_fn = lambda x: keep_bn_params_only(x)
     else:
