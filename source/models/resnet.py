@@ -408,6 +408,139 @@ class ResnetBlockV2(ResnetBlockV1):
         return out, activations
 
 
+class ResnetBlockV3(hk.Module):
+    """BN after out+shortcut"""
+
+    def __init__(
+            self,
+            channels: Sequence[int],
+            stride: Union[int, Sequence[int]],
+            activation_fn: hk.Module,
+            use_projection: bool,
+            bottleneck: bool,
+            is_training: bool,
+            with_bn: bool,
+            bn_config: dict = base_bn_config,
+            name: Optional[str] = None,
+            preceding_activation_name: Optional[str] = None,
+    ):
+        super().__init__(name=name)
+        self.activation_mapping = {}
+        self.preceding_activation_name = preceding_activation_name
+        self.use_projection = use_projection
+
+        bn_config = dict(bn_config)
+
+        proj_channels = channels[2] if bottleneck else channels[1]
+        if self.use_projection:
+            self.proj_conv = hk.Conv2D(
+                output_channels=proj_channels,
+                kernel_shape=1,
+                stride=stride,
+                with_bias=False,
+                padding="SAME",
+                name="shortcut_conv",
+                **default_block_conv_config)
+
+            # self.proj_batchnorm = CustomBatchNorm(name="shortcut_batchnorm", **bn_config)
+        else:
+            self.identity_skip = IdentityConv2D(out_channels=proj_channels, name="identity_skip")
+
+        # channel_div = 4 if bottleneck else 1
+        conv_0 = hk.Conv2D(
+            output_channels=channels[0],
+            kernel_shape=1 if bottleneck else 3,
+            stride=1 if bottleneck else stride,
+            with_bias=False,
+            padding="SAME",
+            name="conv_0",
+            **default_block_conv_config)
+        bn_0 = CustomBatchNorm(name="batchnorm_0", **bn_config)
+
+        conv_1 = hk.Conv2D(
+            output_channels=channels[1],
+            kernel_shape=3,
+            stride=stride if bottleneck else 1,
+            with_bias=False,
+            padding="SAME",
+            name="conv_1",
+            **default_block_conv_config)
+
+        bn_1 = CustomBatchNorm(name="batchnorm_1", **bn_config)
+        layers = ((conv_0, bn_0, activation_fn()), (conv_1, bn_1, activation_fn()))
+
+        if bottleneck:
+            conv_2 = hk.Conv2D(
+                output_channels=channels[2],
+                kernel_shape=1,
+                stride=1,
+                with_bias=False,
+                padding="SAME",
+                name="conv_2",
+                **default_block_conv_config)
+
+            bn_2 = CustomBatchNorm(name="batchnorm_2", **bn_config)
+            layers = layers + ((conv_2, bn_2, activation_fn()),)
+
+        self.layers = layers
+        self.is_training = is_training
+        # self.activation_fn = activation_fn
+        self.with_bn = with_bn
+
+    def __call__(self, inputs):
+        out = shortcut = inputs
+        activations = []
+        block_name = self.name + "/~/"
+
+        if self.use_projection:
+            shortcut = self.proj_conv(shortcut)
+            skip_layer_name = block_name+self.proj_conv.name
+            # if self.with_bn:
+            #     shortcut = self.proj_batchnorm(shortcut, self.is_training)
+            #     skip_bn_name = block_name+self.proj_batchnorm.name
+        else:
+            shortcut = self.identity_skip(shortcut)
+            skip_layer_name = block_name+self.identity_skip.name
+
+        prev_act_name = self.preceding_activation_name
+        for i, (conv_i, bn_i, act_i) in enumerate(self.layers):
+            conv_name = block_name+conv_i.name
+            self.activation_mapping[conv_name] = {"preceding": prev_act_name,
+                                                  "following": block_name + act_i.name}
+            self.activation_mapping[block_name + act_i.name] = {"preceding": None,
+                                                                "following": block_name + act_i.name}
+            out = conv_i(out)
+            if self.with_bn:
+                bn_name = block_name+bn_i.name
+                self.activation_mapping[bn_name] = {"preceding": None,
+                                                    "following": block_name + act_i.name}
+            prev_act_name = block_name + act_i.name
+            if i < len(self.layers) - 1:  # Don't apply act right away on last layer
+                if self.with_bn:
+                    out = bn_i(out, self.is_training)
+                out = act_i(out)
+                activations.append(out)
+
+        self.last_act_name = block_name + act_i.name
+        out = act_i(out + shortcut)
+        if self.with_bn:
+            out = bn_i(out, self.is_training)
+        self.activation_mapping[skip_layer_name] = {"preceding": self.preceding_activation_name,
+                                                    "following": self.last_act_name}
+        # if self.with_bn and self.use_projection:
+        #     self.activation_mapping[skip_bn_name] = {"preceding": None,
+        #                                              "following": self.last_act_name}
+        activations.append(out)
+
+        return out, activations
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return self.last_act_name
+
+
 class ResnetInit(hk.Module):
     """Create the initial layer for resnet models"""
     def __init__(
@@ -839,7 +972,9 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
              initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = srigl_initial_conv_config,
              strides: Sequence[int] = (1, 2, 2, 2),
              with_bn: bool = True,
+             version: str = 'V1',
              bn_config: dict = base_bn_config,):
+    assert version in ["V1", "V3"], "version must be either V1 or V3"
 
     if type(size) == int:
         init_conv_size = size
@@ -858,13 +993,18 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
                     }
     initial_conv_config["output_channels"] = init_conv_size
 
+    if version == "V1":
+        res_block = ResnetBlockV1
+    elif version == "V3":
+        res_block = ResnetBlockV3
+
     return resnet_model(num_classes=num_classes,
                         activation_fn=activation_fn,
                         initial_conv_config=initial_conv_config,
                         strides=strides,
                         logits_config=logits_config,
                         with_bn=with_bn,
-                        resnet_block=ResnetBlockV1,
+                        resnet_block=res_block,
                         v2_linear_block=False,
                         max_pool_layer=False,
                         avg_pool_layer=True,
