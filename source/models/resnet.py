@@ -395,6 +395,7 @@ class ResnetBlockV2(ResnetBlockV1):
             shortcut = self.proj_conv(out)
             skip_layer_name = block_name + self.proj_conv.name
         else:
+            shortcut *= jnp.where(out > 0, 1, 0)  # Trick so that pruning is consistent even is there is a skip
             shortcut = self.identity_skip(shortcut)
             skip_layer_name = block_name + self.identity_skip.name
         prev_act_name = self.preceding_activation_name
