@@ -233,11 +233,14 @@ class ResnetBlockV1(hk.Module):
             with_bn: bool,
             bn_config: dict = base_bn_config,
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None,
+            parent: Optional[hk.Module] = None,
     ):
         super().__init__(name=name)
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.use_projection = use_projection
 
         bn_config = dict(bn_config)
@@ -295,7 +298,6 @@ class ResnetBlockV1(hk.Module):
 
         self.layers = layers
         self.is_training = is_training
-        # self.activation_fn = activation_fn
         self.with_bn = with_bn
 
     def __call__(self, inputs):
@@ -331,7 +333,6 @@ class ResnetBlockV1(hk.Module):
                 out = act_i(out)
                 activations.append(out)
 
-        # try:
         self.last_act_name = block_name + act_i.name
         out = act_i(out + shortcut)
         self.activation_mapping[skip_layer_name] = {"preceding": self.preceding_activation_name,
@@ -339,12 +340,6 @@ class ResnetBlockV1(hk.Module):
         if self.with_bn and self.use_projection:
             self.activation_mapping[skip_bn_name] = {"preceding": None,
                                                      "following": self.last_act_name}
-        # except:
-        #     print(out.shape)
-        #     print(shortcut.shape)
-        #     print(self.layers[-1][0].name)
-        #     print(self.proj_conv.name)
-        #     raise SystemExit
         activations.append(out)
 
         return out, activations
@@ -364,13 +359,14 @@ class ResnetBlockV2(ResnetBlockV1):
             self,
             channels: Sequence[int],
             stride: Union[int, Sequence[int]],
-            activation_fn: Callable,
+            activation_fn: hk.Module,
             use_projection: bool,
             bottleneck: bool,
             is_training: bool,
             with_bn: bool,
             bn_config: dict = base_bn_config,
             name: Optional[str] = None,
+            parent: Optional[hk.Module] = None,
     ):
         super().__init__(
             channels=channels,
@@ -381,31 +377,64 @@ class ResnetBlockV2(ResnetBlockV1):
             is_training=is_training,
             with_bn=with_bn,
             bn_config=bn_config,
-            name=name)
+            name=name,
+            parent=parent)
+        self.delayed_activation = parent.get_delayed_activations()
+        self.delayed_norm = parent.get_delayed_norm()
 
     def __call__(self, inputs):
         out = shortcut = inputs
         activations = []
+        block_name = self.name + "/~/"
 
+        if self.with_bn:
+            out = self.delayed_norm(out, self.is_training)
+        out = self.delayed_activation(out)
+        activations.append(out)
         if self.use_projection:
-            shortcut = self.proj_conv(shortcut)
+            shortcut = self.proj_conv(out)
+            skip_layer_name = block_name + self.proj_conv.name
         else:
             shortcut = self.identity_skip(shortcut)
-
-        for i, (conv_i, bn_i) in enumerate(self.layers):
+            skip_layer_name = block_name + self.identity_skip.name
+        prev_act_name = self.preceding_activation_name
+        for i, (conv_i, bn_i, act_i) in enumerate(self.layers):
+            conv_name = block_name + conv_i.name
+            self.activation_mapping[conv_name] = {"preceding": prev_act_name,
+                                                  "following": block_name + act_i.name}
+            self.activation_mapping[block_name + act_i.name] = {"preceding": None,
+                                                                "following": block_name + act_i.name}
             out = conv_i(out)
-            if i < len(self.layers) - 1:  # Don't apply activation and bn right away on last block layer
-                if self.with_bn:
-                    out = bn_i(out, self.is_training)
-                out = self.activation_fn(out)
+            if self.with_bn:
+                bn_name = block_name + bn_i.name
+                self.activation_mapping[bn_name] = {"preceding": None,
+                                                    "following": block_name + act_i.name}
+            prev_act_name = block_name + act_i.name
+            if i < len(self.layers) - 1:  # Don't apply act right away on last layer
+                out = bn_i(out, self.is_training)
+                out = act_i(out)
                 activations.append(out)
 
-        out = self.activation_fn(out + shortcut)
-        if self.with_bn:
-            out = bn_i(out, self.is_training)
-        activations.append(out)
+        self.last_act_name = block_name + act_i.name
+        out = out + shortcut
+        self.activation_mapping[skip_layer_name] = {"preceding": self.preceding_activation_name,
+                                                    "following": self.last_act_name}
+
+        # activations.append(out)
 
         return out, activations
+
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return self.last_act_name
+
+    def get_delayed_activations(self):
+        return self.layers[-1][-1]
+
+    def get_delayed_norm(self):
+        return self.layers[-1][-2]
 
 
 class ResnetBlockV3(hk.Module):
@@ -422,11 +451,14 @@ class ResnetBlockV3(hk.Module):
             with_bn: bool,
             bn_config: dict = base_bn_config,
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None,
+            parent: Optional[str] = hk.Module,
     ):
         super().__init__(name=name)
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.use_projection = use_projection
 
         bn_config = dict(bn_config)
@@ -442,7 +474,7 @@ class ResnetBlockV3(hk.Module):
                 name="shortcut_conv",
                 **default_block_conv_config)
 
-            # self.proj_batchnorm = CustomBatchNorm(name="shortcut_batchnorm", **bn_config)
+            self.proj_batchnorm = CustomBatchNorm(name="shortcut_batchnorm", **bn_config)
         else:
             self.identity_skip = IdentityConv2D(out_channels=proj_channels, name="identity_skip")
 
@@ -484,8 +516,8 @@ class ResnetBlockV3(hk.Module):
 
         self.layers = layers
         self.is_training = is_training
-        # self.activation_fn = activation_fn
         self.with_bn = with_bn
+        self.additional_bn = CustomBatchNorm(name="batchnorm_extra", **bn_config)
 
     def __call__(self, inputs):
         out = shortcut = inputs
@@ -495,9 +527,9 @@ class ResnetBlockV3(hk.Module):
         if self.use_projection:
             shortcut = self.proj_conv(shortcut)
             skip_layer_name = block_name+self.proj_conv.name
-            # if self.with_bn:
-            #     shortcut = self.proj_batchnorm(shortcut, self.is_training)
-            #     skip_bn_name = block_name+self.proj_batchnorm.name
+            if self.with_bn:
+                shortcut = self.proj_batchnorm(shortcut, self.is_training)
+                skip_bn_name = block_name+self.proj_batchnorm.name
         else:
             shortcut = self.identity_skip(shortcut)
             skip_layer_name = block_name+self.identity_skip.name
@@ -511,25 +543,28 @@ class ResnetBlockV3(hk.Module):
                                                                 "following": block_name + act_i.name}
             out = conv_i(out)
             if self.with_bn:
+                out = bn_i(out, self.is_training)
                 bn_name = block_name+bn_i.name
                 self.activation_mapping[bn_name] = {"preceding": None,
                                                     "following": block_name + act_i.name}
             prev_act_name = block_name + act_i.name
             if i < len(self.layers) - 1:  # Don't apply act right away on last layer
-                if self.with_bn:
-                    out = bn_i(out, self.is_training)
                 out = act_i(out)
                 activations.append(out)
 
         self.last_act_name = block_name + act_i.name
-        out = act_i(out + shortcut)
+        out = out + shortcut
         if self.with_bn:
-            out = bn_i(out, self.is_training)
+            out = self.additional_bn(out, self.is_training)
+            bn_name = block_name + self.additional_bn.name
+            self.activation_mapping[bn_name] = {"preceding": None,
+                                                "following": block_name + act_i.name}
+        out = act_i(out)
         self.activation_mapping[skip_layer_name] = {"preceding": self.preceding_activation_name,
                                                     "following": self.last_act_name}
-        # if self.with_bn and self.use_projection:
-        #     self.activation_mapping[skip_bn_name] = {"preceding": None,
-        #                                              "following": self.last_act_name}
+        if self.with_bn and self.use_projection:
+            self.activation_mapping[skip_bn_name] = {"preceding": None,
+                                                     "following": self.last_act_name}
         activations.append(out)
 
         return out, activations
@@ -550,24 +585,34 @@ class ResnetInit(hk.Module):
             conv_config: Optional[Mapping[str, FloatStrOrBool]],
             bn_config: Optional[Mapping[str, FloatStrOrBool]],
             with_bn: bool,
+            v2_block: bool = False,
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None):
+            parent: Optional[hk.Module] = None):
         super().__init__(name=name)
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.is_training = is_training
         self.bn = CustomBatchNorm(name="init_bn", **bn_config)
         self.conv = hk.Conv2D(**conv_config)
         self.activation_fn = activation_fn()
         self.with_bn = with_bn
+        self.v2_block = v2_block
 
     def __call__(self, inputs):
+        activations = []
         block_name = self.name + "/~/"
         x = self.conv(inputs)
-        if self.with_bn:
-            x = self.bn(x, is_training=self.is_training)
+        # if self.with_bn:
+        #     x = self.bn(x, is_training=self.is_training)
 
-        x = self.activation_fn(x)
+        if not self.v2_block:
+            if self.with_bn:
+                x = self.bn(x, is_training=self.is_training)
+            x = self.activation_fn(x)
+            activations.append(x)
 
         conv_name = block_name + self.conv.name
         self.activation_mapping[conv_name] = {"preceding": self.preceding_activation_name,
@@ -580,13 +625,19 @@ class ResnetInit(hk.Module):
                                                 "following": block_name + self.activation_fn.name}
         self.last_act_name = block_name + self.activation_fn.name
 
-        return x
+        return x, activations
 
     def get_activation_mapping(self):
         return self.activation_mapping
 
     def get_last_activation_name(self):
         return self.last_act_name
+
+    def get_delayed_activations(self):
+        return self.activation_fn
+
+    def get_delayed_norm(self):
+        return self.bn
 
 
 def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Sequence[int]], activation_fn: hk.Module, bottleneck: bool,
@@ -631,22 +682,35 @@ class LinearBlockV1(hk.Module):
             is_training: bool,
             num_classes: int,
             logits_config: Optional[Mapping[str, FloatStrOrBool]],
+            v2_block: bool = False,
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None,
+            parent: Optional[hk.Module] = None,
             avg_pool_layer: bool = False):
         super().__init__(name=name)
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        self.is_training = is_training
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.logits_layer = hk.Linear(num_classes, **logits_config)  # TODO: de-hardencode the outputs_dim
         if avg_pool_layer:
             self.mean_layer = hk.AvgPool(window_shape=(1, 4, 4, 1), strides=(1, 4, 4, 1), padding="VALID")
         else:
             self.mean_layer = Partial(jnp.mean, axis=(1, 2))  # Kind of average pooling layer
+        self.v2_block = v2_block
+        if v2_block:
+            self.delayed_activation = parent.get_delayed_activations()
+            self.delayed_norm = parent.get_delayed_norm()
 
-    def __call__(self, inputs):
+    def __call__(self, x):
         activations = []
+        if self.v2_block:
+            x = self.delayed_norm(x, self.is_training)
+            x = self.delayed_activation(x)
+            activations.append(x)
         block_name = self.name + "/~/"
-        x = self.mean_layer(inputs)
+        x = self.mean_layer(x)
         # x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
         x = self.logits_layer(x)
 
@@ -675,11 +739,14 @@ class LinearBlockV2(hk.Module):
             bn_config: Optional[Mapping[str, FloatStrOrBool]],
             with_bn: bool,
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None,
+            parent: Optional[hk.Module] = None,
             avg_pool_layer: bool = False):
         super().__init__(name=name)
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.with_bn = with_bn
         self.fc_layer = hk.Linear(**fc_config[0])
         # self.fc_layer2 = hk.Linear(**fc_config[1])
@@ -763,8 +830,9 @@ def resnet_model(blocks_per_group: Sequence[int],
     check_length(4, channels_per_group, "channels_per_group")
     check_length(4, strides, "strides")
 
-    train_layers = [[Partial(ResnetInit, is_training=True, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn)]]
-    test_layers = [[Partial(ResnetInit, is_training=False, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn)]]
+    v2_blocks = resnet_block==ResnetBlockV2
+    train_layers = [[Partial(ResnetInit, is_training=True, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn, v2_block=v2_blocks)]]
+    test_layers = [[Partial(ResnetInit, is_training=False, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn,  v2_block=v2_blocks)]]
 
     # train_layers.append([Partial(hk.Conv2D, **initial_conv_config),
     #                      Partial(Partial(hk.BatchNorm, name="initial_batchnorm", **bn_config), is_training=True), act])
@@ -816,9 +884,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                                     with_bn=with_bn, avg_pool_layer=avg_pool_layer)])
     else:
         train_layers.append(
-            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config)])
+            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, v2_block=v2_blocks)])
         test_layers.append(
-            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config)])
+            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, v2_block=v2_blocks)])
 
     # train_layers += train_final_layers
     # test_layers += test_final_layers
@@ -851,7 +919,7 @@ def resnet18(size: Union[int, Sequence[int]],
              version: str = 'V1',
              v2_linear_block=False):
 
-    assert version in ["V1", "V2"], "version must be either V1 or V2"
+    assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     if type(size) == int:
         init_conv_size = size
@@ -886,6 +954,8 @@ def resnet18(size: Union[int, Sequence[int]],
         resnet_block_type = ResnetBlockV1
     elif version == "V2":
         resnet_block_type = ResnetBlockV2
+    elif version == "V3":
+        resnet_block_type = ResnetBlockV3
 
     return resnet_model(num_classes=num_classes,
                         activation_fn=activation_fn,
@@ -909,7 +979,7 @@ def resnet50(size: Union[int, Sequence[int]],
              version: str = 'V1',
              v2_lin_block: bool = False):
 
-    assert version in ["V1", "V2"], "version must be either V1 or V2"
+    assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     blocks_per_group = [3, 4, 6, 3]
     if type(size) == int:
@@ -941,6 +1011,8 @@ def resnet50(size: Union[int, Sequence[int]],
         resnet_block_type = ResnetBlockV1
     elif version == "V2":
         resnet_block_type = ResnetBlockV2
+    elif version == "V3":
+        resnet_block_type = ResnetBlockV3
 
     return resnet_model(num_classes=num_classes,
                         activation_fn=activation_fn,
@@ -974,7 +1046,7 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
              with_bn: bool = True,
              version: str = 'V1',
              bn_config: dict = base_bn_config,):
-    assert version in ["V1", "V3"], "version must be either V1 or V3"
+    assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     if type(size) == int:
         init_conv_size = size
@@ -995,6 +1067,8 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
 
     if version == "V1":
         res_block = ResnetBlockV1
+    elif version == "V2":
+        res_block = ResnetBlockV2
     elif version == "V3":
         res_block = ResnetBlockV3
 
@@ -1018,7 +1092,9 @@ def srigl_resnet50(size: Union[int, Sequence[int]],
              initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = srigl_initial_conv_config,
              strides: Sequence[int] = (1, 2, 2, 2),
              with_bn: bool = True,
+             version: str = 'V1',
              bn_config: dict = base_bn_config):
+    assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     blocks_per_group = [3, 4, 6, 3]
     if type(size) == int:
@@ -1038,13 +1114,20 @@ def srigl_resnet50(size: Union[int, Sequence[int]],
                     }
     initial_conv_config["output_channels"] = init_conv_size
 
+    if version == "V1":
+        res_block = ResnetBlockV1
+    elif version == "V2":
+        res_block = ResnetBlockV2
+    elif version == "V3":
+        res_block = ResnetBlockV3
+
     return resnet_model(num_classes=num_classes,
                         activation_fn=activation_fn,
                         initial_conv_config=initial_conv_config,
                         strides=strides,
                         logits_config=logits_config,
                         with_bn=with_bn,
-                        resnet_block=ResnetBlockV1,
+                        resnet_block=res_block,
                         v2_linear_block=False,
                         max_pool_layer=False,
                         avg_pool_layer=True,
