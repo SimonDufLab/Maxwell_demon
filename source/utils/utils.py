@@ -2462,6 +2462,11 @@ class SwishActivationModule(ActivationModule):
         super().__init__(activation_fn=jax.nn.swish, name=name)
 
 
+class GeluActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.gelu, name=name)
+
+
 class TanhActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=jax.nn.tanh, name=name)
