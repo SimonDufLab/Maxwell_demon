@@ -1846,29 +1846,30 @@ class FancySequential:
             self,
             layers: Any,
             name: Optional[str] = "",
-            preceding_activation_name: Optional[str] = None
+            parent: Optional[hk.Module] = None
     ):
         # super().__init__(name=name)
         self.layers = tuple(layers)
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        self.parent = parent
 
     def __call__(self, inputs, *args, **kwargs):
         """Calls all layers sequentially, updating the activation mapping along the way"""
         out = inputs
-        prev_act_name = self.preceding_activation_name
+        parent = self.parent
         for i, layer in enumerate(self.layers):
             if i == 0:
-                layer_module = layer(preceding_activation_name=prev_act_name)
+                layer_module = layer(parent=parent)
                 out = layer_module(out, *args, **kwargs)
                 self.activation_mapping.update(layer_module.get_activation_mapping())
-                prev_act_name = layer_module.get_last_activation_name()
+                parent = layer_module
             else:
-                layer_module = layer(preceding_activation_name=prev_act_name)
+                layer_module = layer(parent=parent)
                 out = layer_module(out)
                 self.activation_mapping.update(layer_module.get_activation_mapping())
-                prev_act_name = layer_module.get_last_activation_name()
-        self.last_act_name = prev_act_name
+                parent = layer_module
+        self.last_act_name = layer_module.get_last_activation_name()
+        self.delayed_layer = layer_module
         return out
 
     def get_activation_mapping(self):
@@ -1876,6 +1877,12 @@ class FancySequential:
 
     def get_last_activation_name(self):
         return self.last_act_name
+
+    def get_delayed_activations(self):
+        return self.delayed_layer.get_delayed_activations()
+
+    def get_delayed_norm(self):
+        return self.delayed_layer.get_delayed_norm()
 
 
 def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout=False):
@@ -1904,13 +1911,13 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
                 layers = self.train_layers
             else:
                 layers = self.test_layers
-            prev_activation_name = None
+            parent = None
             for layer in layers[:-1]:  # Don't append final output in activations list
                 # x = hk.Sequential([mdl() for mdl in layer])(x)
-                layer_modules = FancySequential(layer, preceding_activation_name=prev_activation_name)
+                layer_modules = FancySequential(layer, parent=parent)
                 x = layer_modules(x)
                 self.activation_mapping.update(layer_modules.get_activation_mapping())
-                prev_activation_name = layer_modules.get_last_activation_name()
+                parent = layer_modules
                 if return_activations:
                     if type(x) is tuple:
                         activations += x[1]
@@ -1920,7 +1927,7 @@ def build_models(train_layer_list, test_layer_list=None, name=None, with_dropout
                 if type(x) is tuple:
                     x = x[0]
             # x = hk.Sequential([mdl() for mdl in layers[-1]])(x)
-            layer_modules = FancySequential(layers[-1], preceding_activation_name=prev_activation_name)
+            layer_modules = FancySequential(layers[-1], parent=parent)
             x = layer_modules(x)
             if type(x) is tuple:
                 final_output = x[0]
@@ -2460,6 +2467,11 @@ class EluActivationModule(ActivationModule):
 class SwishActivationModule(ActivationModule):
     def __init__(self, name: Optional[str] = None):
         super().__init__(activation_fn=jax.nn.swish, name=name)
+
+
+class GeluActivationModule(ActivationModule):
+    def __init__(self, name: Optional[str] = None):
+        super().__init__(activation_fn=jax.nn.gelu, name=name)
 
 
 class TanhActivationModule(ActivationModule):
