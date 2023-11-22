@@ -219,7 +219,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         aim_hash = None
     
     # Path for logs
-    log_path = "./ICLR2023_main2"  # "./preempt_test"  #
+    log_path = "./ICLR2023_main3"  # "./preempt_test"  #
     if exp_config.dataset == "imagenet":
         log_path = "./imagenet_exps"
     # Logger config
