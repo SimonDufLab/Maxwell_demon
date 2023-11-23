@@ -412,7 +412,8 @@ class ResnetBlockV2(ResnetBlockV1):
                                                     "following": block_name + act_i.name}
             prev_act_name = block_name + act_i.name
             if i < len(self.layers) - 1:  # Don't apply act right away on last layer
-                out = bn_i(out, self.is_training)
+                if self.with_bn:
+                    out = bn_i(out, self.is_training)
                 out = act_i(out)
                 activations.append(out)
 
@@ -683,6 +684,7 @@ class LinearBlockV1(hk.Module):
             is_training: bool,
             num_classes: int,
             logits_config: Optional[Mapping[str, FloatStrOrBool]],
+            with_bn: bool,
             v2_block: bool = False,
             name: Optional[str] = None,
             parent: Optional[hk.Module] = None,
@@ -690,6 +692,7 @@ class LinearBlockV1(hk.Module):
         super().__init__(name=name)
         self.activation_mapping = {}
         self.is_training = is_training
+        self.with_bn = with_bn
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -707,7 +710,8 @@ class LinearBlockV1(hk.Module):
     def __call__(self, x):
         activations = []
         if self.v2_block:
-            x = self.delayed_norm(x, self.is_training)
+            if self.with_bn:
+                x = self.delayed_norm(x, self.is_training)
             x = self.delayed_activation(x)
             activations.append(x)
         block_name = self.name + "/~/"
@@ -831,7 +835,7 @@ def resnet_model(blocks_per_group: Sequence[int],
     check_length(4, channels_per_group, "channels_per_group")
     check_length(4, strides, "strides")
 
-    v2_blocks = resnet_block==ResnetBlockV2
+    v2_blocks = (resnet_block == ResnetBlockV2)
     train_layers = [[Partial(ResnetInit, is_training=True, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn, v2_block=v2_blocks)]]
     test_layers = [[Partial(ResnetInit, is_training=False, activation_fn=activation_fn, conv_config=initial_conv_config, bn_config=bn_config, with_bn=with_bn,  v2_block=v2_blocks)]]
 
@@ -885,9 +889,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                                     with_bn=with_bn, avg_pool_layer=avg_pool_layer)])
     else:
         train_layers.append(
-            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, v2_block=v2_blocks)])
+            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, v2_block=v2_blocks)])
         test_layers.append(
-            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, v2_block=v2_blocks)])
+            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, v2_block=v2_blocks)])
 
     # train_layers += train_final_layers
     # test_layers += test_final_layers

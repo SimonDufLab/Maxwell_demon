@@ -7,6 +7,7 @@ from haiku import PRNGSequence
 
 import jax
 from jax import random, nn
+from jax.tree_util import Partial
 
 import jax.numpy as jnp
 
@@ -43,22 +44,33 @@ class PreNorm(hk.Module):
 
 
 class FeedForward(hk.Module):
-    def __init__(self, dim, hidden_dim, preceding_activation_name: Optional[str] = None):
+    def __init__(self, dim, hidden_dim, parent: Optional[hk.Module] = None):
         super(FeedForward, self).__init__()
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
 
         self.linear1 = hk.Linear(hidden_dim)
         self.linear2 = hk.Linear(dim)
         self.gelu = GeluActivationModule()
 
     def __call__(self, x):
+        block_name = self.name + "/~/"
         x = self.linear1(x)
         x = self.gelu(x)
         activation = x
         # x = hk.dropout(hk.next_rng_key(), rate=0.0, x=x)
         x = self.linear2(x)
         # x = hk.dropout(hk.next_rng_key(), rate=0.0, x=x)
+
+        lin1_name = block_name + self.linear1.name
+        lin2_name = block_name + self.linear2.name
+        self.activation_mapping[lin1_name] = {"preceding": None,
+                                                "following": block_name + self.gelu.name}
+        self.activation_mapping[lin2_name] = {"preceding": block_name + self.gelu.name,
+                                                "following": None}
         return x, [activation,]
 
     def get_activation_mapping(self):
@@ -104,13 +116,16 @@ class Attention(hk.Module):
 
 
 class TransfLayer(hk.Module):
-    def __init__(self, dim, heads, dim_head, mlp_dim, preceding_activation_name: Optional[str] = None):
+    def __init__(self, dim, heads, dim_head, mlp_dim, parent: Optional[hk.Module] = None):
         super(TransfLayer, self).__init__()
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
 
         self.attn = PreNorm(Attention(dim, heads=heads, dim_head=dim_head))
-        self.ff = FeedForward(dim, mlp_dim, preceding_activation_name=preceding_activation_name)
+        self.ff = FeedForward(dim, mlp_dim, preceding_activation_name=self.preceding_activation_name)
         self.layer_norm = LayerNorm()
 
     def __call__(self, x):
@@ -188,9 +203,9 @@ class VitFirstLayer(hk.Module):
         x += self.pos_embedding[:, :(n + 1)]
         # x = hk.dropout(hk.next_rng_key(), rate=0.0, x=x)
 
-        x = self.init_transformer(x)
+        x, activations = self.init_transformer(x)
 
-        return x
+        return x, activations
 
     def get_activation_mapping(self):
         return self.init_transformer.get_activation_mapping()
@@ -200,10 +215,13 @@ class VitFirstLayer(hk.Module):
 
 
 class VitLastLayer(hk.Module):
-    def __init__(self, *, num_classes, pool='cls', preceding_activation_name: Optional[str] = None,):
+    def __init__(self, *, num_classes, pool='cls', parent: Optional[hk.Module] = None,):
         super(VitLastLayer, self).__init__()
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
 
         self.pool = pool
 
@@ -220,8 +238,21 @@ class VitLastLayer(hk.Module):
 
         x = self.mlp_head(x)
 
-        return x
+        return x, []
 
+    def get_activation_mapping(self):
+        return self.activation_mapping
+
+    def get_last_activation_name(self):
+        return None
+
+
+def vit_base_models(*, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3,
+                 dim_head=64):
+
+    layers = [[Partial(VitFirstLayer, image_size=image_size, patch_size=patch_size, dim=dim, heads=heads, mlp_dim=mlp_dim, pool=pool, dim_head=dim_head)]]
+    for i in range(depth-1):  # Already have 1 transformer layer in VitFirstLayer
+        layers += [Partial(TransfLayer, dim=dim, heads=heads, dim_head=dim_head, mlp_dim=mlp_dim)]
 
 class VitBase(hk.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3,
