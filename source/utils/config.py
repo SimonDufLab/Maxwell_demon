@@ -3,6 +3,7 @@ import jax
 import optax
 import jaxpruner
 from jax.tree_util import Partial
+import jax.numpy as jnp
 
 import utils.utils as utl
 import utils.scores as scores
@@ -18,6 +19,7 @@ from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.vgg16 import vgg16
 from models.resnet import resnet18, resnet50, srigl_resnet18, srigl_resnet50
+
 
 baseline_pruning_method_choice = {
     "WMP": jaxpruner.MagnitudePruning,
@@ -130,6 +132,8 @@ bn_config_choice = {
     "no_scale_and_offset": {"create_scale": False, "create_offset": False, "decay_rate": 0.9},
     "bigger_eps": {"create_scale": True, "create_offset": True, "decay_rate": 0.9, "eps": 1e-3},
     "constant_scale": {"create_scale": False, "create_offset": True, "decay_rate": 0.9, "constant_scale": 10.0},
+    "smale_scale_init": {"create_scale": True, "create_offset": True, "decay_rate": 0.9,
+                         "scale_init": lambda x, y: 0.1*jnp.ones(x, y)},
 }
 
 activation_choice = {
