@@ -688,7 +688,8 @@ class LinearBlockV1(hk.Module):
             v2_block: bool = False,
             name: Optional[str] = None,
             parent: Optional[hk.Module] = None,
-            avg_pool_layer: bool = False):
+            avg_pool_layer: bool = False,
+            disable_final_pooling: bool = False):
         super().__init__(name=name)
         self.activation_mapping = {}
         self.is_training = is_training
@@ -708,6 +709,7 @@ class LinearBlockV1(hk.Module):
         if v2_block:
             self.delayed_activation = parent.get_delayed_activations()
             self.delayed_norm = parent.get_delayed_norm()
+        self.disable_final_pooling = disable_final_pooling
 
     def __call__(self, x):
         activations = []
@@ -717,7 +719,8 @@ class LinearBlockV1(hk.Module):
             x = self.delayed_activation(x)
             activations.append(x)
         block_name = self.name + "/~/"
-        x = self.mean_layer(x)
+        if not self.disable_final_pooling:
+            x = self.mean_layer(x)
         x = self.flatten(x)
         # x = jax.vmap(jnp.ravel, in_axes=0)(x)  # flatten
         x = self.logits_layer(x)
@@ -894,9 +897,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                                     with_bn=with_bn, avg_pool_layer=avg_pool_layer)])
     else:
         train_layers.append(
-            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks)])
+            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling)])
         test_layers.append(
-            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks)])
+            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling)])
 
     # train_layers += train_final_layers
     # test_layers += test_final_layers
@@ -1055,7 +1058,8 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
              strides: Sequence[int] = (1, 2, 2, 2),
              with_bn: bool = True,
              version: str = 'V1',
-             bn_config: dict = base_bn_config,):
+             bn_config: dict = base_bn_config,
+             disable_final_pooling: bool = False,):  # Solely to test impact of pooling on dead neurons in final conv
     assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     if type(size) == int:
@@ -1092,6 +1096,7 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
                         v2_linear_block=False,
                         max_pool_layer=False,
                         avg_pool_layer=True,
+                        disable_final_pooling=disable_final_pooling,
                         **resnet_config)
 
 
