@@ -700,8 +700,10 @@ class LinearBlockV1(hk.Module):
         self.logits_layer = hk.Linear(num_classes, **logits_config)  # TODO: de-hardencode the outputs_dim
         if avg_pool_layer:
             self.mean_layer = hk.AvgPool(window_shape=(1, 4, 4, 1), strides=(1, 4, 4, 1), padding="VALID")
+            self.flatten = jax.vmap(jnp.ravel, in_axes=0)
         else:
             self.mean_layer = Partial(jnp.mean, axis=(1, 2))  # Kind of average pooling layer
+            self.flatten = lambda x: x
         self.v2_block = v2_block
         if v2_block:
             self.delayed_activation = parent.get_delayed_activations()
@@ -716,7 +718,8 @@ class LinearBlockV1(hk.Module):
             activations.append(x)
         block_name = self.name + "/~/"
         x = self.mean_layer(x)
-        # x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
+        x = self.flatten(x)
+        # x = jax.vmap(jnp.ravel, in_axes=0)(x)  # flatten
         x = self.logits_layer(x)
 
         logits_name = block_name + self.logits_layer.name
@@ -827,7 +830,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                  initial_conv_config: Optional[Mapping[str, FloatStrOrBool]] = None,
                  strides: Sequence[int] = (1, 2, 2, 2),
                  max_pool_layer: bool = True,
-                 avg_pool_layer: bool = False):
+                 avg_pool_layer: bool = False,
+                 disable_final_pooling: bool = False,  # Solely to test impact of pooling on dead neurons in final conv
+                 ):
 
     # act = activation_fn
 
@@ -889,9 +894,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                                     with_bn=with_bn, avg_pool_layer=avg_pool_layer)])
     else:
         train_layers.append(
-            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, v2_block=v2_blocks)])
+            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks)])
         test_layers.append(
-            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, v2_block=v2_blocks)])
+            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks)])
 
     # train_layers += train_final_layers
     # test_layers += test_final_layers
