@@ -696,11 +696,15 @@ class LinearBlockV1(hk.Module):
             num_classes: int,
             logits_config: Optional[Mapping[str, FloatStrOrBool]],
             with_bn: bool,
+            bn_config: dict = base_bn_config,
             v2_block: bool = False,
             name: Optional[str] = None,
             parent: Optional[hk.Module] = None,
             avg_pool_layer: bool = False,
-            disable_final_pooling: bool = False):
+            disable_final_pooling: bool = False,
+            pool_proj_channels: Optional[int] = None,  # To replace pooling layer with a projection conv
+            activation_fn: Optional[hk.Module] = None,
+    ):
         super().__init__(name=name)
         self.activation_mapping = {}
         self.is_training = is_training
@@ -710,7 +714,19 @@ class LinearBlockV1(hk.Module):
         else:
             self.preceding_activation_name = None
         self.logits_layer = hk.Linear(num_classes, **logits_config)  # TODO: de-hardencode the outputs_dim
-        if avg_pool_layer:
+        if pool_proj_channels:
+            self.mean_layer = hk.Conv2D(
+                output_channels=pool_proj_channels,
+                kernel_shape=4,
+                stride=4,
+                with_bias=False,
+                padding="VALID",
+                name="final_proj_conv",
+                **default_block_conv_config)
+            self.flatten = jax.vmap(jnp.ravel, in_axes=0)
+            self.proj_activation = activation_fn()
+            self.proj_batchnorm = CustomBatchNorm(name="final_proj_batchnorm", **bn_config)
+        elif avg_pool_layer:
             self.mean_layer = hk.AvgPool(window_shape=(1, 4, 4, 1), strides=(1, 4, 4, 1), padding="VALID")
             self.flatten = jax.vmap(jnp.ravel, in_axes=0)
         else:
@@ -721,6 +737,7 @@ class LinearBlockV1(hk.Module):
             self.delayed_activation = parent.get_delayed_activations()
             self.delayed_norm = parent.get_delayed_norm()
         self.disable_final_pooling = disable_final_pooling
+        self.final_proj_instead_pool = bool(pool_proj_channels)
 
     def __call__(self, x):
         activations = []
@@ -732,13 +749,30 @@ class LinearBlockV1(hk.Module):
         block_name = self.name + "/~/"
         if not self.disable_final_pooling:
             x = self.mean_layer(x)
+            if self.final_proj_instead_pool:
+                proj_name = block_name + self.mean_layer.name
+                self.activation_mapping[proj_name] = {"preceding": self.preceding_activation_name,
+                                                        "following": block_name + self.proj_activation.name}
+                self.activation_mapping[block_name + self.proj_activation.name] = {"preceding": None,
+                                                                                   "following": block_name + self.proj_activation.name}
+                if self.with_bn:
+                    x = self.proj_batchnorm(x, is_training=self.is_training)
+                    bn_name = block_name + self.proj_batchnorm.name
+                    self.activation_mapping[bn_name] = {"preceding": None,
+                                                        "following": block_name + self.proj_activation.name}
+                x = self.proj_activation(x)
+                activations.append(x)
         x = self.flatten(x)
         # x = jax.vmap(jnp.ravel, in_axes=0)(x)  # flatten
         x = self.logits_layer(x)
 
         logits_name = block_name + self.logits_layer.name
-        self.activation_mapping[logits_name] = {"preceding": self.preceding_activation_name,
-                                                "following": None}
+        if self.final_proj_instead_pool:
+            self.activation_mapping[logits_name] = {"preceding": block_name + self.proj_activation.name,
+                                                    "following": None}
+        else:
+            self.activation_mapping[logits_name] = {"preceding": self.preceding_activation_name,
+                                                    "following": None}
         return x, activations
 
     def get_activation_mapping(self):
@@ -847,6 +881,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                  avg_pool_layer: bool = False,
                  disable_final_pooling: bool = False,  # Solely to test impact of pooling on dead neurons in final conv
                  avg_in_final_block: bool = False,
+                 proj_instead_pool: bool = False,
                  ):
 
     # act = activation_fn
@@ -907,6 +942,10 @@ def resnet_model(blocks_per_group: Sequence[int],
 
     if avg_in_final_block:
         disable_final_pooling = True
+    if proj_instead_pool:
+        final_proj_channels = channels_per_group[-1][-1]
+    else:
+        final_proj_channels = None
 
     if v2_linear_block:
         train_layers.append([Partial(LinearBlockV2, is_training=True, num_classes=num_classes, activation_fn=activation_fn,
@@ -917,9 +956,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                                     with_bn=with_bn, avg_pool_layer=avg_pool_layer)])
     else:
         train_layers.append(
-            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling)])
+            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, bn_config=bn_config, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling, pool_proj_channels=final_proj_channels, activation_fn=activation_fn)])
         test_layers.append(
-            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling)])
+            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, bn_config=bn_config, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling, pool_proj_channels=final_proj_channels, activation_fn=activation_fn)])
 
     # train_layers += train_final_layers
     # test_layers += test_final_layers
@@ -1083,8 +1122,10 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
              with_bn: bool = True,
              version: str = 'V1',
              bn_config: dict = base_bn_config,
-             disable_final_pooling: bool = False,
-             avg_in_final_block: bool = False,):  # Solely to test impact of pooling on dead neurons in final conv
+             disable_final_pooling: bool = False,  # Solely to test impact of pooling on dead neurons in final conv
+             avg_in_final_block: bool = False,
+             proj_instead_pool: bool = False,
+                   ):
     assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     if type(size) == int:
@@ -1123,6 +1164,7 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
                         avg_pool_layer=True,
                         disable_final_pooling=disable_final_pooling,
                         avg_in_final_block=avg_in_final_block,
+                        proj_instead_pool=proj_instead_pool,
                         **resnet_config)
 
 
