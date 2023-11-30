@@ -99,6 +99,7 @@ architecture_choice = {
     "vgg16": None,  # TODO: Encode non-bn version of vgg16
     "resnet18": Partial(resnet18, with_bn=False),
     "srigl_resnet18": Partial(srigl_resnet18, with_bn=False),
+    "srigl_resnet18_pool_in_block": Partial(srigl_resnet18, with_bn=False, avg_in_final_block=True),
     "srigl_resnet18_v2": Partial(srigl_resnet18, with_bn=False, version='V2'),
     "srigl_resnet18_v3": Partial(srigl_resnet18, with_bn=False, version='V3'),
     "srigl_resnet18_nopool": Partial(srigl_resnet18, with_bn=False, disable_final_pooling=True),
@@ -121,6 +122,7 @@ bn_architecture_choice = {
     "resnet18": resnet18,
     "resnet19": Partial(resnet18, v2_linear_block=True),
     "srigl_resnet18": srigl_resnet18,
+    "srigl_resnet18_pool_in_block": Partial(srigl_resnet18, avg_in_final_block=True),
     "srigl_resnet18_v2": Partial(srigl_resnet18, version='V2'),
     "srigl_resnet18_v3": Partial(srigl_resnet18, version='V3'),
     "srigl_resnet18_nopool": Partial(srigl_resnet18, disable_final_pooling=True),  # Testing purpose, do not use elsewhere
