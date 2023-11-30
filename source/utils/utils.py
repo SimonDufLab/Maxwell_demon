@@ -2499,10 +2499,13 @@ class MaxPool(hk.MaxPool):
 
     def __init__(self, window_shape: Union[int, Sequence[int]], strides: Union[int, Sequence[int]], padding: str,
                channel_axis: Optional[int] = -1, name: Optional[str] = None,
-               preceding_activation_name: Optional[str] = None, ):
+               parent: Optional[hk.Module] = None, ):
         super().__init__(window_shape=window_shape, strides=strides, padding=padding,
                          channel_axis=channel_axis, name=name)
-        self.preceding_activations_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.activation_mapping = {}
 
     def get_activation_mapping(self):
@@ -2518,10 +2521,13 @@ class AvgPool(hk.AvgPool):
 
     def __init__(self, window_shape: Union[int, Sequence[int]], strides: Union[int, Sequence[int]], padding: str,
                channel_axis: Optional[int] = -1, name: Optional[str] = None,
-               preceding_activation_name: Optional[str] = None, ):
+               parent: Optional[hk.Module] = None, ):
         super().__init__(window_shape=window_shape, strides=strides, padding=padding,
                          channel_axis=channel_axis, name=name)
-        self.preceding_activations_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.activation_mapping = {}
 
     def get_activation_mapping(self):
@@ -2827,6 +2833,7 @@ def jaxpruner_checkpoint_exp(run_state: JaxPrunerRunState, params, state, opt_st
 
     # Update weights
     save_all_pytree_states(run_state["model_dir"], params, state, opt_state)
+
 
 def signal_handler(signum: int, frame: Optional[FrameType]):  # Taken from: https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
     """Called before the job gets pre-empted or reaches the time-limit.

@@ -234,6 +234,7 @@ class ResnetBlockV1(hk.Module):
             bn_config: dict = base_bn_config,
             name: Optional[str] = None,
             parent: Optional[hk.Module] = None,
+            final_block: bool = False,
     ):
         super().__init__(name=name)
         self.activation_mapping = {}
@@ -300,6 +301,8 @@ class ResnetBlockV1(hk.Module):
         self.is_training = is_training
         self.with_bn = with_bn
 
+        self.final_block = final_block
+
     def __call__(self, inputs):
         out = shortcut = inputs
         activations = []
@@ -323,6 +326,9 @@ class ResnetBlockV1(hk.Module):
             self.activation_mapping[block_name + act_i.name] = {"preceding": None,
                                                                 "following": block_name + act_i.name}
             out = conv_i(out)
+            if self.final_block:
+                out = jnp.mean(out, axis=(1, 2), keepdims=True)
+                shortcut = jnp.mean(shortcut, axis=(1, 2), keepdims=True)
             if self.with_bn:
                 out = bn_i(out, self.is_training)
                 bn_name = block_name+bn_i.name
@@ -643,15 +649,18 @@ class ResnetInit(hk.Module):
 
 
 def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Sequence[int]], activation_fn: hk.Module, bottleneck: bool,
-                use_projection: bool, with_bn: bool, bn_config: dict, resnet_block: hk.Module = ResnetBlockV1):
+                use_projection: bool, with_bn: bool, bn_config: dict, resnet_block: hk.Module = ResnetBlockV1, avg_in_final_block=False):
     """Adapted from: https://github.com/deepmind/dm-haiku/blob/d6e3c2085253735c3179018be495ebabf1e6b17c/
     haiku/_src/nets/resnet.py#L200"""
 
     train_layers = []
     test_layers = []
     layer_per_block = len(channels)//num_blocks
+    avg_flag = False
 
     for i in range(num_blocks):
+        if avg_in_final_block and (i == (num_blocks - 1)):
+            avg_flag = True
         train_layers.append(
             [Partial(resnet_block, channels=channels[i*layer_per_block:(i+1)*layer_per_block],
                      stride=(1 if i else stride),
@@ -660,7 +669,8 @@ def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Seq
                      bottleneck=bottleneck,
                      with_bn=with_bn,
                      bn_config=bn_config,
-                     is_training=True,)])
+                     is_training=True,
+                     final_block=avg_flag)])
                      # name=f"block_{i}")])
         test_layers.append(
             [Partial(resnet_block, channels=channels[i*layer_per_block:(i+1)*layer_per_block],
@@ -670,7 +680,8 @@ def block_group(channels: Sequence[int], num_blocks: int, stride: Union[int, Seq
                      bottleneck=bottleneck,
                      with_bn=with_bn,
                      bn_config=bn_config,
-                     is_training=False,)])
+                     is_training=False,
+                     final_block=avg_flag)])
                      # name=f"block_{i}")])
 
     return train_layers, test_layers
@@ -835,6 +846,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                  max_pool_layer: bool = True,
                  avg_pool_layer: bool = False,
                  disable_final_pooling: bool = False,  # Solely to test impact of pooling on dead neurons in final conv
+                 avg_in_final_block: bool = False,
                  ):
 
     # act = activation_fn
@@ -853,6 +865,10 @@ def resnet_model(blocks_per_group: Sequence[int],
     #                     Partial(Partial(hk.BatchNorm, name="initial_batchnorm", **bn_config), is_training=False), act])
 
     for i, stride in enumerate(strides):
+        if (i == (len(strides)-1)) and avg_in_final_block:
+            avg_flag = True
+        else:
+            avg_flag = False
         block_train_layers, block_test_layers = block_group(channels=channels_per_group[i],
                                                             num_blocks=blocks_per_group[i],
                                                             stride=stride,
@@ -861,7 +877,8 @@ def resnet_model(blocks_per_group: Sequence[int],
                                                             use_projection=use_projection[i],
                                                             with_bn=with_bn,
                                                             bn_config=bn_config,
-                                                            resnet_block=resnet_block)
+                                                            resnet_block=resnet_block,
+                                                            avg_in_final_block=avg_flag)
         if i == 0 and max_pool_layer:
             max_pool = Partial(MaxPool, window_shape=(1, 3, 3, 1), strides=(1, 2, 2, 1), padding="SAME")
             block_train_layers[0] = [max_pool] + block_train_layers[0]
@@ -887,6 +904,9 @@ def resnet_model(blocks_per_group: Sequence[int],
     #     test_final_layers = [
     #         [layer_mean, Partial(hk.Linear, **default_fc_layer_config), act],
     #         [Partial(hk.Linear, num_classes, **logits_config)]]  # TODO: de-hardencode the outputs_dim
+
+    if avg_in_final_block:
+        disable_final_pooling = True
 
     if v2_linear_block:
         train_layers.append([Partial(LinearBlockV2, is_training=True, num_classes=num_classes, activation_fn=activation_fn,
@@ -930,7 +950,8 @@ def resnet18(size: Union[int, Sequence[int]],
              with_bn: bool = True,
              bn_config: dict = base_bn_config,
              version: str = 'V1',
-             v2_linear_block=False):
+             v2_linear_block: bool = False,
+             avg_in_final_block: bool = False,):
 
     assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
@@ -978,6 +999,7 @@ def resnet18(size: Union[int, Sequence[int]],
                         with_bn=with_bn,
                         resnet_block=resnet_block_type,
                         v2_linear_block=v2_linear_block,
+                        avg_in_final_block=avg_in_final_block,
                         **resnet_config)
 
 
@@ -990,7 +1012,8 @@ def resnet50(size: Union[int, Sequence[int]],
              with_bn: bool = True,
              bn_config: dict = base_bn_config,
              version: str = 'V1',
-             v2_lin_block: bool = False):
+             v2_lin_block: bool = False,
+             avg_in_final_block: bool = False,):
 
     assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
@@ -1035,6 +1058,7 @@ def resnet50(size: Union[int, Sequence[int]],
                         with_bn=with_bn,
                         resnet_block=resnet_block_type,
                         v2_linear_block=v2_lin_block,
+                        avg_in_final_block=avg_in_final_block,
                         **resnet_config)
 
 
@@ -1059,7 +1083,8 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
              with_bn: bool = True,
              version: str = 'V1',
              bn_config: dict = base_bn_config,
-             disable_final_pooling: bool = False,):  # Solely to test impact of pooling on dead neurons in final conv
+             disable_final_pooling: bool = False,
+             avg_in_final_block: bool = False,):  # Solely to test impact of pooling on dead neurons in final conv
     assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     if type(size) == int:
@@ -1097,6 +1122,7 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
                         max_pool_layer=False,
                         avg_pool_layer=True,
                         disable_final_pooling=disable_final_pooling,
+                        avg_in_final_block=avg_in_final_block,
                         **resnet_config)
 
 
@@ -1108,7 +1134,8 @@ def srigl_resnet50(size: Union[int, Sequence[int]],
              strides: Sequence[int] = (1, 2, 2, 2),
              with_bn: bool = True,
              version: str = 'V1',
-             bn_config: dict = base_bn_config):
+             bn_config: dict = base_bn_config,
+             avg_in_final_block: bool =False,):
     assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     blocks_per_group = [3, 4, 6, 3]
@@ -1146,5 +1173,6 @@ def srigl_resnet50(size: Union[int, Sequence[int]],
                         v2_linear_block=False,
                         max_pool_layer=False,
                         avg_pool_layer=True,
+                        avg_in_final_block=avg_in_final_block,
                         **resnet_config)
 
