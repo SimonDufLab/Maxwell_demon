@@ -2865,6 +2865,19 @@ def get_total_neurons(architecture, sizes):
             sizes = [sizes[0], sizes[0], 2 * sizes[0], 2 * sizes[0], 4 * sizes[0], 4 * sizes[0], 4 * sizes[0],
                      8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 8 * sizes[0], 16 * sizes[0], sizes[1],
                      sizes[1], sizes[1]]
+    elif "resnet18_proj_instead" in architecture:
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes,
+                     sizes, sizes,
+                     sizes, sizes,
+                     2*sizes, 2*sizes,
+                     2*sizes, 2*sizes,
+                     4 * sizes, 4 * sizes,
+                     4 * sizes, 4 * sizes,
+                     8 * sizes, 8 * sizes,
+                     8 * sizes, 8 * sizes,
+                     8 * sizes,
+                     ]
     elif "resnet18" in architecture:
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes,

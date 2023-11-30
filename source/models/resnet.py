@@ -881,7 +881,7 @@ def resnet_model(blocks_per_group: Sequence[int],
                  avg_pool_layer: bool = False,
                  disable_final_pooling: bool = False,  # Solely to test impact of pooling on dead neurons in final conv
                  avg_in_final_block: bool = False,
-                 proj_instead_pool: bool = False,
+                 pool_proj_channels: Optional[int] = None,  # Number of channels in final proj conv
                  ):
 
     # act = activation_fn
@@ -942,10 +942,6 @@ def resnet_model(blocks_per_group: Sequence[int],
 
     if avg_in_final_block:
         disable_final_pooling = True
-    if proj_instead_pool:
-        final_proj_channels = channels_per_group[-1][-1]
-    else:
-        final_proj_channels = None
 
     if v2_linear_block:
         train_layers.append([Partial(LinearBlockV2, is_training=True, num_classes=num_classes, activation_fn=activation_fn,
@@ -956,9 +952,9 @@ def resnet_model(blocks_per_group: Sequence[int],
                                     with_bn=with_bn, avg_pool_layer=avg_pool_layer)])
     else:
         train_layers.append(
-            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, bn_config=bn_config, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling, pool_proj_channels=final_proj_channels, activation_fn=activation_fn)])
+            [Partial(LinearBlockV1, is_training=True, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, bn_config=bn_config, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling, pool_proj_channels=pool_proj_channels, activation_fn=activation_fn)])
         test_layers.append(
-            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, bn_config=bn_config, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling, pool_proj_channels=final_proj_channels, activation_fn=activation_fn)])
+            [Partial(LinearBlockV1, is_training=False, num_classes=num_classes, logits_config=logits_config, with_bn=with_bn, bn_config=bn_config, avg_pool_layer=avg_pool_layer, v2_block=v2_blocks, disable_final_pooling=disable_final_pooling, pool_proj_channels=pool_proj_channels, activation_fn=activation_fn)])
 
     # train_layers += train_final_layers
     # test_layers += test_final_layers
@@ -1128,12 +1124,19 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
                    ):
     assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
+    pool_proj_channels = None
     if type(size) == int:
         init_conv_size = size
         sizes = [[size*i]*4 for i in [1, 2, 4, 8]]
+        if proj_instead_pool:
+            pool_proj_channels = size*8
     else:
         init_conv_size = size[0]
-        sizes = size[1:]
+        if proj_instead_pool:
+            sizes = size[1:-1]
+            pool_proj_channels = size[-1]
+        else:
+            sizes = size[1:]
         sizes = [sizes[i:i+4] for i in range(0, 16, 4)]
 
     resnet_config = {
@@ -1164,7 +1167,7 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
                         avg_pool_layer=True,
                         disable_final_pooling=disable_final_pooling,
                         avg_in_final_block=avg_in_final_block,
-                        proj_instead_pool=proj_instead_pool,
+                        pool_proj_channels=pool_proj_channels,
                         **resnet_config)
 
 
@@ -1177,7 +1180,7 @@ def srigl_resnet50(size: Union[int, Sequence[int]],
              with_bn: bool = True,
              version: str = 'V1',
              bn_config: dict = base_bn_config,
-             avg_in_final_block: bool =False,):
+             avg_in_final_block: bool = False,):
     assert version in ["V1", "V2", "V3"], "version must be either V1 or V2 or V3"
 
     blocks_per_group = [3, 4, 6, 3]
