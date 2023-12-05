@@ -104,7 +104,8 @@ architecture_choice = {
     "srigl_resnet18_v2": Partial(srigl_resnet18, with_bn=False, version='V2'),
     "srigl_resnet18_v3": Partial(srigl_resnet18, with_bn=False, version='V3'),
     "srigl_resnet18_nopool": Partial(srigl_resnet18, with_bn=False, disable_final_pooling=True),
-    # "resnet18_v2": Partial(resnet18, with_bn=False, version="V2"),  # TODO: support acti_map
+    "srigl_resnet18_hk_init": Partial(srigl_resnet18, with_bn=False, initializer="hk_default"),
+    "srigl_resnet18_pt_init": Partial(srigl_resnet18, with_bn=False, initializer="pt_default"),
     "resnet50": Partial(resnet50, with_bn=False),
     "srigl_resnet50": Partial(srigl_resnet50, with_bn=False)
 }
@@ -128,7 +129,8 @@ bn_architecture_choice = {
     "srigl_resnet18_v2": Partial(srigl_resnet18, version='V2'),
     "srigl_resnet18_v3": Partial(srigl_resnet18, version='V3'),
     "srigl_resnet18_nopool": Partial(srigl_resnet18, disable_final_pooling=True),  # Testing purpose, do not use elsewhere
-    # "resnet18_v2": Partial(resnet18, version="V2"), # TODO: support acti_map
+    "srigl_resnet18_hk_init": Partial(srigl_resnet18, initializer="hk_default"),
+    "srigl_resnet18_pt_init": Partial(srigl_resnet18, initializer="pt_default"),
     "resnet50": resnet50,
     "srigl_resnet50": srigl_resnet50,
 }
