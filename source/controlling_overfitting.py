@@ -173,6 +173,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.prune_at_end = literal_eval(exp_config.prune_at_end)
     if type(exp_config.lr_decay_steps) == str:
         exp_config.lr_decay_steps = literal_eval(exp_config.lr_decay_steps)
+    # if exp_config.add_noise:
+    #     exp_config.regularizer = None  # Disable regularizer when noise is used to promote neurons death
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
@@ -833,8 +835,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                     params, state, opt_state = update_fn(params, state, opt_state, next(train),
                                                          _reg_param=decaying_reg_param)
                 else:
-                    noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
-                    noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
+                    # noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
+                    # noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
+                    noise_var = reg_sched(step)
                     params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train),
                                                                     noise_var,
                                                                     noise_key, _reg_param=decaying_reg_param)

@@ -1102,7 +1102,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     key, next_key = jax.random.split(_key)
                     flat_grads, unravel_fn = ravel_pytree(grads)
                     added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
-                    added_noise = added_noise * (jnp.abs(flat_grads) >= 1e-8)  # Only apply noise to weights with gradient!=0
+                    added_noise = added_noise * (jnp.abs(flat_grads) >= 0)  # Only apply noise to weights with gradient!=0
                     # noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     flat_updates, _ = ravel_pytree(updates)
