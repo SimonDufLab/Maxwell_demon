@@ -803,10 +803,10 @@ def keep_offset_only(dict_params):
 
 
 def keep_scale_only(dict_params):
-    def offset_selection(sub_dict):
+    def scale_selection(sub_dict):
         return {k: v for k, v in sub_dict.items() if "scale" in k}
 
-    return {k: offset_selection(v) for k, v in dict_params.items()}
+    return {k: scale_selection(v) for k, v in dict_params.items()}
 
 
 def keep_bn_params_only(dict_params):

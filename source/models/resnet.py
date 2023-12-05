@@ -963,15 +963,16 @@ def resnet_model(blocks_per_group: Sequence[int],
 
 
 kaiming_normal = hk.initializers.VarianceScaling(2.0, 'fan_in', "truncated_normal")
+pytorch_default_init = hk.initializers.VarianceScaling(1/3, 'fan_in', 'uniform')
 # default_logits_config = {"w_init": jnp.zeros, "name": "logits"}
 default_logits_config = {"name": "logits"}
 default_initial_conv_config = {"kernel_shape": 7,
                                "stride": 2,
                                "with_bias": False,
                                "padding": "SAME",
-                               "name": "initial_conv",
-                               "w_init": kaiming_normal}
-default_block_conv_config = {"w_init": kaiming_normal}
+                               "name": "initial_conv", }
+                               # "w_init": kaiming_normal}
+default_block_conv_config = {} #{"w_init": kaiming_normal}
 default_fc_layer_config = {"with_bias": True, "w_init": kaiming_normal}
 default_fc2_layer_config = {"with_bias": True, "w_init": kaiming_normal}
 
@@ -1118,6 +1119,7 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
              with_bn: bool = True,
              version: str = 'V1',
              bn_config: dict = base_bn_config,
+             initializer: str = 'kaiming_conv',
              disable_final_pooling: bool = False,  # Solely to test impact of pooling on dead neurons in final conv
              avg_in_final_block: bool = False,
              proj_instead_pool: bool = False,
@@ -1138,6 +1140,21 @@ def srigl_resnet18(size: Union[int, Sequence[int]],
         else:
             sizes = size[1:]
         sizes = [sizes[i:i+4] for i in range(0, 16, 4)]
+
+    if initializer == "kaiming_conv":
+        default_block_conv_config['w_init'] = kaiming_normal
+        default_initial_conv_config['w_init'] = kaiming_normal
+    elif initializer == "hk_default":
+        default_logits_config['w_init'] = None
+        default_block_conv_config['w_init'] = None
+        default_initial_conv_config['w_init'] = None
+    elif initializer == "pt_default":
+        default_logits_config['w_init'] = pytorch_default_init
+        default_block_conv_config['w_init'] = pytorch_default_init
+        default_initial_conv_config['w_init'] = pytorch_default_init
+        default_logits_config['b_init'] = pytorch_default_init
+    else:
+        raise ValueError("initializer not supported")
 
     resnet_config = {
                     "blocks_per_group": (2, 2, 2, 2),
