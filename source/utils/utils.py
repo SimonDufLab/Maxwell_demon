@@ -2512,7 +2512,7 @@ class MaxPool(hk.MaxPool):
         return self.activation_mapping
 
     def get_last_activation_name(self):
-        return self.preceding_activations_name
+        return self.preceding_activation_name
 
 
 class AvgPool(hk.AvgPool):
