@@ -97,7 +97,7 @@ class ExpConfig:
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
     noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones
     noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
-    noise_eta: float = 0.01
+    noise_eta: float = 0.01  # Variance of added noise; can only be used with a reg_param_schedule that it will match
     noise_gamma: float = 0.0
     noise_seed: int = 1
     dropout_rate: float = 0
@@ -654,7 +654,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         if exp_config.gradient_clipping:
             opt_chain.append(optax.clip(10))
 
-        if 'noisy' in exp_config.optimizer:
+        if 'noisy' in exp_config.optimizer:  # TODO: kill this
             opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
                                        gamma=exp_config.noise_gamma))
         else:
@@ -746,6 +746,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             else:
                 sched_end = exp_config.training_steps
             reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, reg_param)
+            if exp_config.add_noise:
+                noise_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, exp_config.noise_eta)
         if exp_config.shifted_relu:
             shift_relu_sched = utl.linear_warmup(exp_config.reg_param_span, exp_config.shifted_relu)
 
@@ -837,7 +839,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 else:
                     # noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
                     # noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
-                    noise_var = reg_sched(step)
+                    noise_var = noise_sched(step)
                     params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train),
                                                                     noise_var,
                                                                     noise_key, _reg_param=decaying_reg_param)
