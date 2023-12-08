@@ -816,6 +816,13 @@ def keep_bn_params_only(dict_params):
     return {k: bn_selection(v) for k, v in dict_params.items()}
 
 
+def zero_out_bn_params(dict_params):
+    def bn_selection(sub_dict):
+        return {k: (v*0 if ("offset" in k or "scale" in k) else v) for k, v in sub_dict.items()}
+
+    return {k: bn_selection(v) for k, v in dict_params.items()}
+
+
 def exclude_bn_scale_from_params(dict_params):
     def exclude_scale(sub_dict):
         return {k: v for k, v in sub_dict.items() if "scale" not in k}
@@ -1011,7 +1018,7 @@ def grad_normalisation_per_layer(param_leaf):
 
 def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only=False,
                                     norm_grad=False, with_dropout=False, return_grad=False,
-                                    modulate_via_gate_grad=False, acti_map=None):
+                                    modulate_via_gate_grad=False, acti_map=None, perturb=0, init_fn=None):
     """Learning rule (stochastic gradient descent)."""
 
     if modulate_via_gate_grad:
@@ -1053,7 +1060,22 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
 
     else:
         if not noise:
-            if return_grad:
+            if perturb:
+                @jax.jit
+                def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                            _batch: Batch, _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
+                    key, next_key = jax.random.split(_key)
+                    perturbed_params = jax.tree_map(jnp.add, _params, jax.tree_map(lambda x: x*perturb, zero_out_bn_params(init_fn(key))))  # Don't want to perturb normalisation layers params
+                    if modulate_via_gate_grad:
+                        grads, new_state = modulated_grad_from_gate_stat(perturbed_params, _state, _batch)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(perturbed_params, _state, _batch, _reg_param)
+                    if norm_grad:
+                        grads = jax.tree_map(grad_normalisation_per_layer, grads)
+                    updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+                    new_params = optax.apply_updates(_params, updates)
+                    return new_params, new_state, _opt_state, next_key
+            elif return_grad:
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
                             _batch: Batch, _reg_param: float = 0.0) -> Tuple[dict, hk.Params, Any, OptState]:

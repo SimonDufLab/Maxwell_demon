@@ -101,6 +101,7 @@ class ExpConfig:
     noise_gamma: float = 0.0
     noise_seed: int = 1
     dropout_rate: float = 0
+    perturb_param: float = 0  # Perturbation parameter for rnadam
     with_rng_seed: int = 428
     linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
     measure_linear_perf: bool = False  # Measure performance over the linear network without changing activation
@@ -222,7 +223,10 @@ def run_exp(exp_config: ExpConfig) -> None:
         aim_hash = None
     
     # Path for logs
-    log_path = "./ICLR2023_main3"  # "./preempt_test"  #
+    if exp_config.perturb_param:
+        log_path = "./ICLR2023_rnadam"
+    else:
+        log_path = "./ICLR2023_main3"  # "./preempt_test"  #
     if exp_config.dataset == "imagenet":
         log_path = "./imagenet_exps"
     # Logger config
@@ -362,7 +366,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                acti_map=acti_map)
+                                                                acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
 
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                     (not (step % (exp_config.training_steps - 1) == 0)) and (not exp_config.reg_param_schedule):
@@ -387,7 +391,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                acti_map=acti_map)
+                                                                acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
 
             if step % exp_config.record_freq == 0:
                 train_loss = test_loss_fn(params, state, next(train_eval), _reg_param=decaying_reg_param)
@@ -538,7 +542,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                     exp_config.noise_imp, exp_config.noise_live_only,
                                                                     with_dropout=with_dropout,
                                                                     modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                    acti_map=acti_map)
+                                                                    acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
                     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                     # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                     #                                                  epsilon=exp_config.epsilon_close,
@@ -583,7 +587,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.noise_live_only, with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                acti_map=acti_map)
+                                                                acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
                 death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                 # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                 #                                                  epsilon=exp_config.epsilon_close,
@@ -609,6 +613,11 @@ def run_exp(exp_config: ExpConfig) -> None:
             new_sizes = size
         architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
         net, raw_net = build_models(*architecture, with_dropout=with_dropout)
+
+        ones_init = jnp.ones_like(next(train)[0]), jnp.ones_like(next(train)[1])
+
+        def init_fn(rdm_key):
+            return net.init(rdm_key, ones_init)[0]
 
         dropout_key = jax.random.PRNGKey(exp_config.with_rng_seed)
 
@@ -717,7 +726,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                         exp_config.noise_live_only, with_dropout=with_dropout,
                                                         modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                        acti_map=acti_map)
+                                                        acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
@@ -828,7 +837,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # jax.clear_backends()
                 gc.collect()
             # Train step over single batch
-            if with_dropout:
+            if with_dropout or exp_config.perturb_param:
                 params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
                                                                   dropout_key,
                                                                   _reg_param=decaying_reg_param)
