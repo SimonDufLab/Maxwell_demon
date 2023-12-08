@@ -3048,3 +3048,12 @@ def jax_deep_copy(pytree):
     """ALERT: copy.deepcopy relies on pickle which creates the copy on host before transfer to device.
     This function tries to avoid potential memory issue implied by this procedure."""
     return jax.tree_util.tree_map(lambda x: jax.device_put(x), pytree)
+
+
+def get_init_fn(net, dummy_data):
+    """ Return an init_fn function for the given net and data that only depends on a random key"""
+
+    def init_fn(rdm_key):
+        return net.init(rdm_key, dummy_data)[0]  # .init() return the tuple (params, state)
+
+    return init_fn
