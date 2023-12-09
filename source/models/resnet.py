@@ -130,6 +130,7 @@ class CustomBatchNorm(hk.BatchNorm):
 
 def init_identity_conv(shape, dtype):
     eye = jnp.eye(shape[-1])
+    eye = eye[:shape[-2], :shape[-1]]  # Do nothing when truly initialized, but allows init_fn() of rnadam to work
     return eye.reshape(shape).astype(dtype)
 
 
