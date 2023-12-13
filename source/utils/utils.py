@@ -2772,6 +2772,7 @@ class RunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_
     best_total_neurons: Optional[int]  # Number of remaining neurons for the best run so far
     training_time: Optional[Any]  # Total training time for the run
     pruned_flag: Optional[bool]  # For structure_baseline experiments; recording if pruning happened or not
+    cumulative_dead_neurons: Optional[Any]  # For dead neurons overlap
 
 
 class JaxPrunerRunState(TypedDict):  # Taken from https://docs.mila.quebec/examples/good_practices/checkpointing/index.html
@@ -2822,7 +2823,7 @@ def load_run_state(checkpoint_dir: Path) -> Optional[RunState]: # Taken from htt
 
 def checkpoint_exp(run_state: RunState, params, state, opt_state, curr_epoch: int, curr_step: int,
                    curr_arch_sizes, curr_starting_size, curr_reg_param, dropout_key, decaying_reg_param,
-                   best_acc, best_params_count, best_total_neurons, training_time):
+                   best_acc, best_params_count, best_total_neurons, training_time, dead_neurons_union):
     run_state["epoch"] = curr_epoch
     run_state["training_step"] = curr_step
     run_state["curr_arch_sizes"] = curr_arch_sizes
@@ -2834,6 +2835,7 @@ def checkpoint_exp(run_state: RunState, params, state, opt_state, curr_epoch: in
     run_state["best_params_count"] = best_params_count
     run_state["best_total_neurons"] = best_total_neurons
     run_state["training_time"] = training_time
+    run_state["cumulative_dead_neurons"] = dead_neurons_union
 
     with open(os.path.join(run_state["model_dir"], "checkpoint_run_state.pkl"), "wb") as f:
         pickle.dump(run_state, f)
