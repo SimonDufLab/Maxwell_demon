@@ -211,7 +211,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
                                      decaying_reg_param=exp_config.reg_params[0],
                                      best_accuracy=0.0, best_params_count=None, best_total_neurons=None,
-                                     training_time=0.0)
+                                     training_time=0.0, cumulative_dead_neurons=None)
             # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
             #     pickle.dump(run_state, f)
 
@@ -770,8 +770,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         else:
             add_steps = 0
 
-        dead_neurons_union = death_check_fn(params, state, next(test_death))
-
         if load_from_preexisting_model_state:
             starting_step = run_state["training_step"]
             decaying_reg_param = run_state["decaying_reg_param"]
@@ -781,11 +779,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                 best_params_count = run_state["best_params_count"]
                 best_total_neurons = run_state["best_total_neurons"]
                 training_time = run_state["training_time"]
+                dead_neurons_union = run_state["cumulative_dead_neurons"]
             except KeyError:
                 best_acc = 0
                 best_params_count = initial_params_count
                 best_total_neurons = init_total_neurons
                 training_time = 0
+                dead_neurons_union = None
             load_from_preexisting_model_state = False
         else:
             starting_step = 0
@@ -793,6 +793,10 @@ def run_exp(exp_config: ExpConfig) -> None:
             best_params_count = initial_params_count
             best_total_neurons = init_total_neurons
             training_time = 0
+            if not exp_config.dynamic_pruning:
+                dead_neurons_union = death_check_fn(params, state, next(test_death))
+            else:
+                dead_neurons_union = None
 
         print(f"Continuing training from step {starting_step} and reg_param {reg_param}")
         training_timer = time.time()
@@ -824,7 +828,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                    curr_reg_param=reg_param, dropout_key=dropout_key,
                                    decaying_reg_param=decaying_reg_param, best_acc=best_acc,
                                    best_params_count=best_params_count, best_total_neurons=best_total_neurons,
-                                   training_time=training_time)
+                                   training_time=training_time, dead_neurons_union=dead_neurons_union)
                 training_timer = time.time()
                 print(
                     f"Checkpointing performed in: {timedelta(seconds=time.time() - chckpt_init_time)}")
