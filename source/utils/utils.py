@@ -1219,8 +1219,8 @@ def dict_split(container, _len=2):
     """Split back the containers into their specific components, returning them as a tuple"""
     if not container:  # Empty case
         return (container, ) * _len
-    treedef = jax.tree_structure(container)
-    leaves = jax.tree_leaves(container)
+    treedef = jax.tree_util.tree_structure(container)
+    leaves = jax.tree_util.tree_leaves(container)
     _to = leaves[0].shape[0]
 
     leaves = jax.tree_map(Partial(jnp.split, indices_or_sections=_to), leaves)
@@ -2931,7 +2931,7 @@ def get_total_neurons(architecture, sizes):
                      ]
     elif "resnet50" in architecture:
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
-            sizes = [sizes] + [sizes, sizes, sizes*4]*3 + [2*sizes, 2*sizes, 2*sizes*4]*4 + [4*sizes, 4*sizes, 4*sizes*4]*6 + [8*sizes, 8*sizes, 8*sizes*4]*3 + [16*sizes]
+            sizes = [sizes] + [sizes, sizes, sizes*4]*3 + [2*sizes, 2*sizes, 2*sizes*4]*4 + [4*sizes, 4*sizes, 4*sizes*4]*6 + [8*sizes, 8*sizes, 8*sizes*4]*3  # + [16*sizes]
     else:
         raise NotImplementedError("get_size not implemented for current architecture")
 
