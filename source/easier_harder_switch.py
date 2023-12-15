@@ -19,6 +19,7 @@ from jax.tree_util import Partial
 import utils.utils as utl
 from utils.utils import build_models
 from utils.config import activation_choice, architecture_choice, dataset_choice, optimizer_choice, regularizer_choice
+from utils.config import pick_architecture, bn_config_choice
 from copy import deepcopy
 
 # Experience name -> for aim logger
@@ -37,6 +38,8 @@ class ExpConfig:
     eval_batch_size: int = 512
     death_batch_size: int = 512
     architecture: str = "mlp_3"
+    with_bn: bool = False  # Add batchnorm layers or not in the models
+    bn_config: str = "default"  # Different configs for bn; default have offset and scale trainable params
     size: Any = 256  # Number of hidden units in the different layers (tuple for convnet)
     optimizer: str = "adam"
     wd_param: Optional[float] = None
@@ -95,6 +98,16 @@ def run_exp(exp_config: ExpConfig) -> None:
             if item == 'None':
                 kept_classes[i] = None
         exp_config.kept_classes = tuple(kept_classes)
+
+    assert exp_config.bn_config in bn_config_choice.keys(), "Current batchnorm configurations available: " + str(
+        bn_config_choice.keys())
+
+    net_config = {}
+    if exp_config.with_bn:
+        assert exp_config.architecture in pick_architecture(
+            with_bn=True).keys(), "Current architectures available with batchnorm: " + str(
+            pick_architecture(with_bn=True).keys())
+        net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
 
     activation_fn = activation_choice[exp_config.activation]
 
@@ -159,14 +172,15 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_death = [test_death_easier, test_death_harder]
 
     # Create network/optimizer and initialize params
-    architecture = architecture_choice[exp_config.architecture]
-    architecture = architecture(exp_config.size, dataset_total_classes, activation_fn=activation_fn)
+    architecture = pick_architecture(with_bn=exp_config.with_bn)[exp_config.architecture]
+    architecture = architecture(exp_config.size, dataset_total_classes, activation_fn=activation_fn, **net_config)
     net, _ = build_models(*architecture)
     ones_init = jnp.ones_like(next(train_easier)[0]), jnp.ones_like(next(train_easier)[1])
     init_fn = utl.get_init_fn(net, ones_init)
-    opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
+    opt = optimizer_choice[exp_config.optimizer]
     if "w" in exp_config.optimizer and exp_config.wd_param:  # Pass reg_param to wd argument of adamw
         opt = Partial(opt, weight_decay=exp_config.wd_param)
+    opt = opt(exp_config.lr)
 
     # Set training/monitoring functions
     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
