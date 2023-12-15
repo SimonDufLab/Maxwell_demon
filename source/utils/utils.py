@@ -2975,7 +2975,10 @@ def add_comma_in_str(string: str):
     """ Helper fn to format string from hydra before literal eval"""
     string = string.replace("mnist", "'mnist'")
     string = string.replace("fashion mnist", "'fashion mnist'")
-    string = string.replace("cifar10", "'cifar10'")
+    if "srigl" in string:
+        string = string.replace("cifar10_srigl", "'cifar10_srigl'")
+    else:
+        string = string.replace("cifar10", "'cifar10'")
     string = string.replace("cifar100", "'cifar100'")
 
     return string
