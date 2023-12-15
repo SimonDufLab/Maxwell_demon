@@ -14,6 +14,7 @@ from ast import literal_eval
 import hydra
 from hydra.core.config_store import ConfigStore
 from omegaconf import OmegaConf
+from jax.tree_util import Partial
 
 import utils.utils as utl
 from utils.utils import build_models
@@ -38,6 +39,7 @@ class ExpConfig:
     architecture: str = "mlp_3"
     size: Any = 256  # Number of hidden units in the different layers (tuple for convnet)
     optimizer: str = "adam"
+    wd_param: Optional[float] = None
     activation: str = "relu"  # Activation function used throughout the model
     datasets: Any = ("mnist", "fashion mnist")  # Datasets to use, listed from easier to harder
     kept_classes: Any = (None, None)  # Number of classes to use, listed from easier to harder
@@ -45,7 +47,9 @@ class ExpConfig:
     # compare_to_full_reset: bool = True
     compare_to_partial_reset: bool = False
     reg_param: float = 1e-4
+    perturb_param: float = 0  # Perturbation parameter for rnadam
     init_seed: int = 41
+    rng_seed: int = 777
     info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 
@@ -80,6 +84,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.regularizer == 'None':
         exp_config.regularizer = None
+    if exp_config.wd_param == 'None':
+        exp_config.wd_param = None
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
 
@@ -93,7 +99,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     activation_fn = activation_choice[exp_config.activation]
 
     # Logger config
-    exp_run = Run(repo="./logs", experiment=exp_name)
+    exp_run = Run(repo="./rnadam_easier_harder", experiment=exp_name)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
 
     # Help function to stack parameters
@@ -156,7 +162,11 @@ def run_exp(exp_config: ExpConfig) -> None:
     architecture = architecture_choice[exp_config.architecture]
     architecture = architecture(exp_config.size, dataset_total_classes, activation_fn=activation_fn)
     net, _ = build_models(*architecture)
+    ones_init = jnp.ones_like(next(train_easier)[0]), jnp.ones_like(next(train_easier)[1])
+    init_fn = utl.get_init_fn(net, ones_init)
     opt = optimizer_choice[exp_config.optimizer](exp_config.lr)
+    if "w" in exp_config.optimizer and exp_config.wd_param:  # Pass reg_param to wd argument of adamw
+        opt = Partial(opt, weight_decay=exp_config.wd_param)
 
     # Set training/monitoring functions
     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
@@ -164,17 +174,18 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
                                         classes=dataset_total_classes, is_training=False)
     accuracy_fn = utl.accuracy_given_model(net)
-    update_fn = utl.update_given_loss_and_optimizer(loss, opt)
+    update_fn = utl.update_given_loss_and_optimizer(loss, opt, perturb=exp_config.perturb_param, init_fn=init_fn)
     scan_len = dataset_size // exp_config.death_batch_size
     scan_death_check_fn = utl.scanned_death_check_fn(utl.death_check_given_model(net), scan_len)
     full_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // exp_config.eval_batch_size)
 
     # First prng key
     key = jax.random.PRNGKey(exp_config.init_seed)
+    rnadam_key = jax.random.PRNGKey(exp_config.rng_seed)
 
     setting = ["easier to harder", "harder to easier"]
-    dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
-    os.makedirs(dir_path)
+    # dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
+    # os.makedirs(dir_path)
 
     for order in [0, -1]:
         # Initialize params
@@ -312,13 +323,25 @@ def run_exp(exp_config: ExpConfig) -> None:
                     all_params = jax.tree_map(dict_stack, params, params_full_reset, params_partial_reinit)
                     all_states = jax.tree_map(dict_stack, state, state_full_reset, state_partial_reinit)
                     all_opt_states = jax.tree_map(dict_stack, opt_state, opt_full_reset_state, opt_partial_reinit_state)
-                    all_params, all_states, all_opt_states = jax.vmap(update_fn, in_axes=(
-                        utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
-                        utl.vmap_axes_mapping(opt_state), None))(
-                        all_params,
-                        all_states,
-                        all_opt_states,
-                        train_batch)
+                    if exp_config.perturb_param:
+                        rnadam_key, temp_keys = jax.random.split(rnadam_key)
+                        temp_keys = jax.random.split(temp_keys, 3)
+                        all_params, all_states, all_opt_states, _ = jax.vmap(update_fn, in_axes=(
+                            utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
+                            utl.vmap_axes_mapping(opt_state), None, 0))(
+                            all_params,
+                            all_states,
+                            all_opt_states,
+                            train_batch,
+                            temp_keys)
+                    else:
+                        all_params, all_states, all_opt_states = jax.vmap(update_fn, in_axes=(
+                            utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
+                            utl.vmap_axes_mapping(opt_state), None))(
+                            all_params,
+                            all_states,
+                            all_opt_states,
+                            train_batch)
                     params, params_full_reset, params_partial_reinit = utl.dict_split(all_params)
                     state, state_full_reset, state_partial_reinit = utl.dict_split(all_states, _len=3)
                     opt_state, opt_full_reset_state, opt_partial_reinit_state = utl.dict_split(all_opt_states)
@@ -327,53 +350,68 @@ def run_exp(exp_config: ExpConfig) -> None:
                     all_params = jax.tree_map(dict_stack, params, params_full_reset)
                     all_states = jax.tree_map(dict_stack, state, state_full_reset)
                     all_opt_states = jax.tree_map(dict_stack, opt_state, opt_full_reset_state)
-                    all_params, all_states, all_opt_states = jax.vmap(update_fn, in_axes=(
-                        utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
-                        utl.vmap_axes_mapping(opt_state), None))(
-                        all_params,
-                        all_states,
-                        all_opt_states,
-                        train_batch)
+                    if exp_config.perturb_param:
+                        rnadam_key, temp_keys = jax.random.split(rnadam_key)
+                        temp_keys = jax.random.split(temp_keys, 2)
+                        all_params, all_states, all_opt_states, _ = jax.vmap(update_fn, in_axes=(
+                            utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
+                            utl.vmap_axes_mapping(opt_state), None, 0))(
+                            all_params,
+                            all_states,
+                            all_opt_states,
+                            train_batch,
+                            temp_keys)
+                    else:
+                        all_params, all_states, all_opt_states = jax.vmap(update_fn, in_axes=(
+                            utl.vmap_axes_mapping(params), utl.vmap_axes_mapping(state),
+                            utl.vmap_axes_mapping(opt_state), None))(
+                            all_params,
+                            all_states,
+                            all_opt_states,
+                            train_batch)
                     params, params_full_reset = utl.dict_split(all_params)
                     state, state_full_reset = utl.dict_split(all_states)
                     opt_state, opt_full_reset_state = utl.dict_split(all_opt_states)
 
             else:
-                params, state, opt_state = update_fn(params, state, opt_state, train_batch)
+                if exp_config.perturb_param:
+                    params, state, opt_state, rnadam_key = update_fn(params, state, opt_state, train_batch, rnadam_key)
+                else:
+                    params, state, opt_state = update_fn(params, state, opt_state, train_batch)
 
             # Train sequentially instead
             # params, state, opt_state = update_fn(params, opt_state, train_batch)
             # params_partial_reinit, state_partial_reinit, opt_partial_reinit_state = update_fn(params_partial_reinit,
             #                                                             opt_partial_reinit_state, train_batch)
 
-        # Plots
-        x = list(range(0, exp_config.total_steps, exp_config.record_freq))
-        xx = list(range(exp_config.total_steps // 2,
-                        exp_config.total_steps // 2 + exp_config.record_freq * len(full_reset_perf),
-                        exp_config.record_freq))
-        fig = plt.figure(figsize=(25, 15))
-        plt.plot(x, no_reinit_perf, color='red', label="accuracy, no reinitialisation")
-        plt.plot(xx, full_reset_perf, color='blue', label="accuracy, with full reinitialisation")
-        plt.plot(x, np.array(no_reinit_dead_neurons) / total_neurons, color='red', linewidth=3, linestyle=':',
-                 label="dead neurons, no reinitialisation")
-        plt.plot(xx, np.array(full_reset_dead_neurons) / total_neurons, color='blue', linewidth=3, linestyle=':',
-                 label="dead neurons, with full reinitialisation")
-        if exp_config.compare_to_partial_reset:
-            plt.plot(xx, partial_reinit_perf, color='green', label="accuracy, with partial reinitialisation")
-            plt.plot(xx, np.array(partial_reinit_dead_neurons) / total_neurons, color='green', linewidth=3, linestyle=':',
-                     label="dead neurons, with partial reinitialisation")
-        plt.xlabel("Iterations", fontsize=16)
-        plt.ylabel("Inactive neurons (ratio)/accuracy", fontsize=16)
-        plt.title(f"From {setting[order]} switch experiment"
-                  f" on {exp_config.datasets[0]}/{exp_config.datasets[1]}"
-                  f", keeping {exp_config.kept_classes[0]}/{exp_config.kept_classes[1]} classes",
-                  fontweight='bold', fontsize=20)
-        plt.legend(prop={'size': 12})
-        fig.savefig(dir_path + f"{setting[order]}.png")
-        # aim_fig = Figure(fig)
-        aim_img = Image(fig)
-        # exp_run.track(aim_fig, name=f"From {setting[order]} experiment", step=0)
-        exp_run.track(aim_img, name=f"From {setting[order]} experiment; img", step=0)
+        # # Plots
+        # x = list(range(0, exp_config.total_steps, exp_config.record_freq))
+        # xx = list(range(exp_config.total_steps // 2,
+        #                 exp_config.total_steps // 2 + exp_config.record_freq * len(full_reset_perf),
+        #                 exp_config.record_freq))
+        # fig = plt.figure(figsize=(25, 15))
+        # plt.plot(x, no_reinit_perf, color='red', label="accuracy, no reinitialisation")
+        # plt.plot(xx, full_reset_perf, color='blue', label="accuracy, with full reinitialisation")
+        # plt.plot(x, np.array(no_reinit_dead_neurons) / total_neurons, color='red', linewidth=3, linestyle=':',
+        #          label="dead neurons, no reinitialisation")
+        # plt.plot(xx, np.array(full_reset_dead_neurons) / total_neurons, color='blue', linewidth=3, linestyle=':',
+        #          label="dead neurons, with full reinitialisation")
+        # if exp_config.compare_to_partial_reset:
+        #     plt.plot(xx, partial_reinit_perf, color='green', label="accuracy, with partial reinitialisation")
+        #     plt.plot(xx, np.array(partial_reinit_dead_neurons) / total_neurons, color='green', linewidth=3, linestyle=':',
+        #              label="dead neurons, with partial reinitialisation")
+        # plt.xlabel("Iterations", fontsize=16)
+        # plt.ylabel("Inactive neurons (ratio)/accuracy", fontsize=16)
+        # plt.title(f"From {setting[order]} switch experiment"
+        #           f" on {exp_config.datasets[0]}/{exp_config.datasets[1]}"
+        #           f", keeping {exp_config.kept_classes[0]}/{exp_config.kept_classes[1]} classes",
+        #           fontweight='bold', fontsize=20)
+        # plt.legend(prop={'size': 12})
+        # fig.savefig(dir_path + f"{setting[order]}.png")
+        # # aim_fig = Figure(fig)
+        # aim_img = Image(fig)
+        # # exp_run.track(aim_fig, name=f"From {setting[order]} experiment", step=0)
+        # exp_run.track(aim_img, name=f"From {setting[order]} experiment; img", step=0)
 
 
 if __name__ == "__main__":
