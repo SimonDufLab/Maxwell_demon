@@ -21,10 +21,13 @@ class LogitsVGG(hk.Module):
             logits_config: Optional[Mapping[str, FloatStrOrBool]] = {},
             with_bias: bool = True,
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None):
+            parent: Optional[hk.Module] = None):
         super().__init__(name=name)
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.logits_layer = hk.Linear(num_classes, with_bias=with_bias, **logits_config)
 
     def __call__(self, inputs):

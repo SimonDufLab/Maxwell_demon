@@ -2556,7 +2556,7 @@ class AvgPool(hk.AvgPool):
         return self.activation_mapping
 
     def get_last_activation_name(self):
-        return self.preceding_activations_name
+        return self.preceding_activation_name
 
 
 def get_activation_mapping(net, inputs):
