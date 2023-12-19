@@ -45,10 +45,12 @@ class ExpConfig:
     wd_param: Optional[float] = None
     activation: str = "relu"  # Activation function used throughout the model
     datasets: Any = ("mnist", "fashion mnist")  # Datasets to use, listed from easier to harder
+    reverse_order: bool = True  # If true, also train from harder to easier
     kept_classes: Any = (None, None)  # Number of classes to use, listed from easier to harder
     regularizer: Optional[str] = 'None'
     # compare_to_full_reset: bool = True
     compare_to_partial_reset: bool = False
+    reinit_state: bool = False  # Reinit optimizer and params state at switch task
     reg_param: float = 1e-4
     perturb_param: float = 0  # Perturbation parameter for rnadam
     init_seed: int = 41
@@ -200,8 +202,12 @@ def run_exp(exp_config: ExpConfig) -> None:
     setting = ["easier to harder", "harder to easier"]
     # dir_path = "./logs/plots/" + exp_name + time.strftime("/%Y-%m-%d---%B %d---%H:%M:%S/")
     # os.makedirs(dir_path)
+    if exp_config.reverse_order:
+        tasks_order = [0, -1]
+    else:
+        tasks_order = [0]
 
-    for order in [0, -1]:
+    for order in tasks_order:
         # Initialize params
         params, state = net.init(key, next(train_easier))
         opt_state = opt.init(params)
@@ -229,6 +235,9 @@ def run_exp(exp_config: ExpConfig) -> None:
                 _, key = jax.random.split(key)
                 params_full_reset, state_full_reset = net.init(key, next(train[idx]))
                 opt_full_reset_state = opt.init(params_full_reset)
+                if exp_config.reinit_state:
+                    _, state = net.init(key, next(train[idx]))  # No need to split key
+                    opt_state = opt.init(params)
                 # reinitialize dead neurons
                 if exp_config.compare_to_partial_reset:
                     _, key = jax.random.split(key)
