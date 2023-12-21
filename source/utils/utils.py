@@ -2823,7 +2823,7 @@ def load_run_state(checkpoint_dir: Path) -> Optional[RunState]: # Taken from htt
 
 def checkpoint_exp(run_state: RunState, params, state, opt_state, curr_epoch: int, curr_step: int,
                    curr_arch_sizes, curr_starting_size, curr_reg_param, dropout_key, decaying_reg_param,
-                   best_acc, best_params_count, best_total_neurons, training_time, dead_neurons_union):
+                   best_acc, best_params_count, best_total_neurons, training_time, dead_neurons_union=None):
     run_state["epoch"] = curr_epoch
     run_state["training_step"] = curr_step
     run_state["curr_arch_sizes"] = curr_arch_sizes
