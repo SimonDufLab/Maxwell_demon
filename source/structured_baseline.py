@@ -169,7 +169,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
                                      decaying_reg_param=exp_config.reg_param,
                                      best_accuracy=0.0, best_params_count=None, best_total_neurons=None,
-                                     pruned_flag=not bool(exp_config.pruning_criterion))
+                                     training_time=0.0, pruned_flag=not bool(exp_config.pruning_criterion))
             # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
             #     pickle.dump(run_state, f)
 
@@ -363,10 +363,12 @@ def run_exp(exp_config: ExpConfig) -> None:
         best_params_count = run_state["best_params_count"]
         best_total_neurons = run_state["best_total_neurons"]
         pruned_flag = run_state["pruned_flag"]
+        training_time = run_state["training_time"]
         load_from_preexisting_model_state = False
     else:
         starting_step = 0
         best_acc = 0
+        training_time = 0
         best_params_count = initial_params_count
         best_total_neurons = init_total_neurons
 
@@ -424,6 +426,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     print_and_record_metrics = get_print_and_record_metrics(test_loss_fn, accuracy_fn, death_check_fn,
                                                             scan_death_check_fn, full_train_acc_fn, final_accuracy_fn)
 
+    training_timer = time.time()
     for step in range(starting_step, exp_config.training_steps):
         if (step > 0) and (step % steps_per_epoch == 0):  # Keep track of the best accuracy along training
             architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
@@ -443,12 +446,15 @@ def run_exp(exp_config: ExpConfig) -> None:
             print(
                 f"Elapsed time in current run at step {step}: {timedelta(seconds=time.time() - run_start_time)}")
             chckpt_init_time = time.time()
+            training_time += time.time() - training_timer
             run_state["pruned_flag"] = pruned_flag
             utl.checkpoint_exp(run_state, params, state, opt_state, curr_epoch=step // steps_per_epoch,
                                curr_step=step, curr_arch_sizes=new_sizes, curr_starting_size=size,
                                curr_reg_param=exp_config.reg_param, dropout_key=dropout_key,
                                decaying_reg_param=decaying_reg_param, best_acc=best_acc,
-                               best_params_count=best_params_count, best_total_neurons=best_total_neurons)
+                               best_params_count=best_params_count, best_total_neurons=best_total_neurons,
+                               training_time=training_time)
+            training_timer = time.time()
             print(
                 f"Checkpointing performed in: {timedelta(seconds=time.time() - chckpt_init_time)}")
         # Decaying reg_param if applicable
@@ -568,6 +574,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     exp_run.track(final_accuracy,
                   name="Accuracy after convergence w/r percent*10 of params remaining",
                   step=log_params_sparsity_step)
+    exp_run.track(training_time / 60,
+                  name="Training time (min.) w/r percent*10 of params remaining",
+                  step=log_params_sparsity_step)
     exp_run.track(final_accuracy,
                   name="Accuracy after convergence w/r params compression ratio",
                   step=compression_ratio)
@@ -577,6 +586,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     log_sparsity_step = jax.device_get(total_live_neurons / init_total_neurons) * 1000
     exp_run.track(final_accuracy,
                   name="Accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
+    training_time += time.time() - training_timer
+    exp_run.track(training_time / 60,
+                  name="Training time (min.) w/r percent*10 of neurons remaining", step=log_sparsity_step)
     log_sparsity_step = jax.device_get(best_total_neurons / init_total_neurons) * 1000
     exp_run.track(best_acc,
                   name="Best accuracy after convergence w/r percent*10 of neurons remaining", step=log_sparsity_step)
