@@ -430,13 +430,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                               context={"reg param": utl.size_to_string(reg_param)})
                 exp_run.track(test_loss, name="Test loss", step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
-                for layer in params.keys():
-                    if "offset" in params[layer].keys():
-                        exp_run.track(jnp.mean(params[layer]["offset"]), name="BN offset trough training", step=step,
-                                      context={"reg param": utl.size_to_string(reg_param), 'layer': layer})
-                    if "scale" in params[layer].keys():
-                        exp_run.track(jnp.mean(params[layer]["scale"]), name="BN scale trough training", step=step,
-                                      context={"reg param": utl.size_to_string(reg_param), 'layer': layer})
+                # for layer in params.keys():
+                #     if "offset" in params[layer].keys():
+                #         exp_run.track(jnp.mean(params[layer]["offset"]), name="BN offset trough training", step=step,
+                #                       context={"reg param": utl.size_to_string(reg_param), 'layer': layer})
+                #     if "scale" in params[layer].keys():
+                #         exp_run.track(jnp.mean(params[layer]["scale"]), name="BN scale trough training", step=step,
+                #                       context={"reg param": utl.size_to_string(reg_param), 'layer': layer})
 
             if step % exp_config.pruning_freq == 0:
                 dead_neurons = scan_death_check_fn(params, state, test_death)
