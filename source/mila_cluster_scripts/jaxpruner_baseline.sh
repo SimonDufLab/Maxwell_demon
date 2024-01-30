@@ -5,7 +5,9 @@
 #SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
 #SBATCH --mem=24G   #24G for Resnet18                                        # Ask for 10 GB of RAM
-#SBATCH --time=5:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+#SBATCH --time=8:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+#SBATCH -x 'cn-d[001-004], cn-g[005-012,017-026]'  # Excluding DGX system, will require a jaxlib update
+#SBATCH --reservation=ubuntu2204
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
@@ -19,7 +21,7 @@ module load cuda/11.2/cudnn/8.1
 source venv/bin/activate
 
 # Flags
-export XLA_PYTHON_CLIENT_PREALLOCATE=false
+export XLA_PYTHON_CLIENT_PREALLOCATE=true
 export TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # Default configuration:
@@ -86,8 +88,8 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #python source/jaxpruner_baseline.py dataset='mnist' architecture='mlp_3' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 size=100 with_bn=False normalize_inputs=True info=mnist_baselines optimizer=adam train_batch_size=256 noisy_label=0.0 regularizer=None reg_param=0.0 activation=relu 'spar_levels="(0.85, 0.9, 0.95, 0.97, 0.99)"' sparsity_distribution=uniform pruning_method=RigL lr=0.001 init_seed=95
 #wait $!
 
-python source/jaxpruner_baseline.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 "size='(64, 4096)'" with_bn=True lr_schedule=one_cycle normalize_inputs=True info=vgg16_jaxpruner_baseline_saliency optimizer=adamw train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu 'spar_levels="(0.0, 0.1, 0.2, 0.3, 0.4)"' wd_param=0.0005 sparsity_distribution=uniform pruning_method=saliency lr=0.005 init_seed=91
-wait $!
+#python source/jaxpruner_baseline.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 "size='(64, 4096)'" with_bn=True lr_schedule=one_cycle normalize_inputs=True info=vgg16_jaxpruner_baseline_saliency optimizer=adamw train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu 'spar_levels="(0.0, 0.1, 0.2, 0.3, 0.4)"' wd_param=0.0005 sparsity_distribution=uniform pruning_method=saliency lr=0.005 init_seed=91
+#wait $!
 
 
 #python source/jaxpruner_baseline.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 "size='(64, 4096)'" with_bn=True lr_schedule=one_cycle normalize_inputs=True info=vgg16_jaxpruner_baseline_saliency optimizer=adamw train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu 'spar_levels="(0.5, 0.6, 0.7, 0.75, 0.8)"' wd_param=0.0005 sparsity_distribution=uniform pruning_method=saliency lr=0.005 init_seed=91
@@ -96,3 +98,21 @@ wait $!
 #python source/jaxpruner_baseline.py dataset='cifar10' architecture='vgg16' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 live_freq=25000 "size='(64, 4096)'" with_bn=True lr_schedule=one_cycle normalize_inputs=True info=vgg16_jaxpruner_baseline_saliency optimizer=adamw train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu 'spar_levels="(0.85, 0.9, 0.95, 0.97, 0.99)"' wd_param=0.0005 sparsity_distribution=uniform pruning_method=saliency lr=0.005 init_seed=91
 #wait $!
 
+#############################
+# SriGL setup
+# ResNet-18 -- ADAM
+#python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=1 zero_end_reg_param=False info=Res18_srigl_adam optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None reg_param=0.00 activation=relu 'spar_levels="(0.25, 0.5, 0.7, 0.8)"' preempt_handling=True sparsity_distribution=uniform pruning_method=SET init_seed=97
+#wait $!
+
+#python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=1 zero_end_reg_param=False info=Res18_srigl_adam optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None reg_param=0.00 activation=relu 'spar_levels="(0.9, 0.925, 0.95, 0.97, 0.99)"' preempt_handling=True sparsity_distribution=uniform pruning_method=SET init_seed=97
+#wait $!
+
+# Exploring with one-cycle for quicker iteration
+#python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=15626 report_freq=1000 record_freq=200 pruning_freq=1000 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=False reg_param_decay_cycles=4 info=Resnet18_test_become_structured 'spar_levels="(0.8, 0.85, 0.9, 0.95, 0.99)"' optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=True reg_param_schedule=one_cycle save_wanda=False preempt_handling=True sparsity_distribution=uniform pruning_method=saliency reg_param=0.0 init_seed=96
+
+# ResNet-18 -- SGDM
+python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=1 zero_end_reg_param=False info=Res18_jaxpruner_sgdm optimizer=momentum9w wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None reg_param=0.00 activation=relu 'spar_levels="(0.25, 0.5, 0.7, 0.8)"' preempt_handling=True sparsity_distribution=uniform pruning_method=saliency init_seed=91
+wait $!
+
+#python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=1 zero_end_reg_param=False info=Res18_jaxpruner_sgdm optimizer=momentum9w wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None reg_param=0.00 activation=relu 'spar_levels="(0.9, 0.925, 0.95, 0.97, 0.99)"' preempt_handling=True sparsity_distribution=uniform pruning_method=saliency init_seed=91
+#wait $!
