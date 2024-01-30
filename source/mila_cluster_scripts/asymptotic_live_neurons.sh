@@ -1,11 +1,11 @@
 #!/bin/bash
 
 #SBATCH --job-name=asymptotic_live_neurons
-#SBATCH --partition=main                           # Ask for unkillable job
+#SBATCH --partition=long                           # Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
 #SBATCH --mem=24G   #24G for Resnet18                                        # Ask for 10 GB of RAM
-#SBATCH --time=8:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+#SBATCH --time=5:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
 #SBATCH -x 'cn-d[001-004], cn-g[005-012,017-026]'  # Excluding DGX system, will require a jaxlib update
 
 
@@ -39,8 +39,12 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # Run experiments
 
-python source/asymptotic_live_neurons.py dataset='cifar10' architecture='resnet18' training_steps=15626 report_freq=1000 record_freq=100 pruning_freq=1000 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=2 info=Resnet18_cifar_10_kept_class_debugged reg_param=0.0005 'sizes="(4, 8, 16, 24, 32, 48, 64)"' optimizer=adamw wd_param=0.0001 lr=0.005 train_batch_size=64 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True kept_classes=6 init_seed=63
+python source/asymptotic_live_neurons.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=62501 report_freq=2000 record_freq=500 pruning_freq=1000 with_bn=True lr_schedule=one_cycle normalize_inputs=False reg_param_decay_cycles=1 info=Resnet18_cifar10_srigl_setup reg_param=0.0 'sizes="(4, 8, 16, 24, 32, 48, 64)"' optimizer=adamw wd_param=0.0005 lr=0.05 train_batch_size=64 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=relu zero_end_reg_param=True save_wanda=False dynamic_pruning=True kept_classes=10 init_seed=63
 wait $!
+
+# Special, for plots of typical death behavior of neurons
+#python source/asymptotic_live_neurons.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=62501 report_freq=2000 record_freq=500 pruning_freq=1000 with_bn=True lr_schedule=one_cycle normalize_inputs=False reg_param_decay_cycles=1 info=Resnet18_cifar10_srigl_setup reg_param=0.0 'sizes="(64,)"' optimizer=adamw wd_param=0.0005 lr=0.01 train_batch_size=64 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None activation=elu zero_end_reg_param=True save_wanda=False dynamic_pruning=False kept_classes=10 init_seed=63
+#wait $!
 
 # --------------------------------------------------------------------------------------------------------------------------------------------------
 
