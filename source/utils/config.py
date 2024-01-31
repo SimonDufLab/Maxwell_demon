@@ -143,6 +143,8 @@ bn_config_choice = {
     "constant_scale": {"create_scale": False, "create_offset": True, "decay_rate": 0.9, "constant_scale": 10.0},
     "small_scale_init": {"create_scale": True, "create_offset": True, "decay_rate": 0.9,
                          "scale_init": lambda x, y: 0.1*jnp.ones(x, y)},
+    "deactivate_small_units": {"create_scale": True, "create_offset": True, "decay_rate": 0.9,
+                               "deactivate_small_units": True},
 }
 
 activation_choice = {

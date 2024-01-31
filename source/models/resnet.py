@@ -33,6 +33,7 @@ class CustomBatchNorm(hk.BatchNorm):
             cross_replica_axis: Optional[Union[str, Sequence[str]]] = None,
             cross_replica_axis_index_groups: Optional[Sequence[Sequence[int]]] = None,
             data_format: str = "channels_last",
+            deactivate_small_units: bool = False,  # New argument that deactivate units with magnitude smaller than mean
             name: Optional[str] = None,
     ):
         super().__init__(create_scale=create_scale, create_offset=create_offset, decay_rate=decay_rate, eps=eps,
@@ -41,6 +42,7 @@ class CustomBatchNorm(hk.BatchNorm):
                          cross_replica_axis_index_groups=cross_replica_axis_index_groups, data_format=data_format,
                          name=name)
         self.constant_scale = constant_scale
+        self.deactivate_small_units = deactivate_small_units
         if self.create_scale and self.constant_scale is not None:
             raise ValueError(
                 "Cannot set `constant_scale` if `create_scale=True`.")
@@ -122,6 +124,12 @@ class CustomBatchNorm(hk.BatchNorm):
             offset = hk.get_parameter("offset", w_shape, w_dtype, self.offset_init)
         elif offset is None:
             offset = np.zeros([], dtype=w_dtype)
+
+        # If deactivation is enabled, apply the deactivation logic
+        if self.deactivate_small_units:
+            magnitude = jnp.abs(inputs)
+            mask = magnitude > jnp.abs(mean)
+            inputs = inputs * mask
 
         eps = jax.lax.convert_element_type(self.eps, var.dtype)
         inv = scale * jax.lax.rsqrt(var + eps)
