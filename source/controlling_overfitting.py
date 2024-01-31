@@ -225,6 +225,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Path for logs
     if exp_config.perturb_param:
         log_path = "./ICLR2023_rnadam"
+    elif exp_config.bn_config == "deactivate_small_units":
+        log_path = "./exploration__deactivate_small_units"
     else:
         log_path = "./ICLR2023_main3"  # "./preempt_test"  #
     if exp_config.dataset == "imagenet":
