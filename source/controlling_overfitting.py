@@ -228,7 +228,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     elif exp_config.bn_config == "deactivate_small_units":
         log_path = "./exploration__deactivate_small_units"
     else:
-        log_path = "./ICLR2023_main3"  # "./preempt_test"  #
+        log_path = "./Post_ICML2024_main"  # "./preempt_test"  #
     if exp_config.dataset == "imagenet":
         log_path = "./imagenet_exps"
     # Logger config
@@ -952,14 +952,14 @@ def run_exp(exp_config: ExpConfig) -> None:
                 exp_run.track(eps_avg_final_live_neurons,
                               name="On average, quasi-live neurons after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
-                exp_run.track(eps_avg_final_live_neurons / total_neurons,
+                exp_run.track(eps_avg_final_live_neurons / init_total_neurons,
                               name="Average quasi-live neurons ratio after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
                 eps_total_live_neurons = total_neurons - eps_final_dead_neurons_count
                 exp_run.track(eps_total_live_neurons,
                               name="Quasi-live neurons after convergence w/r reg param", step=log_step,
                               context={"epsilon": eps})
-                exp_run.track(eps_total_live_neurons / total_neurons,
+                exp_run.track(eps_total_live_neurons / init_total_neurons,
                               name="Quasi-live neurons ratio after convergence w/r reg param",
                               step=log_step, context={"epsilon": eps})
 
