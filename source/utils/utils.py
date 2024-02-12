@@ -823,6 +823,13 @@ def zero_out_bn_params(dict_params):
     return {k: bn_selection(v) for k, v in dict_params.items()}
 
 
+def zero_out_all_except_bn_offset(dict_params):
+    def bn_selection(sub_dict):
+        return {k: (v*0 if ("offset" not in k) else jnp.ones_like(v)) for k, v in sub_dict.items()}
+
+    return {k: bn_selection(v) for k, v in dict_params.items()}
+
+
 def exclude_bn_scale_from_params(dict_params):
     def exclude_scale(sub_dict):
         return {k: v for k, v in sub_dict.items() if "scale" not in k}
@@ -1016,9 +1023,10 @@ def grad_normalisation_per_layer(param_leaf):
     return param_leaf/jnp.sqrt(var+1)
 
 
-def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetric_noise=False, live_only=True,
-                                    norm_grad=False, with_dropout=False, return_grad=False,
-                                    modulate_via_gate_grad=False, acti_map=None, perturb=0, init_fn=None):
+def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetric_noise=False,
+                                    live_only=True, noise_offset_only=False, norm_grad=False, with_dropout=False,
+                                    return_grad=False, modulate_via_gate_grad=False, acti_map=None, perturb=0,
+                                    init_fn=None):
     """Learning rule (stochastic gradient descent)."""
 
     if modulate_via_gate_grad:
@@ -1133,6 +1141,9 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     # noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     flat_updates, _ = ravel_pytree(updates)
+                    if noise_offset_only:  # Watch-out, will work even if no normalization layer with offset params
+                        offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                        added_noise = jnp.abs(added_noise) * offset_mask  # More efficient revival if solely increasing offset
                     noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
                     new_params = optax.apply_updates(_params, noisy_updates)
                     return new_params, new_state, _opt_state, next_key
