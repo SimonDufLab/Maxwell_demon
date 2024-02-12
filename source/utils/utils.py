@@ -1016,7 +1016,7 @@ def grad_normalisation_per_layer(param_leaf):
     return param_leaf/jnp.sqrt(var+1)
 
 
-def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), noise_live_only=False,
+def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetric_noise=False, live_only=True,
                                     norm_grad=False, with_dropout=False, return_grad=False,
                                     modulate_via_gate_grad=False, acti_map=None, perturb=0, init_fn=None):
     """Learning rule (stochastic gradient descent)."""
@@ -1113,7 +1113,7 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
         else:
             a, b = noise_imp
             assert not return_grad, 'return_grad option not coded yet with noisy grad'
-            if noise_live_only:
+            if asymmetric_noise:
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
                             _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
@@ -1124,7 +1124,12 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     key, next_key = jax.random.split(_key)
                     flat_grads, unravel_fn = ravel_pytree(grads)
                     added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
-                    added_noise = added_noise * (jnp.abs(flat_grads) >= 0)  # Only apply noise to weights with gradient!=0
+                    if live_only:
+                        added_noise = added_noise * (
+                                jnp.abs(flat_grads) >= 0)  # Only apply noise to weights with gradient!=0 (live neurons)
+                    else:
+                        added_noise = added_noise * (
+                                jnp.abs(flat_grads) == 0)  # Only apply noise to weights with gradient==0 (dead neurons)
                     # noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
                     updates, _opt_state = optimizer.update(grads, _opt_state, _params)
                     flat_updates, _ = ravel_pytree(updates)
