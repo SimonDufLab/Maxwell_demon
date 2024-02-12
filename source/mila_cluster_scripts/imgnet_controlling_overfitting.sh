@@ -6,7 +6,7 @@
 #SBATCH --gres=gpu:a100l:1                                     # Ask for 1 GPU
 #SBATCH --mem=256G   #24G for Resnet18                                        # Ask for 10 GB of RAM
 #SBATCH --time=48:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
-# #SBATCH --reservation=ubuntu2204
+#SBATCH --reservation=ubuntu2204
 # #SBATCH -x 'cn-b[001-005], cn-d[001-004], cn-g[005-012,017-026], cn-e[002-003], kepler5'  # Excluding DGX system, will require a jaxlib update and kepler 5 that have 16GB GPU memory and v100 with 32Gb memory
                                 # The job will run for 2.5 hours
 
@@ -133,7 +133,7 @@ echo $LD_PRELOAD
 
 # Adam reg_param values: 0.0, 5e-7, 1e-6, 5e-6, 1e-5, 5e-5, 0.0001, 0.00025, 0.0005, 0.00075, 0.001 
 
-python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=warmup_piecewise_decay "lr_decay_steps='(30, 70, 90)'" lr_decay_scaling_factor=0.1 normalize_inputs=True reg_param_decay_cycles=1 reg_param_schedule=one_cycle info=Resnet50_srigl_adam_test 'reg_params="(0.0005,)"' optimizer=adamw wd_param=0.05 lr=0.005 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 label_smoothing=0.1 regularizer=lasso activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True preempt_handling=True masked_reg=scale_only init_seed=31 reg_param_span=150000 add_noise=True noise_eta=0.00005
+python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=warmup_piecewise_decay "lr_decay_steps='(30, 70, 90)'" lr_decay_scaling_factor=0.1 normalize_inputs=True reg_param_decay_cycles=1 reg_param_schedule=one_cycle info=Resnet50_srigl_adam_test 'reg_params="(0.0005,)"' optimizer=adamw wd_param=0.05 lr=0.01 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 label_smoothing=0.1 regularizer=lasso activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True preempt_handling=True masked_reg=scale_only init_seed=31 reg_param_span=150000 add_noise=True noise_eta=0.00005
 wait $!
 
 ####################
