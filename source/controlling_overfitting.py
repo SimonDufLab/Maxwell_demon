@@ -97,6 +97,7 @@ class ExpConfig:
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
     asymmetric_noise: bool = True  # Use an asymmetric noise addition, not applied to all neurons' weights
     noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones. reverse if False
+    noise_offset_only: bool = False  # Special option to only add noise to offset parameters of normalization layers
     noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
     noise_eta: float = 0.01  # Variance of added noise; can only be used with a reg_param_schedule that it will match
     noise_gamma: float = 0.0
@@ -370,6 +371,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
                                                                 live_only=exp_config.noise_live_only,
+                                                                noise_offset_only=exp_config.noise_offset_only,
                                                                 with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
                                                                 acti_map=acti_map, perturb=exp_config.perturb_param,
@@ -398,6 +400,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
                                                                 live_only=exp_config.noise_live_only,
+                                                                noise_offset_only=exp_config.noise_offset_only,
                                                                 with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
                                                                 acti_map=acti_map, perturb=exp_config.perturb_param,
@@ -552,6 +555,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
                                                                     exp_config.noise_imp, exp_config.asymmetric_noise,
                                                                     live_only=exp_config.noise_live_only,
+                                                                    noise_offset_only=exp_config.noise_offset_only,
                                                                     with_dropout=with_dropout,
                                                                     modulate_via_gate_grad=exp_config.mod_via_gate_grad,
                                                                     acti_map=acti_map, perturb=exp_config.perturb_param,
@@ -601,6 +605,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
                                                                 live_only=exp_config.noise_live_only,
+                                                                noise_offset_only=exp_config.noise_offset_only,
                                                                 with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
                                                                 acti_map=acti_map, perturb=exp_config.perturb_param,
@@ -744,7 +749,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             gate_grad = utl.NeuronStates(activation_layer_order)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                         exp_config.asymmetric_noise,
-                                                        live_only=exp_config.noise_live_only, with_dropout=with_dropout,
+                                                        live_only=exp_config.noise_live_only,
+                                                        noise_offset_only=exp_config.noise_offset_only,
+                                                        with_dropout=with_dropout,
                                                         modulate_via_gate_grad=exp_config.mod_via_gate_grad,
                                                         acti_map=acti_map, perturb=exp_config.perturb_param,
                                                         init_fn=init_fn)
