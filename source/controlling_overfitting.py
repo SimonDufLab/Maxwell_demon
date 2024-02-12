@@ -95,7 +95,8 @@ class ExpConfig:
     pruning_reg: str = "cdg_l2"
     pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
-    noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones
+    asymmetric_noise: bool = True  # Use an asymmetric noise addition, not applied to all neurons' weights
+    noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones. reverse if False
     noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
     noise_eta: float = 0.01  # Variance of added noise; can only be used with a reg_param_schedule that it will match
     noise_gamma: float = 0.0
@@ -367,9 +368,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        classes=classes, is_training=False, with_dropout=with_dropout,
                                                        exclude_bias_bn_from_reg=exp_config.masked_reg)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                                exp_config.noise_live_only, with_dropout=with_dropout,
+                                                                exp_config.asymmetric_noise,
+                                                                live_only=exp_config.noise_live_only,
+                                                                with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
+                                                                acti_map=acti_map, perturb=exp_config.perturb_param,
+                                                                init_fn=init_fn)
 
             if (decay_cycles > 1) and (step % reg_param_decay_period == 0) and \
                     (not (step % (exp_config.training_steps - 1) == 0)) and (not exp_config.reg_param_schedule):
@@ -392,9 +396,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        classes=classes, is_training=False, with_dropout=with_dropout,
                                                        exclude_bias_bn_from_reg=exp_config.masked_reg)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                                exp_config.noise_live_only, with_dropout=with_dropout,
+                                                                exp_config.asymmetric_noise,
+                                                                live_only=exp_config.noise_live_only,
+                                                                with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
+                                                                acti_map=acti_map, perturb=exp_config.perturb_param,
+                                                                init_fn=init_fn)
 
             if step % exp_config.record_freq == 0:
                 train_loss = test_loss_fn(params, state, next(train_eval), _reg_param=decaying_reg_param)
@@ -543,10 +550,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                            exclude_bias_bn_from_reg=exp_config.masked_reg)
                     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
-                                                                    exp_config.noise_imp, exp_config.noise_live_only,
+                                                                    exp_config.noise_imp, exp_config.asymmetric_noise,
+                                                                    live_only=exp_config.noise_live_only,
                                                                     with_dropout=with_dropout,
                                                                     modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                    acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
+                                                                    acti_map=acti_map, perturb=exp_config.perturb_param,
+                                                                    init_fn=init_fn)
                     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                     # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                     #                                                  epsilon=exp_config.epsilon_close,
@@ -590,9 +599,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        exclude_bias_bn_from_reg=exp_config.masked_reg)
                 accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                                exp_config.noise_live_only, with_dropout=with_dropout,
+                                                                exp_config.asymmetric_noise,
+                                                                live_only=exp_config.noise_live_only,
+                                                                with_dropout=with_dropout,
                                                                 modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
+                                                                acti_map=acti_map, perturb=exp_config.perturb_param,
+                                                                init_fn=init_fn)
                 death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                 # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                 #                                                  epsilon=exp_config.epsilon_close,
@@ -731,9 +743,11 @@ def run_exp(exp_config: ExpConfig) -> None:
         if exp_config.record_gate_grad_stat:
             gate_grad = utl.NeuronStates(activation_layer_order)
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                        exp_config.noise_live_only, with_dropout=with_dropout,
+                                                        exp_config.asymmetric_noise,
+                                                        live_only=exp_config.noise_live_only, with_dropout=with_dropout,
                                                         modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                        acti_map=acti_map, perturb=exp_config.perturb_param, init_fn=init_fn)
+                                                        acti_map=acti_map, perturb=exp_config.perturb_param,
+                                                        init_fn=init_fn)
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
