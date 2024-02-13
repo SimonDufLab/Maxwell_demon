@@ -97,7 +97,7 @@ class ExpConfig:
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
     asymmetric_noise: bool = True  # Use an asymmetric noise addition, not applied to all neurons' weights
     noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones. reverse if False
-    noise_offset_only: bool = False  # Special option to only add noise to offset parameters of normalization layers
+    noise_offset_only: bool = False  # Special option to only add positive noise to offset parameters of normalization layers
     noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
     noise_eta: float = 0.01  # Variance of added noise; can only be used with a reg_param_schedule that it will match
     noise_gamma: float = 0.0
