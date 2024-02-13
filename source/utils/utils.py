@@ -2014,7 +2014,10 @@ def piecewise_constant_schedule(training_steps, base_lr, final_lr, decay_steps, 
 
 
 def cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling_factor):
-    alpha_val = final_lr/base_lr
+    if final_lr > 0:
+        alpha_val = final_lr/base_lr
+    else:
+        alpha_val = 0
     return optax.cosine_decay_schedule(base_lr, training_steps, alpha_val)
 
 
