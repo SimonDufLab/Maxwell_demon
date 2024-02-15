@@ -24,10 +24,13 @@ class LinearLayer(hk.Module):
             fc_config: Optional[Mapping[str, FloatStrOrBool]] = {},
             bn_config: Optional[Mapping[str, FloatStrOrBool]] = {},
             name: Optional[str] = None,
-            preceding_activation_name: Optional[str] = None):
+            parent: Optional[hk.Module] = None):
         super().__init__(name=name)
         self.activation_mapping = {}
-        self.preceding_activation_name = preceding_activation_name
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
         self.with_bn = with_bn
         self.fc_layer = hk.Linear(output_size, with_bias=with_bias, **fc_config)
         if with_bn:
