@@ -1023,7 +1023,7 @@ def grad_normalisation_per_layer(param_leaf):
     return param_leaf/jnp.sqrt(var+1)
 
 
-def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetric_noise=False,
+def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetric_noise=False, going_wild=False,
                                     live_only=True, noise_offset_only=False, positive_offset=False, norm_grad=False, with_dropout=False,
                                     return_grad=False, modulate_via_gate_grad=False, acti_map=None, perturb=0,
                                     init_fn=None):
@@ -1121,7 +1121,26 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
         else:
             a, b = noise_imp
             assert not return_grad, 'return_grad option not coded yet with noisy grad'
-            if asymmetric_noise:
+            if going_wild:
+                @jax.jit
+                def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
+                            _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
+                    if modulate_via_gate_grad:
+                        grads, new_state = modulated_grad_from_gate_stat(_params, _state, _batch)
+                    else:
+                        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                    key, next_key = jax.random.split(_key)
+                    flat_grads, unravel_fn = ravel_pytree(grads)
+                    added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
+                    updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+                    flat_updates, _ = ravel_pytree(updates)
+                    offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                    offset_mask *= (jnp.abs(flat_grads) == 0)
+                    added_noise = jnp.where(offset_mask, jnp.abs(added_noise), added_noise*jnp.abs(flat_grads))
+                    noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
+                    new_params = optax.apply_updates(_params, noisy_updates)
+                    return new_params, new_state, _opt_state, next_key
+            elif asymmetric_noise:
                 @jax.jit
                 def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
                             _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
@@ -1188,7 +1207,7 @@ def update_from_sgd_noise(loss, optimizer, with_dropout=False):
     return _update
 
 
-def update_from_gaussian_noise(loss, optimizer, lr, bs, with_dropout=False):
+def update_from_gaussian_noise(loss, optimizer, lr, bs, asymmetric_noise=False, with_dropout=False):
     """Modified version of update above that trains only on noisy part of signal (true grad - noisy grad)
        Solely used for small experiments meant to support theoretical assumptions"""
 
@@ -1202,7 +1221,9 @@ def update_from_gaussian_noise(loss, optimizer, lr, bs, with_dropout=False):
         flat_grads, unravel_fn = ravel_pytree(grads)
         next_key, key = jax.random.split(rdm_key)
         gauss_noise = jax.random.normal(key, flat_grads.shape) * jnp.sqrt(lr/bs)
-        gauss_noise *= (flat_grads>0).astype(jnp.int32)
+        if asymmetric_noise:
+            gauss_noise *= (jnp.abs(flat_grads) > 0).astype(jnp.int32)
+            # gauss_noise *= flat_grads
         gauss_noise = unravel_fn(gauss_noise)
         updates, _opt_state = optimizer.update(gauss_noise, _opt_state, _params)
         new_params = optax.apply_updates(_params, updates)
@@ -2029,7 +2050,7 @@ def one_cycle_schedule(training_steps, base_lr, final_lr, decay_bounds, scaling_
 
 
 def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling_factor):
-    warmup_steps = 0.05*training_steps  # warmup is done for 5% of training_steps
+    warmup_steps = training_steps//20  # warmup is done for 5% of training_steps
     return optax.warmup_cosine_decay_schedule(init_value=0.0, peak_value=base_lr,
                                               warmup_steps=warmup_steps, decay_steps=training_steps)
 
