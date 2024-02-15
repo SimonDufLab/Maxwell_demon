@@ -1024,7 +1024,7 @@ def grad_normalisation_per_layer(param_leaf):
 
 
 def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetric_noise=False,
-                                    live_only=True, noise_offset_only=False, norm_grad=False, with_dropout=False,
+                                    live_only=True, noise_offset_only=False, positive_offset=False, norm_grad=False, with_dropout=False,
                                     return_grad=False, modulate_via_gate_grad=False, acti_map=None, perturb=0,
                                     init_fn=None):
     """Learning rule (stochastic gradient descent)."""
@@ -1144,6 +1144,9 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     if noise_offset_only:  # Watch-out, will work even if no normalization layer with offset params
                         offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
                         added_noise = jnp.abs(added_noise) * offset_mask  # More efficient revival if solely increasing offset
+                    elif positive_offset:
+                        offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                        added_noise = jnp.where(offset_mask, jnp.abs(added_noise), added_noise)
                     noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
                     new_params = optax.apply_updates(_params, noisy_updates)
                     return new_params, new_state, _opt_state, next_key
