@@ -99,6 +99,7 @@ class ExpConfig:
     noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones. reverse if False
     noise_offset_only: bool = False  # Special option to only add positive noise to offset parameters of normalization layers
     positive_offset: bool = False  # Require noise_offset to be False to be considered
+    going_wild: bool = False  # This is not ok...
     noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
     noise_eta: float = 0.01  # Variance of added noise; can only be used with a reg_param_schedule that it will match
     noise_gamma: float = 0.0
@@ -371,6 +372,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        exclude_bias_bn_from_reg=exp_config.masked_reg)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
+                                                                going_wild=exp_config.going_wild,
                                                                 live_only=exp_config.noise_live_only,
                                                                 noise_offset_only=exp_config.noise_offset_only,
                                                                 positive_offset=exp_config.positive_offset,
@@ -401,6 +403,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        exclude_bias_bn_from_reg=exp_config.masked_reg)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
+                                                                going_wild=exp_config.going_wild,
                                                                 live_only=exp_config.noise_live_only,
                                                                 noise_offset_only=exp_config.noise_offset_only,
                                                                 positive_offset=exp_config.positive_offset,
@@ -557,6 +560,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                     update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
                                                                     exp_config.noise_imp, exp_config.asymmetric_noise,
+                                                                    going_wild=exp_config.going_wild,
                                                                     live_only=exp_config.noise_live_only,
                                                                     noise_offset_only=exp_config.noise_offset_only,
                                                                     positive_offset=exp_config.positive_offset,
@@ -608,6 +612,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
                 update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
+                                                                going_wild=exp_config.going_wild,
                                                                 live_only=exp_config.noise_live_only,
                                                                 noise_offset_only=exp_config.noise_offset_only,
                                                                 positive_offset=exp_config.positive_offset,
@@ -755,6 +760,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                         exp_config.asymmetric_noise,
                                                         live_only=exp_config.noise_live_only,
+                                                        going_wild=exp_config.going_wild,
                                                         noise_offset_only=exp_config.noise_offset_only,
                                                         positive_offset=exp_config.positive_offset,
                                                         with_dropout=with_dropout,
