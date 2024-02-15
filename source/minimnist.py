@@ -48,6 +48,7 @@ class ExpConfig:
     optimizer: str = "adam"
     noisy_part_of_signal_only: bool = False  # Take grad to be full-batch gradient minus minibatch gradient
     gauss_noise_only: bool = False
+    asymmetric_noise: bool = False
     activation: str = "relu"  # Activation function used throughout the model
     dataset: str = "mnist"
     dataset_size: Optional[int] = None  # How many example to keep from training dataset (to quickly overfit)
@@ -172,7 +173,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     elif exp_config.gauss_noise_only:
         gauss_noise_key = jax.random.PRNGKey(0)
         update_fn = utl.update_from_gaussian_noise(loss, opt, exp_config.lr,
-                                                   exp_config.train_batch_size, with_dropout=with_dropout)
+                                                   exp_config.train_batch_size,
+                                                   asymmetric_noise=exp_config.asymmetric_noise,
+                                                   with_dropout=with_dropout)
     else:
         update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
