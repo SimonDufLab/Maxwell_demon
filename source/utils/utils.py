@@ -1137,9 +1137,10 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
                     if positive_offset:
                         offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
                         offset_mask *= (jnp.abs(flat_grads) == 0)
-                        added_noise = jnp.where(offset_mask, jnp.abs(added_noise), added_noise*jnp.abs(flat_grads))
+                        added_noise = jnp.where(offset_mask, jnp.abs(added_noise),
+                                                jnp.clip(jnp.abs(flat_grads), a_min=0.00005/_var))
                     else:
-                        added_noise *= jnp.abs(flat_grads) # I maybe want to clip jnp.abs(flat_grads)
+                        added_noise *= jnp.clip(jnp.abs(flat_grads), a_min=0.00005/_var)
                     noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
                     new_params = optax.apply_updates(_params, noisy_updates)
                     return new_params, new_state, _opt_state, next_key
