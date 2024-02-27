@@ -663,6 +663,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             lin_net, raw_net = build_models(*lin_architecture, with_dropout=with_dropout)
 
         optimizer = optimizer_choice[exp_config.optimizer]
+        if "new_adam" in exp_config.optimizer:
+            optimizer = Partial(optimizer, t_f=exp_config.training_steps)
         opt_chain = []
         if "loschi" in exp_config.optimizer:  # Using reg_param parameters to control wd with those optimizers
             if exp_config.reg_param_schedule:
