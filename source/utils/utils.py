@@ -2744,6 +2744,88 @@ def adam_to_momentum(
     )
 
 
+def scale_by_adam_to_momentum_v2(
+    t_f,  # Total steps
+    b1: float = 0.9,
+    b2: float = 0.999,
+    dampening: float = 0.0,
+    alpha: float = 5.0,
+    eps: float = 1e-8,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[chex.ArrayDType] = None,
+) -> base.GradientTransformation:
+    """Gradually transform Adam rescaling into momentum rescaling
+    """
+
+    mu_dtype = optax._src.utils.canonicalize_dtype(mu_dtype)
+
+    def init_fn(params):
+        mu = jax.tree_util.tree_map(  # First moment
+            lambda t: jnp.zeros_like(t, dtype=mu_dtype), params)
+        nu = jax.tree_util.tree_map(jnp.zeros_like, params)  # Second moment
+        return optax._src.transform.ScaleByAdamState(count=jnp.zeros([], jnp.int32), mu=mu, nu=nu)
+
+    def scale_v(v, t):
+        return v * jnp.exp(-alpha * t / t_f) + (1 - jnp.exp(-alpha * t / t_f))
+
+    def update_fn(updates, state, params=None):
+        del params
+        # mu = optax._src.transform.update_moment(updates, state.mu, b1, 1)
+        mu = jax.tree_util.tree_map(lambda g, t: (1 - dampening) * g + b1 * t, updates, state.mu)  # More similart to base momentum optimizer
+        nu = optax._src.transform.update_moment_per_elem_norm(updates, state.nu, b2, 2)
+        count_inc = optax._src.numerics.safe_int32_increment(state.count)
+        mu_hat = optax._src.transform.bias_correction(mu, b1, count_inc)
+        nu_hat = optax._src.transform.bias_correction(nu, b2, count_inc)
+        updates = jax.tree_util.tree_map(
+            lambda m, v: m / scale_v(jnp.sqrt(v + eps_root) + eps, count_inc), mu_hat, nu_hat)
+        mu = optax._src.utils.cast_tree(mu, mu_dtype)
+        return updates, optax._src.transform.ScaleByAdamState(count=count_inc, mu=mu, nu=nu)
+
+    return base.GradientTransformation(init_fn, update_fn)
+
+
+def adam_to_momentum_v2(
+    learning_rate: ScalarOrSchedule,
+    t_f,  # Total steps
+    b1: float = 0.9,
+    b2: float = 0.999,
+    dampening: float = 0.0,
+    alpha: float = 5.0,
+    eps: float = 1e-8,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[Any] = None,
+) -> base.GradientTransformation:
+    """An optimizer that start as adam but gradually becomes momentum via gradual increase of eps parameter
+    """
+    return combine.chain(
+      scale_by_adam_to_momentum_v2(
+          t_f=t_f, b1=b1, b2=b2, dampening=dampening, alpha=alpha, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
+      _scale_by_learning_rate(learning_rate),
+    )
+
+
+def adamw_to_momentumw_v2(
+    learning_rate: ScalarOrSchedule,
+    t_f,  # Total steps
+    b1: float = 0.9,
+    b2: float = 0.999,
+    dampening: float = 0.0,
+    alpha: float = 5.0,
+    eps: float = 1e-8,
+    eps_root: float = 0.0,
+    mu_dtype: Optional[Any] = None,
+    weight_decay: float = 1e-4,
+    mask: Optional[Union[Any, Callable[[base.Params], Any]]] = None,
+) -> base.GradientTransformation:
+    """An optimizer that start as adam but gradually becomes momentum via gradual increase of eps parameter
+    """
+    return combine.chain(
+      scale_by_adam_to_momentum_v2(
+          t_f=t_f, b1=b1, b2=b2, dampening=dampening, alpha=alpha, eps=eps, eps_root=eps_root, mu_dtype=mu_dtype),
+      transform.add_decayed_weights(weight_decay, mask),
+      _scale_by_learning_rate(learning_rate),
+    )
+
 ##############################
 # Checkpointing
 ##############################
