@@ -28,6 +28,7 @@ from collections.abc import Iterable
 from itertools import cycle
 from pathlib import Path
 from dataclasses import dataclass
+from omegaconf import DictConfig
 
 import utils.scores as scr
 
@@ -2231,9 +2232,9 @@ def sgdw(
     The weight decay is multiplied by lr, consistent with pytorch implementation
     """
     return combine.chain(
-        transform.add_decayed_weights(weight_decay, mask),
         (transform.trace(decay=momentum, nesterov=nesterov, accumulator_dtype=accumulator_dtype)
             if momentum is not None else base.identity()),
+        transform.add_decayed_weights(weight_decay, mask),
         _scale_by_learning_rate(learning_rate)
         )
 
@@ -2826,6 +2827,7 @@ def adamw_to_momentumw_v2(
       _scale_by_learning_rate(learning_rate),
     )
 
+
 ##############################
 # Checkpointing
 ##############################
@@ -3201,3 +3203,23 @@ def get_init_fn(net, dummy_data):
         return net.init(rdm_key, dummy_data)[0]  # .init() return the tuple (params, state)
 
     return init_fn
+
+
+def reformat_dict_config(config: DictConfig):
+    """
+    Modifies the given Hydra DictConfig object in place,
+    setting any values that are the string 'None' to Python's NoneType.
+
+    This function is intended for cleaning up configuration data where
+    'None' strings should be interpreted as actual None values, which is
+    common in Hydra configurations for experiments.
+
+    Args:
+        config (DictConfig): An OmegaConf DictConfig instance representing a Hydra configuration.
+
+    Returns:
+        None: The modification is made in place, so there is no return value.
+    """
+    for key, value in config.items():
+        if value == 'None':  # Check if the value is 'None' (string)
+            config[key] = None  # Set the value to None (NoneType)
