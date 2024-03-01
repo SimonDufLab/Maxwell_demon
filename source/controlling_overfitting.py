@@ -2,6 +2,7 @@
 by applying either cdg_l1 or cdg_l2 loss"""
 
 import copy
+import dataclasses
 
 import omegaconf.listconfig
 import optax
@@ -55,7 +56,7 @@ class ExpConfig:
     mod_via_gate_grad: bool = False  # Use gate gradients to rescale weight gradients if True -> shitty, don't use
     lr: float = 1e-3
     gradient_clipping: bool = False
-    lr_schedule: str = "None"
+    lr_schedule: str = "constant"
     final_lr: float = 1e-6
     lr_decay_steps: Any = 5  # Number of epochs after which lr is decayed
     lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
@@ -63,6 +64,7 @@ class ExpConfig:
     eval_batch_size: int = 512
     death_batch_size: int = 512
     optimizer: str = "adam"
+    alpha_decay: float = 5.0  # Param controlling transition speed from adam to momentum in adam_to_momentum optimizers
     activation: str = "relu"  # Activation function used throughout the model
     shifted_relu: float = 0.0  # Shift value (b) applied on output before activation. To promote dead neurons
     dataset: str = "mnist"
@@ -92,7 +94,7 @@ class ExpConfig:
     dynamic_pruning: bool = False
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     prune_at_end: Any = None  # If prune after training, tuple like (reg_param, lr, additional_steps)
-    pruning_reg: str = "cdg_l2"
+    pruning_reg: Optional[str] = "cdg_l2"
     pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
     asymmetric_noise: bool = True  # Use an asymmetric noise addition, not applied to all neurons' weights
@@ -156,14 +158,15 @@ def run_exp(exp_config: ExpConfig) -> None:
     if exp_config.record_distribution_data:
         assert not exp_config.dynamic_pruning, "Dynamic pruning must be disabled to record meaningful distribution data"
 
-    if exp_config.regularizer == 'None':
-        exp_config.regularizer = None
-    if exp_config.wd_param == 'None':
-        exp_config.wd_param = None
-    if exp_config.reg_param_schedule == 'None':
-        exp_config.reg_param_schedule = None
-    if exp_config.prune_at_end == 'None':
-        exp_config.prune_at_end = None
+    utl.reformat_dict_config(exp_config)
+    # if exp_config.regularizer == 'None':
+    #     exp_config.regularizer = None
+    # if exp_config.wd_param == 'None':
+    #     exp_config.wd_param = None
+    # if exp_config.reg_param_schedule == 'None':
+    #     exp_config.reg_param_schedule = None
+    # if exp_config.prune_at_end == 'None':
+    #     exp_config.prune_at_end = None
     assert (not (("adamw" in exp_config.optimizer) and bool(
         exp_config.regularizer))) or bool(exp_config.wd_param), "Set wd_param if adamw is used with a regularization loss"
     if type(exp_config.size) == str:
@@ -664,7 +667,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         optimizer = optimizer_choice[exp_config.optimizer]
         if "new_adam" in exp_config.optimizer:
-            optimizer = Partial(optimizer, t_f=exp_config.training_steps)
+            optimizer = Partial(optimizer, t_f=exp_config.training_steps, alpha=exp_config.alpha_decay)
         opt_chain = []
         if "loschi" in exp_config.optimizer:  # Using reg_param parameters to control wd with those optimizers
             if exp_config.reg_param_schedule:
