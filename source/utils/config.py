@@ -75,7 +75,7 @@ regularizer_choice = (
 )
 
 lr_scheduler_choice = {
-    'None': constant_schedule,
+    'constant': constant_schedule,
     'fix_steps': fix_step_decay,
     'piecewise_constant': piecewise_constant_schedule,
     'cosine_decay': cosine_decay,
