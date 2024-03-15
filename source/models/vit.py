@@ -71,6 +71,7 @@ class FeedForward(hk.Module):
                                                 "following": block_name + self.gelu.name}
         self.activation_mapping[lin2_name] = {"preceding": block_name + self.gelu.name,
                                                 "following": None}
+        self.last_act_name = block_name + self.gelu.name
         return x, [activation,]
 
     def get_activation_mapping(self):
@@ -125,7 +126,7 @@ class TransfLayer(hk.Module):
             self.preceding_activation_name = None
 
         self.attn = PreNorm(Attention(dim, heads=heads, dim_head=dim_head))
-        self.ff = FeedForward(dim, mlp_dim, preceding_activation_name=self.preceding_activation_name)
+        self.ff = FeedForward(dim, mlp_dim, parent=self.preceding_activation_name)
         self.layer_norm = LayerNorm()
 
     def __call__(self, x):
@@ -156,14 +157,19 @@ class Transformer(hk.Module):
     def __call__(self, x):
         for attn, ff in self.layers:
             x = attn(x) + x
-            x = ff(x) + x
+            x = ff(x)[0] + x
         return x
 
 
 class VitFirstLayer(hk.Module):
     def __init__(self, *, image_size, patch_size, dim, heads, mlp_dim, pool='cls',
-                 dim_head=64):
+                 dim_head=64, parent: Optional[hk.Module] = None,):
         super(VitFirstLayer, self).__init__()
+        self.activation_mapping = {}
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
 
         image_height, image_width = pair(image_size)
         patch_height, patch_width = pair(patch_size)
@@ -199,7 +205,7 @@ class VitFirstLayer(hk.Module):
         # cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b)
         cls_tokens = jnp.tile(self.cls_token[None, :, :], (b, 1, 1))
 
-        x = jnp.concatenate([cls_tokens, x], axis=1)
+        x = jnp.concatenate([cls_tokens[0], x], axis=1)
         x += self.pos_embedding[:, :(n + 1)]
         # x = hk.dropout(hk.next_rng_key(), rate=0.0, x=x)
 
@@ -252,7 +258,11 @@ def vit_base_models(*, image_size, patch_size, num_classes, dim, depth, heads, m
 
     layers = [[Partial(VitFirstLayer, image_size=image_size, patch_size=patch_size, dim=dim, heads=heads, mlp_dim=mlp_dim, pool=pool, dim_head=dim_head)]]
     for i in range(depth-1):  # Already have 1 transformer layer in VitFirstLayer
-        layers += [Partial(TransfLayer, dim=dim, heads=heads, dim_head=dim_head, mlp_dim=mlp_dim)]
+        layers.append([Partial(TransfLayer, dim=dim, heads=heads, dim_head=dim_head, mlp_dim=mlp_dim)])
+    layers.append([Partial(VitLastLayer, num_classes=num_classes, pool=pool)])
+
+    return layers
+
 
 class VitBase(hk.Module):
     def __init__(self, *, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3,
@@ -300,7 +310,7 @@ class VitBase(hk.Module):
         # cls_tokens = repeat(self.cls_token, '() n d -> b n d', b=b)
         cls_tokens = jnp.tile(self.cls_token[None, :, :], (b, 1, 1))
 
-        x = jnp.concatenate([cls_tokens, x], axis=1)
+        x = jnp.concatenate([cls_tokens[0], x], axis=1)
         x += self.pos_embedding[:, :(n + 1)]
         # x = hk.dropout(hk.next_rng_key(), rate=0.0, x=x)
 
@@ -317,7 +327,7 @@ class VitBase(hk.Module):
 
 
 def ViT(**kwargs):
-    @hk.transform
+    @hk.transform_with_state
     def inner(img):
         return VitBase(**kwargs)(img)
 
