@@ -35,7 +35,7 @@ import utils.utils as utl
 import utils.scores as scr
 from utils.utils import build_models
 from utils.config import activation_choice, optimizer_choice, dataset_choice, dataset_target_cardinality
-from utils.config import regularizer_choice, architecture_choice, lr_scheduler_choice, bn_config_choice
+from utils.config import regularizer_choice, architecture_choice, bn_architecture_choice, lr_scheduler_choice, bn_config_choice
 from utils.config import reg_param_scheduler_choice
 from utils.config import pick_architecture
 
@@ -145,7 +145,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         optimizer_choice.keys())
     assert exp_config.dataset in dataset_choice.keys(), "Currently supported datasets: " + str(dataset_choice.keys())
     assert exp_config.regularizer in regularizer_choice, "Currently supported regularizers: " + str(regularizer_choice)
-    assert exp_config.architecture in architecture_choice.keys(), "Current architectures available: " + str(
+    assert exp_config.architecture in architecture_choice.keys() or exp_config.architecture in bn_architecture_choice.keys(), "Current architectures available: " + str(
         architecture_choice.keys())
     assert exp_config.activation in activation_choice.keys(), "Current activation function available: " + str(
         activation_choice.keys())
@@ -235,7 +235,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     elif exp_config.bn_config == "deactivate_small_units":
         log_path = "./exploration__deactivate_small_units"
     else:
-        log_path = "./Post_ICML2024_main"  # "./preempt_test"  #
+        log_path = "./ICML2024_rebuttal_main"  # "./preempt_test"  #
     if exp_config.dataset == "imagenet":
         log_path = "./imagenet_exps"
     # Logger config

@@ -19,6 +19,7 @@ from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.vgg16 import vgg16
 from models.resnet import resnet18, resnet50, srigl_resnet18, srigl_resnet50
+from models.vit import vit_b_4
 
 
 baseline_pruning_method_choice = {
@@ -138,6 +139,7 @@ bn_architecture_choice = {
     "srigl_resnet18_pt_init": Partial(srigl_resnet18, initializer="pt_default"),
     "resnet50": resnet50,
     "srigl_resnet50": srigl_resnet50,
+    "vit_b_4": vit_b_4,
 }
 
 bn_config_choice = {
@@ -160,6 +162,7 @@ activation_choice = {
     "tanh": utl.TanhActivationModule,
     "linear": utl.IdentityActivationModule,
     "threlu": utl.ThreluActivationModule,
+    "gelu": utl.GeluActivationModule
 }
 
 activations_pre_relu = {
