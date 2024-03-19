@@ -3073,6 +3073,9 @@ def get_total_neurons(architecture, sizes):
     elif "resnet50" in architecture:
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes] + [sizes, sizes, sizes*4]*3 + [2*sizes, 2*sizes, 2*sizes*4]*4 + [4*sizes, 4*sizes, 4*sizes*4]*6 + [8*sizes, 8*sizes, 8*sizes*4]*3  # + [16*sizes]
+    elif "vit_b_4" in architecture:
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes,]*12
     else:
         raise NotImplementedError("get_size not implemented for current architecture")
 
