@@ -14,7 +14,7 @@ import jax.numpy as jnp
 # from einops import rearrange, repeat
 
 from utils.utils import GeluActivationModule
-from typing import Optional
+from typing import Optional, Sequence, Union
 
 # Helper functions
 
@@ -44,7 +44,7 @@ class PreNorm(hk.Module):
 
 
 class FeedForward(hk.Module):
-    def __init__(self, dim, hidden_dim, parent: Optional[hk.Module] = None):
+    def __init__(self, dim, hidden_dim, activation_module: hk.Module = GeluActivationModule, parent: Optional[hk.Module] = None):
         super(FeedForward, self).__init__()
         self.activation_mapping = {}
         if parent:
@@ -54,7 +54,7 @@ class FeedForward(hk.Module):
 
         self.linear1 = hk.Linear(hidden_dim)
         self.linear2 = hk.Linear(dim)
-        self.gelu = GeluActivationModule()
+        self.gelu = activation_module()
 
     def __call__(self, x):
         block_name = self.name + "/~/"
@@ -117,7 +117,8 @@ class Attention(hk.Module):
 
 
 class TransfLayer(hk.Module):
-    def __init__(self, dim, heads, dim_head, mlp_dim, parent: Optional[hk.Module] = None):
+    def __init__(self, dim, heads, dim_head, mlp_dim, activation_fn: hk.Module = GeluActivationModule,
+                 parent: Optional[hk.Module] = None):
         super(TransfLayer, self).__init__()
         self.activation_mapping = {}
         if parent:
@@ -126,14 +127,15 @@ class TransfLayer(hk.Module):
             self.preceding_activation_name = None
 
         self.attn = PreNorm(Attention(dim, heads=heads, dim_head=dim_head))
-        self.ff = FeedForward(dim, mlp_dim, parent=self.preceding_activation_name)
+        self.ff = FeedForward(dim, mlp_dim, activation_module=activation_fn, parent=self.preceding_activation_name)
         self.layer_norm = LayerNorm()
 
     def __call__(self, x):
-        x = self.attn(x)
-        x = self.layer_norm(x)
+        x = self.attn(x) + x
+        x_norm = self.layer_norm(x)
+        mlp_out, activations = self.ff(x_norm)
 
-        return self.ff(x)
+        return mlp_out + x, activations
 
     def get_activation_mapping(self):
         return self.ff.get_activation_mapping()
@@ -163,7 +165,7 @@ class Transformer(hk.Module):
 
 class VitFirstLayer(hk.Module):
     def __init__(self, *, image_size, patch_size, dim, heads, mlp_dim, pool='cls',
-                 dim_head=64, parent: Optional[hk.Module] = None,):
+                 dim_head=64, activation_fn: hk.Module = GeluActivationModule, parent: Optional[hk.Module] = None,):
         super(VitFirstLayer, self).__init__()
         self.activation_mapping = {}
         if parent:
@@ -187,7 +189,7 @@ class VitFirstLayer(hk.Module):
         self.pos_embedding = hk.get_parameter('pos_embedding', shape=[1, num_patches + 1, dim], init=jnp.zeros)
         self.cls_token = hk.get_parameter('cls_token', shape=[1, 1, dim], init=jnp.zeros)
 
-        self.init_transformer = TransfLayer(dim, heads, dim_head, mlp_dim)
+        self.init_transformer = TransfLayer(dim, heads, dim_head, mlp_dim, activation_fn=activation_fn)
 
     def __call__(self, img):
 
@@ -254,14 +256,16 @@ class VitLastLayer(hk.Module):
 
 
 def vit_base_models(*, image_size, patch_size, num_classes, dim, depth, heads, mlp_dim, pool='cls', channels=3,
-                 dim_head=64):
+                 dim_head=64, activation_fn=GeluActivationModule):
 
-    layers = [[Partial(VitFirstLayer, image_size=image_size, patch_size=patch_size, dim=dim, heads=heads, mlp_dim=mlp_dim, pool=pool, dim_head=dim_head)]]
-    for i in range(depth-1):  # Already have 1 transformer layer in VitFirstLayer
-        layers.append([Partial(TransfLayer, dim=dim, heads=heads, dim_head=dim_head, mlp_dim=mlp_dim)])
+    layers = [[Partial(VitFirstLayer, image_size=image_size, patch_size=patch_size, dim=dim, heads=heads,
+                       mlp_dim=mlp_dim[0], pool=pool, dim_head=dim_head, activation_fn=activation_fn)]]
+    for i in range(1, depth):  # Already have 1 transformer layer in VitFirstLayer
+        layers.append([Partial(TransfLayer, dim=dim, heads=heads, dim_head=dim_head, mlp_dim=mlp_dim[i],
+                               activation_fn=activation_fn)])
     layers.append([Partial(VitLastLayer, num_classes=num_classes, pool=pool)])
 
-    return layers
+    return layers, None
 
 
 class VitBase(hk.Module):
@@ -332,6 +336,28 @@ def ViT(**kwargs):
         return VitBase(**kwargs)(img)
 
     return inner
+
+
+def vit_b_4(size: Union[int, Sequence[int]],
+            num_classes: int,
+            activation_fn: hk.Module = GeluActivationModule,
+            bn_config: dict = {},
+            ):
+    if type(size) == int:
+        sizes = [size,]*12
+    else:
+        sizes = size
+
+    return vit_base_models(
+        image_size=32,
+        patch_size=4,
+        num_classes=num_classes,
+        dim=384,
+        depth=12,
+        heads=12,
+        mlp_dim=sizes,
+        activation_fn=activation_fn,
+    )
 
 
 if __name__ == '__main__':
