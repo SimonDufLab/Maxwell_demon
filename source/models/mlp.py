@@ -7,6 +7,7 @@ from jax.nn import relu, tanh
 from utils.utils import ReluActivationModule, IdentityActivationModule
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
+from haiku._src.base import current_name
 from models.bn_base_unit import Linear_BN, Base_BN
 from models.dropout_units import Base_Dropout
 
@@ -27,6 +28,7 @@ class LinearLayer(hk.Module):
             parent: Optional[hk.Module] = None):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -41,7 +43,7 @@ class LinearLayer(hk.Module):
             self.activation_layer = None
 
     def __call__(self, x):
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
         x = jax.vmap(jnp.ravel, in_axes=0)(x)  # flatten
         x = self.fc_layer(x)
         if self.with_bn:

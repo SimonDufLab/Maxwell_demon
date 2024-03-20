@@ -354,9 +354,31 @@ def vit_b_4(size: Union[int, Sequence[int]],
 
     return vit_base_models(
         image_size=32,
-        patch_size=384,
+        patch_size=4,
         num_classes=num_classes,
-        dim=4,
+        dim=384,
+        depth=12,
+        heads=12,
+        mlp_dim=sizes,
+        activation_fn=activation_fn,
+    )
+
+
+def vit_b_16(size: Union[int, Sequence[int]],
+            num_classes: int,
+            activation_fn: hk.Module = GeluActivationModule,
+            bn_config: dict = {},
+            ):
+    if type(size) == int:
+        sizes = [size,]*12
+    else:
+        sizes = size
+
+    return vit_base_models(
+        image_size=224,
+        patch_size=16,
+        num_classes=num_classes,
+        dim=768,
         depth=12,
         heads=12,
         mlp_dim=sizes,

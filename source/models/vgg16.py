@@ -6,6 +6,7 @@ from jax.tree_util import Partial
 from utils.utils import ReluActivationModule, MaxPool, AvgPool
 from typing import Optional, Mapping, Union
 
+from haiku._src.base import current_name
 from models.bn_base_unit import Base_BN, Conv_BN, Linear_BN
 from models.dropout_units import Base_Dropout
 
@@ -24,6 +25,7 @@ class LogitsVGG(hk.Module):
             parent: Optional[hk.Module] = None):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -32,7 +34,7 @@ class LogitsVGG(hk.Module):
 
     def __call__(self, inputs):
         activations = []
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
         x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
         x = self.logits_layer(x)
 
