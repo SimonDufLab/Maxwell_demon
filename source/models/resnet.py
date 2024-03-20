@@ -14,6 +14,7 @@ from haiku.nets import ResNet
 from haiku._src.nets.resnet import check_length
 from haiku._src.utils import replicate
 from haiku._src.conv import to_dimension_numbers
+from haiku._src.base import current_name
 
 FloatStrOrBool = Union[str, float, bool]
 
@@ -248,6 +249,7 @@ class ResnetBlockV1(hk.Module):
     ):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -316,7 +318,7 @@ class ResnetBlockV1(hk.Module):
     def __call__(self, inputs):
         out = shortcut = inputs
         activations = []
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
 
         if self.use_projection:
             shortcut = self.proj_conv(shortcut)
@@ -401,7 +403,7 @@ class ResnetBlockV2(ResnetBlockV1):
     def __call__(self, inputs):
         out = shortcut = inputs
         activations = []
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
 
         if self.with_bn:
             out = self.delayed_norm(out, self.is_training)
@@ -473,6 +475,7 @@ class ResnetBlockV3(hk.Module):
     ):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -540,7 +543,7 @@ class ResnetBlockV3(hk.Module):
     def __call__(self, inputs):
         out = shortcut = inputs
         activations = []
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
 
         if self.use_projection:
             shortcut = self.proj_conv(shortcut)
@@ -608,6 +611,7 @@ class ResnetInit(hk.Module):
             parent: Optional[hk.Module] = None):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -621,7 +625,7 @@ class ResnetInit(hk.Module):
 
     def __call__(self, inputs):
         activations = []
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
         x = self.conv(inputs)
         # if self.with_bn:
         #     x = self.bn(x, is_training=self.is_training)
@@ -717,6 +721,7 @@ class LinearBlockV1(hk.Module):
     ):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         self.is_training = is_training
         self.with_bn = with_bn
         if parent:
@@ -756,7 +761,7 @@ class LinearBlockV1(hk.Module):
                 x = self.delayed_norm(x, self.is_training)
             x = self.delayed_activation(x)
             activations.append(x)
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
         if not self.disable_final_pooling:
             x = self.mean_layer(x)
             if self.final_proj_instead_pool:
@@ -809,6 +814,7 @@ class LinearBlockV2(hk.Module):
             avg_pool_layer: bool = False):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -829,7 +835,7 @@ class LinearBlockV2(hk.Module):
 
     def __call__(self, inputs):
         activations = []
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
         x = self.mean_layer(inputs)
         # x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten
         x = self.fc_layer(x)
