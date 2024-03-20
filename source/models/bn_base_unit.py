@@ -5,6 +5,8 @@ import jax
 import jax.numpy as jnp
 from typing import Optional
 
+from haiku._src.base import current_name
+
 # global batch normalization configuration
 base_bn_config = {"create_scale": True, "create_offset": True, "decay_rate": 0.999}
 
@@ -39,6 +41,7 @@ class Linear_BN(hk.Module):
             parent: Optional[hk.Module] = None,):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -49,7 +52,7 @@ class Linear_BN(hk.Module):
         self.activation_fn = activation_fn()
 
     def __call__(self, inputs):
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
         x = jax.vmap(jnp.ravel, in_axes=0)(inputs)  # flatten if need be
         x = self.linear(x)
         x = self.bn(x, is_training=self.is_training)
@@ -88,6 +91,7 @@ class Conv_BN(hk.Module):
             parent: Optional[hk.Module] = None,):
         super().__init__(name=name)
         self.activation_mapping = {}
+        self.bundle_name = current_name()
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -98,7 +102,7 @@ class Conv_BN(hk.Module):
         self.activation_fn = activation_fn()
 
     def __call__(self, inputs):
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
         x = self.conv(inputs)
         x = self.bn(x, is_training=self.is_training)
         x = self.activation_fn(x)
