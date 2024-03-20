@@ -4,6 +4,7 @@ from functools import partial
 
 import haiku as hk
 from haiku import PRNGSequence
+from haiku._src.base import current_name
 
 import jax
 from jax import random, nn
@@ -55,9 +56,10 @@ class FeedForward(hk.Module):
         self.linear1 = hk.Linear(hidden_dim)
         self.linear2 = hk.Linear(dim)
         self.gelu = activation_module()
+        self.bundle_name = current_name()
 
     def __call__(self, x):
-        block_name = self.name + "/~/"
+        block_name = self.bundle_name + "/~/"
         x = self.linear1(x)
         x = self.gelu(x)
         activation = x
@@ -69,6 +71,8 @@ class FeedForward(hk.Module):
         lin2_name = block_name + self.linear2.name
         self.activation_mapping[lin1_name] = {"preceding": None,
                                                 "following": block_name + self.gelu.name}
+        self.activation_mapping[block_name + self.gelu.name] = {"preceding": None,
+                                              "following": block_name + self.gelu.name}
         self.activation_mapping[lin2_name] = {"preceding": block_name + self.gelu.name,
                                                 "following": None}
         self.last_act_name = block_name + self.gelu.name
@@ -350,9 +354,9 @@ def vit_b_4(size: Union[int, Sequence[int]],
 
     return vit_base_models(
         image_size=32,
-        patch_size=4,
+        patch_size=384,
         num_classes=num_classes,
-        dim=384,
+        dim=4,
         depth=12,
         heads=12,
         mlp_dim=sizes,
