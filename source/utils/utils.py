@@ -2631,19 +2631,19 @@ def get_activation_mapping(net, inputs):
     params, state = model_transformed.init(jax.random.PRNGKey(42), inputs)
     (output, activation_mapping, parent_name), state = model_transformed.apply(params, state, jax.random.PRNGKey(42), inputs)
 
-    def prepend_parent_name_to_string(s):
-        if isinstance(s, str):
-            return parent_name + '/' + s
-        return s
+    # def prepend_parent_name_to_string(s):
+    #     if isinstance(s, str):
+    #         return parent_name + '/' + s
+    #     return s
+    #
+    # new_activation_mapping = {}
+    #
+    # for key, value in activation_mapping.items():
+    #     new_key = parent_name + '/' + key
+    #     new_value = jax.tree_map(prepend_parent_name_to_string, value)
+    #     new_activation_mapping[new_key] = new_value
 
-    new_activation_mapping = {}
-
-    for key, value in activation_mapping.items():
-        new_key = parent_name + '/' + key
-        new_value = jax.tree_map(prepend_parent_name_to_string, value)
-        new_activation_mapping[new_key] = new_value
-
-    return new_activation_mapping
+    return activation_mapping
 
 
 ##############################
