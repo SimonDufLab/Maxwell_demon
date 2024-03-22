@@ -57,6 +57,7 @@ class ExpConfig:
     lr: float = 1e-3
     gradient_clipping: bool = False
     lr_schedule: str = "constant"
+    warmup_ratio: float = 0.05  # ratio of total steps used for warming up lr, when applicable
     final_lr: float = 1e-6
     lr_decay_steps: Any = 5  # Number of epochs after which lr is decayed
     lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
@@ -270,6 +271,12 @@ def run_exp(exp_config: ExpConfig) -> None:
             with_bn=True).keys(), "Current architectures available with batchnorm: " + str(
             pick_architecture(with_bn=True).keys())
         net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
+
+    # warmup:
+    if 'warmup' in exp_config.lr_schedule:
+        sched_config = {"warmup_ratio": exp_config.warmup_ratio}
+    else:
+        sched_config = {}
 
     # Load the different dataset
     if exp_config.kept_classes:
@@ -713,7 +720,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
                                                                       exp_config.final_lr,
                                                                       decay_boundaries,
-                                                                      exp_config.lr_decay_scaling_factor)
+                                                                      exp_config.lr_decay_scaling_factor,
+                                                                      **sched_config)
             opt_chain.append(optimizer(lr_schedule))
         opt = optax.chain(*opt_chain)
 
