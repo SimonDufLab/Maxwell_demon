@@ -14,7 +14,7 @@ import jax.numpy as jnp
 # from einops import rearrange, repeat
 
 from utils.utils import GeluActivationModule
-from models.vit import IdentityLayer
+from models.vit import IdentityLayer, PreNorm, FeedForward
 from typing import Optional
 
 # Helper functions
@@ -62,3 +62,82 @@ class MaskedAttention(hk.Module):
 
         # out = hk.dropout(hk.next_rng_key(), rate=0.0, x=out)
         return out
+
+
+class TransfLayer(hk.Module):
+    def __init__(self, dim, heads, attn_dim, mlp_dim, activation_fn: hk.Module = GeluActivationModule,
+                 parent: Optional[hk.Module] = None):
+        super(TransfLayer, self).__init__()
+        self.activation_mapping = {}
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
+
+        self.attn = MaskedAttention(dim, heads=heads, attn_dim=attn_dim)
+        self.ff = FeedForward(dim, mlp_dim, activation_module=activation_fn, parent=self.preceding_activation_name)
+        self.layer_norm1 = LayerNorm()
+        self.layer_norm2 = LayerNorm()
+
+    def __call__(self, inputs):
+        x, mask = inputs
+        x_norm = self.layer_norm1(x)
+        x = self.attn(x_norm, mask) + x
+        x_norm = self.layer_norm2(x)
+        mlp_out, activations = self.ff(x_norm)
+
+        return (mlp_out + x, mask), activations
+
+    def get_activation_mapping(self):
+        return self.ff.get_activation_mapping()
+
+    def get_last_activation_name(self):
+        self.ff.get_last_activation_name()
+
+
+class InitLayer(hk.Module):
+    def __init__(self, vocab_size, max_length, heads, hidden_dim, attn_dim, mlp_dim, dropout=0.1,
+                 activation_fn: hk.Module = GeluActivationModule, parent: Optional[hk.Module] = None,):
+        super(InitLayer, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.max_length = max_length
+        self.embeddings = hk.Embed(vocab_size, hidden_dim)
+        self.positions = hk.Embed(max_length, hidden_dim)
+        self.init_transformer = TransfLayer(hidden_dim, heads, attn_dim, mlp_dim, activation_fn=activation_fn)
+
+    def __call__(self, inputs):
+        x, attn_mask = inputs
+        initial_pos = 0
+        assert initial_pos+x.shape[1] <= self.max_length, 'sequence too long'
+        x = self.embeddings(x) * jnp.sqrt(self.hidden_dim) + self.positions.weight[initial_pos:initial_pos+x.shape[1], :]
+        # Processing a single transformer block
+        outputs = self.init_transformer((x, attn_mask))
+        return outputs
+
+
+class LastLayer(hk.Module):
+    def __init__(self, *, num_classes, pool='cls', parent: Optional[hk.Module] = None,):
+        super(LastLayer, self).__init__()
+        self.activation_mapping = {}
+        if parent:
+            self.preceding_activation_name = parent.get_last_activation_name()
+        else:
+            self.preceding_activation_name = None
+
+        self.pool = pool
+
+        self.mlp_head = hk.Sequential([
+            LayerNorm(),
+            hk.Linear(num_classes)
+        ])
+
+    def __call__(self, inputs):
+        x, mask = inputs
+        if self.pool == 'mean':
+            x = jnp.mean(x, axis=1)
+        else:
+            x = x[:, 0]
+
+        x = self.mlp_head(x)
+
+        return x, []

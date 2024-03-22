@@ -2064,8 +2064,8 @@ def one_cycle_schedule(training_steps, base_lr, final_lr, decay_bounds, scaling_
     return optax.cosine_onecycle_schedule(training_steps, base_lr)
 
 
-def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling_factor):
-    warmup_steps = training_steps//20  # warmup is done for 5% of training_steps
+def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling_factor, warmup_ratio=0.05):
+    warmup_steps = training_steps*warmup_ratio  # warmup is done for 5% of training_steps
     return optax.warmup_cosine_decay_schedule(init_value=0.0, peak_value=base_lr,
                                               warmup_steps=warmup_steps, decay_steps=training_steps)
 
