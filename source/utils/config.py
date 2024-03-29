@@ -185,6 +185,7 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
     "cifar10-ffcv": 10,
     "cifar100": 100,
     "imagenet": 1000,
+    "imagenet_vit": 1000,
 }
 
 pruning_criterion_choice = {
