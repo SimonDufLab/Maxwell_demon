@@ -13,7 +13,8 @@ import numpy as np
 import optax
 import tensorflow as tf
 import tensorflow_datasets as tfds
-import tensorflow_models as tfm
+# import tensorflow_models as tfm
+# from tensorflow_models.vision.ops.augment import RandAugment
 import chex
 import pickle
 import signal
@@ -32,6 +33,8 @@ from dataclasses import dataclass
 from omegaconf import DictConfig
 
 import utils.scores as scr
+from utils.augment.augment import RandAugment
+from utils.augment.augment import MixupAndCutmix
 
 # from haiku._src.dot import to_graph
 # import networkx as nx
@@ -775,7 +778,10 @@ def accuracy_given_model(model, with_dropout=False):
     @jax.jit
     def _accuracy(_params: hk.Params, _state: hk.State, _batch: Batch) -> jnp.ndarray:
         predictions, _ = model_apply_fn(_params, _state, x=_batch, return_activations=False, is_training=False)
-        return jnp.mean(jnp.argmax(predictions, axis=-1) == _batch[1])
+        if _batch[1].ndim > 1:
+            return jnp.mean(jnp.argmax(predictions, axis=-1) == jnp.argmax(_batch[1], axis=1))
+        else:
+            return jnp.mean(jnp.argmax(predictions, axis=-1) == _batch[1])
 
     return _accuracy
 
@@ -911,7 +917,10 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         def _loss(params: hk.Params, state: hk.State, batch: Batch, dropout_key: Any, _reg_param: float = reg_param) -> Union[jnp.ndarray, Any]:
             next_dropout_key, rng = jax.random.split(dropout_key)
             (logits, activations), state = model.apply(params, state, rng, batch, return_activations=True, is_training=is_training)
-            labels = jax.nn.one_hot(batch[1], classes)
+            if batch[1].ndim < 2:
+                labels = jax.nn.one_hot(batch[1], classes)
+            else:
+                labels = batch[1]
             if label_smoothing > 0:
                 labels = labels * (1 - label_smoothing) + label_smoothing / classes
 
@@ -942,7 +951,10 @@ def ce_loss_given_model(model, regularizer=None, reg_param=1e-4, classes=None, i
         @jax.jit
         def _loss(params: hk.Params, state: hk.State, batch: Batch, _reg_param: float = reg_param) -> Union[jnp.ndarray, Any]:
             (logits, activations), state = model_apply_fn(params, state, x=batch, return_activations=True, is_training=is_training)
-            labels = jax.nn.one_hot(batch[1], classes)
+            if batch[1].ndim < 2:
+                labels = jax.nn.one_hot(batch[1], classes)
+            else:
+                labels = batch[1]
             if label_smoothing > 0:
                 labels = labels * (1 - label_smoothing) + label_smoothing / classes
 
@@ -1321,7 +1333,7 @@ def augment_train_imagenet_dataset_res50(image, label):
     image = tf.image.random_crop(image, [224, 224, 3])  # assuming image has 3 color channels
     # Randomly flip the image horizontally
     image = tf.image.random_flip_left_right(image)
-    return image, label
+    return image, tf.one_hot(label, 1000)
 
 
 @tf.function
@@ -1331,9 +1343,9 @@ def augment_train_imagenet_dataset_vit(image, label):
     image = tf.image.random_flip_left_right(image)
 
     # RandAugment
-    image = tfm.vision.augment.RandomAugment(magnitude=9, interpolation='BILINEAR')(image)
+    image = RandAugment(magnitude=9).distort(image)
     # MixUp and CutMix
-    image, label = tfm.vision.augment.MixupAndCutmix(num_classes=1000, mixup_alpha=0.2, cutmix_alpha=1.0,
+    image, label = MixupAndCutmix(num_classes=1000, mixup_alpha=0.2, cutmix_alpha=1.0,
                                                      label_smoothing=0.11)(image, label)
     return image, label
 
@@ -1341,7 +1353,7 @@ def augment_train_imagenet_dataset_vit(image, label):
 @tf.function
 def process_test_imagenet_dataset(image, label):
     image = tf.image.central_crop(image, 224/256)  # assuming input image size is 256x256
-    return image, label
+    return image, tf.one_hot(label, 1000)
 
 
 @tf.function
@@ -1754,16 +1766,16 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     ds = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
     # ds = ds.repeat()
     if other_bs:
-        ds1 = ds.batch(batch_size)
+        # ds1 = ds.batch(batch_size)
         if is_training:  # Only ds1 takes into account 'is_training' flag
             # ds1 = ds.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
-            # ds1 = ds.batch(batch_size)
+            ds1 = ds.batch(batch_size)
             if data_augmentation:
                 ds1 = ds1.map(lambda x, y: (augmentation_routine(x, training=True), y), num_parallel_calls=tf.data.AUTOTUNE)
                 ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
             # ds1 = ds1.shuffle(ds_size, seed=0, reshuffle_each_iteration=True)
         # else:
-        #     ds1 = ds.batch(batch_size)
+        #     ds1 = ds1.batch(batch_size)
         ds1 = ds1.repeat()
         # if data_augmentation:  # Resize as well during test if data augmentation
         #     ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
