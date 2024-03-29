@@ -63,6 +63,7 @@ dataset_choice = {
     # "cifar10-torch": load_cifar10_torch,
     "cifar100": load_cifar100_tf,
     'imagenet': load_imagenet_tf,
+    'imagenet_vit': Partial(load_imagenet_tf, dataset="imagenet_vit")
 }
 
 regularizer_choice = (
