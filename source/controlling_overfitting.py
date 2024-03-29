@@ -140,7 +140,10 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if "imagenet" in exp_config.dataset:
         dataset_dir = exp_config.dataset
-        exp_config.dataset = "imagenet"
+        if "vit" in exp_config.architecture:
+            exp_config.dataset = "imagenet_vit"
+        else:
+            exp_config.dataset = "imagenet"
 
     assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(
         optimizer_choice.keys())
@@ -187,7 +190,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
-    elif exp_config.dataset == "imagenet":
+    elif "imagenet" in exp_config.dataset:
         exp_name_ = "imgnet_"+exp_name
     else:
         exp_name_ = exp_name
@@ -237,7 +240,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         log_path = "./exploration__deactivate_small_units"
     else:
         log_path = "./ICML2024_rebuttal_main"  # "./preempt_test"  #
-    if exp_config.dataset == "imagenet":
+    if "imagenet" in exp_config.dataset:
         log_path = "./imagenet_exps"
     # Logger config
     exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash, force_resume=True)
@@ -287,7 +290,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         kept_indices = None
     load_data = dataset_choice[exp_config.dataset]
-    if exp_config.dataset == 'imagenet':
+    if 'imagenet' in exp_config.dataset:
         load_data = Partial(load_data, dataset_dir)
     eval_size = exp_config.eval_batch_size
     death_minibatch_size = exp_config.death_batch_size
@@ -305,7 +308,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
     steps_per_epoch = train_ds_size // exp_config.train_batch_size
-    if exp_config.dataset == 'imagenet':
+    if 'imagenet' in exp_config.dataset:
         partial_train_ds_size = train_ds_size/1000  # .1% of dataset used for evaluation on train
         test_death = train_eval  # Don't want to prefetch too many ds
     else:
@@ -587,7 +590,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
                     full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
-                if exp_config.dataset != "imagenet":
+                if "imagenet" not in exp_config.dataset:
                     train_acc_whole_ds = full_train_acc_fn(params, state, train_eval)
                     exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
                                   step=step,
@@ -707,7 +710,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         if exp_config.optimizer == "adam_to_momentum":  # Setting transition steps to total # of steps
             optimizer = Partial(optimizer, transition_steps=exp_config.training_steps)
         if exp_config.gradient_clipping:
-            opt_chain.append(optax.clip(10))
+            opt_chain.append(optax.clip_by_global_norm(1.0))
 
         if 'noisy' in exp_config.optimizer:  # TODO: kill this
             opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,

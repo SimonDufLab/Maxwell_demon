@@ -63,6 +63,7 @@ dataset_choice = {
     # "cifar10-torch": load_cifar10_torch,
     "cifar100": load_cifar100_tf,
     'imagenet': load_imagenet_tf,
+    'imagenet_vit': Partial(load_imagenet_tf, dataset="imagenet_vit")
 }
 
 regularizer_choice = (
@@ -184,6 +185,7 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
     "cifar10-ffcv": 10,
     "cifar100": 100,
     "imagenet": 1000,
+    "imagenet_vit": 1000,
 }
 
 pruning_criterion_choice = {
