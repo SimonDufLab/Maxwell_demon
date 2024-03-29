@@ -13,6 +13,7 @@ import numpy as np
 import optax
 import tensorflow as tf
 import tensorflow_datasets as tfds
+import tensorflow_models as tfm
 import chex
 import pickle
 import signal
@@ -1315,16 +1316,26 @@ srigl_data_augmentation_tf = tf.keras.Sequential([
 
 
 @tf.function
-def augment_train_imagenet_dataset(image, label):
+def augment_train_imagenet_dataset_res50(image, label):
     # Randomly crop the image
     image = tf.image.random_crop(image, [224, 224, 3])  # assuming image has 3 color channels
     # Randomly flip the image horizontally
     image = tf.image.random_flip_left_right(image)
     return image, label
 
-# process_test_imagenet_dataset = tf.keras.Sequential([
-    # tf.keras.layers.CenterCrop(224, 224)
-# ])
+
+@tf.function
+def augment_train_imagenet_dataset_vit(image, label):
+    # Image is already cropped
+    # Randomly flip the image horizontally
+    image = tf.image.random_flip_left_right(image)
+
+    # RandAugment
+    image = tfm.vision.augment.RandomAugment(magnitude=9, interpolation='BILINEAR')(image)
+    # MixUp and CutMix
+    image, label = tfm.vision.augment.MixupAndCutmix(num_classes=1000, mixup_alpha=0.2, cutmix_alpha=1.0,
+                                                     label_smoothing=0.11)(image, label)
+    return image, label
 
 
 @tf.function
@@ -1353,7 +1364,67 @@ def resize_tf_dataset(images, labels, dataset, is_training=False):
         else:
             # Resize images to 256x256 when not training
             images = tf.image.resize(images, [256, 256])
+    elif dataset == 'imagenet_vit':
+        if is_training:
+            # Define parameters for the crop
+            size = 224
+            scale = (0.08, 1.0)  # Commonly used scale range for RandomResizedCrop
+            ratio = (3. / 4., 4. / 3.)  # Commonly used aspect ratio range for RandomResizedCrop
+
+            # Apply random resized crop to each image in the batch
+            images = tf.map_fn(lambda img: random_resized_crop(img, size, scale, ratio), images)
+        else:
+            # Resize images to 256x256 when not training
+            images = tf.image.resize(images, [256, 256])
     return images, labels
+
+
+def random_resized_crop(image, size, scale, ratio, interpolation='bilinear'):
+    height, width = tf.shape(image)[0], tf.shape(image)[1]
+    area = tf.cast(height * width, tf.float32)
+
+    log_ratio = tf.math.log(ratio)
+
+    def _crop_with_attempts():
+        for _ in range(10):
+            target_area = area * tf.random.uniform([], minval=scale[0], maxval=scale[1])
+            aspect_ratio = tf.exp(tf.random.uniform([], minval=log_ratio[0], maxval=log_ratio[1]))
+
+            w = tf.cast(tf.round(tf.sqrt(target_area * aspect_ratio)), tf.int32)
+            h = tf.cast(tf.round(tf.sqrt(target_area / aspect_ratio)), tf.int32)
+
+            w = tf.minimum(w, width)
+            h = tf.minimum(h, height)
+
+            if tf.logical_and(tf.greater(w, 0), tf.greater(h, 0)):
+                offset_h = tf.random.uniform([], minval=0, maxval=height - h + 1, dtype=tf.int32)
+                offset_w = tf.random.uniform([], minval=0, maxval=width - w + 1, dtype=tf.int32)
+                return offset_h, offset_w, h, w
+        return None
+
+    crop_params = _crop_with_attempts()
+
+    if crop_params is not None:
+        offset_h, offset_w, h, w = crop_params
+        crop = tf.image.crop_to_bounding_box(image, offset_h, offset_w, h, w)
+    else:
+        # Fallback to central crop
+        in_ratio = width / height
+        if in_ratio < min(ratio):
+            w = width
+            h = tf.cast(tf.round(tf.cast(w, tf.float32) / min(ratio)), tf.int32)
+        elif in_ratio > max(ratio):
+            h = height
+            w = tf.cast(tf.round(tf.cast(h, tf.float32) * max(ratio)), tf.int32)
+        else:
+            w, h = width, height
+        offset_h = (height - h) // 2
+        offset_w = (width - w) // 2
+        crop = tf.image.crop_to_bounding_box(image, offset_h, offset_w, h, w)
+
+    # Resize the crop to the desired size
+    resized_crop = tf.image.resize(crop, size, method=interpolation)
+    return resized_crop
 
 
 def map_noisy_labels(sample_from):
@@ -1450,7 +1521,7 @@ def custom_normalize_img(image, label, dataset):
     elif dataset == "cifar100":
         mean = [0.5070751592371323, 0.48654887331495095, 0.4409178433670343]
         std = [0.2673342858792401, 0.2564384629170883, 0.27615047132568404]
-    elif dataset == "imagenet":
+    elif "imagenet" in dataset:
         mean = [0.485, 0.456, 0.406]
         std = [0.229, 0.224, 0.225]
     elif dataset == "cifar10_srigl":
@@ -1474,7 +1545,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
                     subset: Optional[int] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
                     gaussian_img_ratio: float = 0, augment_dataset: bool = False, normalize: bool = False,
-                    reduced_ds_size: Optional[int] = None):
+                    reduced_ds_size: Optional[int] = None, dataset="imagenet"):
     """Retrieve the locally downloaded tar-balls for imagenet, prepare and load ds"""
    #  download_config = tfds.download.DownloadConfig(
    #      extract_dir=os.path.join(dataset_dir, 'extracted'),
@@ -1486,6 +1557,10 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         split = "validation"
     builder = tfds.builder("imagenet2012")
     builder.download_and_prepare(download_dir=dataset_dir)
+    if 'vit' in dataset:
+        augment_train_imagenet_dataset = augment_train_imagenet_dataset_vit
+    else:
+        augment_train_imagenet_dataset = augment_train_imagenet_dataset_res50
 
     # Create AutotuneOptions
     options = tf.data.Options()
@@ -1541,7 +1616,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
     # ds = ds.shuffle(50000, seed=0, reshuffle_each_iteration=True)
     if other_bs:
         ds1 = ds
-        ds1 = ds1.map(Partial(resize_tf_dataset, dataset="imagenet", is_training=is_training),
+        ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset, is_training=is_training),
                       num_parallel_calls=tf.data.AUTOTUNE)
         if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
             ds1 = ds1.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
@@ -1549,18 +1624,18 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         else:
             ds1 = ds1.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
         if normalize:
-            ds1 = ds1.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
         ds1 = ds1.batch(batch_size)
         ds1 = ds1.prefetch(tf.data.AUTOTUNE)
         ds1 = ds1.repeat()
         all_ds = [ds1]
         for bs in other_bs:
             ds2 = ds
-            ds2 = ds2.map(Partial(resize_tf_dataset, dataset="imagenet", is_training=False),
+            ds2 = ds2.map(Partial(resize_tf_dataset, dataset=dataset, is_training=False),
                           num_parallel_calls=tf.data.AUTOTUNE)
             ds2 = ds2.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
             if normalize:
-                ds2 = ds2.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
+                ds2 = ds2.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
             # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
             ds2 = ds2.batch(bs)
             ds2 = ds2.prefetch(tf.data.AUTOTUNE)
@@ -1576,7 +1651,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         else:
             return tf_iterators
     else:
-        ds = ds.map(Partial(resize_tf_dataset, dataset="imagenet", is_training=is_training),
+        ds = ds.map(Partial(resize_tf_dataset, dataset=dataset, is_training=is_training),
                     num_parallel_calls=tf.data.AUTOTUNE)
         if is_training and data_augmentation:
             ds = ds.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
@@ -1584,7 +1659,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         else:
             ds = ds.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
         if normalize:
-            ds = ds.map(Partial(custom_normalize_img, dataset='imagenet'), num_parallel_calls=tf.data.AUTOTUNE)
+            ds = ds.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(batch_size)
         ds = ds.prefetch(tf.data.AUTOTUNE)
         ds = ds.repeat()

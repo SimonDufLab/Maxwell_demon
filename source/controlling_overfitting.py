@@ -707,7 +707,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         if exp_config.optimizer == "adam_to_momentum":  # Setting transition steps to total # of steps
             optimizer = Partial(optimizer, transition_steps=exp_config.training_steps)
         if exp_config.gradient_clipping:
-            opt_chain.append(optax.clip(10))
+            opt_chain.append(optax.clip_by_global_norm(1.0))
 
         if 'noisy' in exp_config.optimizer:  # TODO: kill this
             opt_chain.append(optimizer(exp_config.lr, eta=exp_config.noise_eta,
