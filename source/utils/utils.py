@@ -1398,7 +1398,9 @@ def random_resized_crop(image, size, scale, ratio, interpolation='bilinear'):
     log_ratio = tf.math.log(ratio)
 
     def _crop_with_attempts():
-        for _ in range(10):
+        center_crop = True
+        offset_h, offset_w, h, w = 0, 0, 0, 0
+        for _ in tf.range(10):
             target_area = area * tf.random.uniform([], minval=scale[0], maxval=scale[1])
             aspect_ratio = tf.exp(tf.random.uniform([], minval=log_ratio[0], maxval=log_ratio[1]))
 
@@ -1411,31 +1413,29 @@ def random_resized_crop(image, size, scale, ratio, interpolation='bilinear'):
             if tf.logical_and(tf.greater(w, 0), tf.greater(h, 0)):
                 offset_h = tf.random.uniform([], minval=0, maxval=height - h + 1, dtype=tf.int32)
                 offset_w = tf.random.uniform([], minval=0, maxval=width - w + 1, dtype=tf.int32)
-                return offset_h, offset_w, h, w
-        return None
-
-    crop_params = _crop_with_attempts()
-
-    if crop_params is not None:
-        offset_h, offset_w, h, w = crop_params
-        crop = tf.image.crop_to_bounding_box(image, offset_h, offset_w, h, w)
-    else:
+                center_crop = False
+                break
         # Fallback to central crop
-        in_ratio = width / height
-        if in_ratio < min(ratio):
-            w = width
-            h = tf.cast(tf.round(tf.cast(w, tf.float32) / min(ratio)), tf.int32)
-        elif in_ratio > max(ratio):
-            h = height
-            w = tf.cast(tf.round(tf.cast(h, tf.float32) * max(ratio)), tf.int32)
-        else:
-            w, h = width, height
-        offset_h = (height - h) // 2
-        offset_w = (width - w) // 2
-        crop = tf.image.crop_to_bounding_box(image, offset_h, offset_w, h, w)
+        if center_crop:
+            in_ratio = width / height
+            if in_ratio < min(ratio):
+                w = width
+                h = tf.cast(tf.round(tf.cast(w, tf.float32) / min(ratio)), tf.int32)
+            elif in_ratio > max(ratio):
+                h = height
+                w = tf.cast(tf.round(tf.cast(h, tf.float32) * max(ratio)), tf.int32)
+            else:
+                w, h = width, height
+            offset_h = (height - h) // 2
+            offset_w = (width - w) // 2
+
+        return offset_h, offset_w, h, w
+
+    offset_h, offset_w, h, w = _crop_with_attempts()
+    crop = tf.image.crop_to_bounding_box(image, offset_h, offset_w, h, w)
 
     # Resize the crop to the desired size
-    resized_crop = tf.image.resize(crop, size, method=interpolation)
+    resized_crop = tf.image.resize(crop, (size, size), method=interpolation)
     return resized_crop
 
 
