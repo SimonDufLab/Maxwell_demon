@@ -1384,7 +1384,7 @@ def resize_tf_dataset(images, labels, dataset, is_training=False):
             ratio = (3. / 4., 4. / 3.)  # Commonly used aspect ratio range for RandomResizedCrop
 
             # Apply random resized crop to each image in the batch
-            images = tf.map_fn(lambda img: random_resized_crop(img, size, scale, ratio), images)
+            images = random_resized_crop(images, size, scale, ratio)
         else:
             # Resize images to 256x256 when not training
             images = tf.image.resize(images, [256, 256])
