@@ -1345,6 +1345,7 @@ def augment_train_imagenet_dataset_vit(image, label):
     # RandAugment
     image = RandAugment(magnitude=9).distort(image)
     # MixUp and CutMix
+    image = tf.cast(image, tf.float32)
     image, label = MixupAndCutmix(num_classes=1000, mixup_alpha=0.2, cutmix_alpha=1.0,
                                                      label_smoothing=0.11)(image, label)
     return image, label
@@ -1523,7 +1524,7 @@ def standardize_img(image, label):
 
 @tf.function
 def custom_normalize_img(image, label, dataset):
-    assert dataset in ["mnist", 'cifar10', 'cifar10_srigl', 'cifar100', 'imagenet'], "need to implement normalization for others dataset"
+    assert dataset in ["mnist", 'cifar10', 'cifar10_srigl', 'cifar100', 'imagenet', 'imagenet_vit'], "need to implement normalization for others dataset"
     if dataset == "cifar10":
         mean = [0.4914, 0.4822, 0.4465]  # Mean for each channel (R, G, B)
         std = [0.2023, 0.1994, 0.2010]  # Standard deviation for each channel (R, G, B)
@@ -1623,20 +1624,23 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
-    ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
+    # ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
     # ds = ds.cache()
     # ds = ds.shuffle(50000, seed=0, reshuffle_each_iteration=True)
     if other_bs:
         ds1 = ds
+        if is_training:
+            ds1 = ds1.shuffle(250000, seed=0, reshuffle_each_iteration=True)
         ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset, is_training=is_training),
                       num_parallel_calls=tf.data.AUTOTUNE)
         ds1 = ds1.batch(batch_size)
         if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
             ds1 = ds1.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
-            ds1 = ds1.shuffle(4096, seed=0, reshuffle_each_iteration=True)
+            # ds1 = ds1.shuffle(1024, seed=0, reshuffle_each_iteration=True)
         else:
             ds1 = ds1.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
         if normalize:
+            ds1 = ds1.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
             ds1 = ds1.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
         # ds1 = ds1.batch(batch_size)
         ds1 = ds1.prefetch(tf.data.AUTOTUNE)
@@ -1649,6 +1653,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
             ds2 = ds2.batch(bs)
             ds2 = ds2.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
             if normalize:
+                ds2 = ds2.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
                 ds2 = ds2.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
             # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
             # ds2 = ds2.batch(bs)
@@ -1665,15 +1670,18 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         else:
             return tf_iterators
     else:
+        if is_training:
+            ds = ds.shuffle(250000, seed=0, reshuffle_each_iteration=True)
         ds = ds.map(Partial(resize_tf_dataset, dataset=dataset, is_training=is_training),
                     num_parallel_calls=tf.data.AUTOTUNE)
         ds = ds.batch(batch_size)
         if is_training and data_augmentation:
             ds = ds.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
-            ds = ds.shuffle(4096, seed=0, reshuffle_each_iteration=True)
+            # ds = ds.shuffle(4096, seed=0, reshuffle_each_iteration=True)
         else:
             ds = ds.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
         if normalize:
+            ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
             ds = ds.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
         # ds = ds.batch(batch_size)
         ds = ds.prefetch(tf.data.AUTOTUNE)
