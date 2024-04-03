@@ -1216,6 +1216,115 @@ def update_given_loss_and_optimizer(loss, optimizer, noise=False, noise_imp=(1, 
     return _update
 
 
+def update_with_accumulated_grads(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetric_noise=False, going_wild=False,
+                                    live_only=True, noise_offset_only=False, positive_offset=False, norm_grad=False, with_dropout=False,
+                                    return_grad=False, modulate_via_gate_grad=False, acti_map=None, perturb=0,
+                                    init_fn=None, accumulated_grads=1):
+    assert not modulate_via_gate_grad, "modulate_via_gate_grad not supported with accumulated gradients update routine"
+    assert not norm_grad, "norm_grad not supported with accumulated gradients update routine"
+    assert (accumulated_grads > 0) and isinstance(accumulated_grads, int), "accumulated_grads must be positive integer"
+
+    @jax.jit
+    def accumulate_grad(_acc_grads, _params, _state, _batch, _reg_param):
+        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param/accumulated_grads)
+        _acc_grads = jax.tree_map(jnp.add, _acc_grads, grads)
+        return _acc_grads, new_state
+
+    if with_dropout:
+        assert not return_grad, 'return_grad option not coded yet with dropout'
+        assert False, "dropout not supported rn with acc. grads"
+    else:
+        if not noise:
+            @jax.jit
+            def optim_update(grads, _params, _opt_state):
+                updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+                new_params = optax.apply_updates(_params, updates)
+                return new_params, _opt_state
+            if perturb:
+                assert False, "no perturb with accumulated grads update routine"
+            elif return_grad:
+                def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                            batch_iterator: Any, _reg_param: float = 0.0) -> Tuple[dict, hk.Params, Any, OptState]:
+                    acc_grads = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), _params)
+                    for _ in range(accumulated_grads):
+                        acc_grads, new_state = accumulate_grad(acc_grads, _params, _state, next(batch_iterator),
+                                                               _reg_param)
+
+                    new_params, _opt_state = optim_update(acc_grads, _params, _opt_state)
+                    return acc_grads, new_params, new_state, _opt_state
+            else:
+                def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                            batch_iterator: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState]:
+                    acc_grads = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), _params)
+                    for _ in range(accumulated_grads):
+                        acc_grads, new_state = accumulate_grad(acc_grads, _params, _state, next(batch_iterator),
+                                                               _reg_param)
+
+                    new_params, _opt_state = optim_update(acc_grads, _params, _opt_state)
+                    return new_params, new_state, _opt_state
+        else:
+            a, b = noise_imp
+            assert not return_grad, 'return_grad option not coded yet with noisy grad'
+            if going_wild:
+                assert False, 'no need to support this option with accumulated grads'
+            elif asymmetric_noise:
+                @jax.jit
+                def optim_update(grads, _params, _opt_state, _var, _key):
+                    key, next_key = jax.random.split(_key)
+                    flat_grads, unravel_fn = ravel_pytree(grads)
+                    added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
+                    if live_only:
+                        added_noise = added_noise * (
+                                jnp.abs(flat_grads) >= 0)  # Only apply noise to weights with gradient!=0 (live neurons)
+                    else:
+                        added_noise = added_noise * (
+                                jnp.abs(flat_grads) == 0)  # Only apply noise to weights with gradient==0 (dead neurons)
+                    updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+                    flat_updates, _ = ravel_pytree(updates)
+                    if noise_offset_only:  # Watch-out, will work even if no normalization layer with offset params
+                        offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                        if positive_offset:
+                            added_noise = jnp.abs(added_noise)  # More efficient revival if solely increasing offset
+                        added_noise *= offset_mask
+                    elif positive_offset:
+                        offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                        added_noise = jnp.where(offset_mask, jnp.abs(added_noise), added_noise)
+                    noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
+                    new_params = optax.apply_updates(_params, noisy_updates)
+
+                    return new_params, _opt_state, next_key
+            else:
+                @jax.jit
+                def optim_update(grads, _params, _opt_state, _var, _key):
+                    updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+                    key, next_key = jax.random.split(_key)
+                    flat_updates, unravel_fn = ravel_pytree(updates)
+                    added_noise = _var * jax.random.normal(key, shape=flat_updates.shape)
+                    if noise_offset_only:  # Watch-out, will work even if no normalization layer with offset params
+                        offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                        if positive_offset:
+                            added_noise = jnp.abs(added_noise)  # More efficient revival if solely increasing offset
+                        added_noise *= offset_mask
+                    elif positive_offset:
+                        offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                        added_noise = jnp.where(offset_mask, jnp.abs(added_noise), added_noise)
+                    noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
+                    new_params = optax.apply_updates(_params, noisy_updates)
+
+                    return new_params, _opt_state, next_key
+
+            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, batch_iterator: Any, _var: float,
+                        _key: Any, _reg_param: float = 0.0) -> Tuple[hk.Params, Any, OptState, Any]:
+                acc_grads = jax.tree_util.tree_map(lambda x: jnp.zeros_like(x), _params)
+                for _ in range(accumulated_grads):
+                    acc_grads, new_state = accumulate_grad(acc_grads, _params, _state, next(batch_iterator),
+                                                           _reg_param)
+                new_params, _opt_state, next_key = optim_update(acc_grads, _params, _opt_state, _var, _key)
+                return new_params, new_state, _opt_state, next_key
+
+    return _update
+
+
 def update_from_sgd_noise(loss, optimizer, with_dropout=False):
     """Modified version of update above that trains only on noisy part of signal (true grad - noisy grad)
        Solely used for small experiments meant to support theoretical assumptions"""
@@ -2164,7 +2273,7 @@ def one_cycle_schedule(training_steps, base_lr, final_lr, decay_bounds, scaling_
 
 def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling_factor, warmup_ratio=0.05):
     warmup_steps = training_steps*warmup_ratio  # warmup is done for 5% of training_steps
-    return optax.warmup_cosine_decay_schedule(init_value=0.0, peak_value=base_lr,
+    return optax.warmup_cosine_decay_schedule(init_value=9.9e-5, peak_value=base_lr,
                                               warmup_steps=warmup_steps, decay_steps=training_steps)
 
 
