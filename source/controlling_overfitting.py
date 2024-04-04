@@ -64,6 +64,7 @@ class ExpConfig:
     train_batch_size: int = 512
     eval_batch_size: int = 512
     death_batch_size: int = 512
+    accumulate_batches: int = 1  # Make effective batch size for training: train_batch_size x accumulate_batches
     optimizer: str = "adam"
     alpha_decay: float = 5.0  # Param controlling transition speed from adam to momentum in adam_to_momentum optimizers
     activation: str = "relu"  # Activation function used throughout the model
@@ -241,7 +242,10 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         log_path = "./ICML2024_rebuttal_main"  # "./preempt_test"  #
     if "imagenet" in exp_config.dataset:
-        log_path = "./imagenet_exps"
+        if exp_config.accumulate_batches > 1:  # TODO: Remove after completion of ongoing runs on cluster
+            log_path = "./imagenet_exps_post_ICML"
+        else:
+            log_path = "./imagenet_exps"
     # Logger config
     exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash, force_resume=True)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
@@ -255,6 +259,12 @@ def run_exp(exp_config: ExpConfig) -> None:
         # Dump config file in it as well
         with open(pickle_dir_path+'config.json', 'w') as fp:
             json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
+
+    # Batch accumulation
+    if exp_config.accumulate_batches > 1:
+        get_updater = Partial(utl.update_with_accumulated_grads, accumulated_grads=exp_config.accumulate_batches)
+    else:
+        get_updater = utl.update_given_loss_and_optimizer
 
     # Experiments with dropout
     with_dropout = exp_config.dropout_rate > 0
@@ -307,7 +317,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     test_size, test_eval = load_data(split="test", is_training=False, batch_size=eval_size, subset=kept_indices,
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
-    steps_per_epoch = train_ds_size // exp_config.train_batch_size
+    steps_per_epoch = train_ds_size // (exp_config.train_batch_size*exp_config.accumulate_batches)
     if 'imagenet' in exp_config.dataset:
         partial_train_ds_size = train_ds_size/1000  # .1% of dataset used for evaluation on train
         test_death = train_eval  # Don't want to prefetch too many ds
@@ -383,7 +393,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        reg_param=pruning_reg_param,
                                                        classes=classes, is_training=False, with_dropout=with_dropout,
                                                        exclude_bias_bn_from_reg=exp_config.masked_reg)
-                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                update_fn = get_updater(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
                                                                 going_wild=exp_config.going_wild,
                                                                 live_only=exp_config.noise_live_only,
@@ -414,7 +424,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        reg_param=decaying_reg_param,
                                                        classes=classes, is_training=False, with_dropout=with_dropout,
                                                        exclude_bias_bn_from_reg=exp_config.masked_reg)
-                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                update_fn = get_updater(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
                                                                 going_wild=exp_config.going_wild,
                                                                 live_only=exp_config.noise_live_only,
@@ -571,7 +581,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                            is_training=False, with_dropout=with_dropout,
                                                            exclude_bias_bn_from_reg=exp_config.masked_reg)
                     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-                    update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise,
+                    update_fn = get_updater(loss, opt, exp_config.add_noise,
                                                                     exp_config.noise_imp, exp_config.asymmetric_noise,
                                                                     going_wild=exp_config.going_wild,
                                                                     live_only=exp_config.noise_live_only,
@@ -623,7 +633,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                        classes=classes, is_training=False, with_dropout=with_dropout,
                                                        exclude_bias_bn_from_reg=exp_config.masked_reg)
                 accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-                update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                update_fn = get_updater(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                                 exp_config.asymmetric_noise,
                                                                 going_wild=exp_config.going_wild,
                                                                 live_only=exp_config.noise_live_only,
@@ -773,7 +783,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         del raw_net
         if exp_config.record_gate_grad_stat:
             gate_grad = utl.NeuronStates(activation_layer_order)
-        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+        update_fn = get_updater(loss, opt, exp_config.add_noise, exp_config.noise_imp,
                                                         exp_config.asymmetric_noise,
                                                         live_only=exp_config.noise_live_only,
                                                         going_wild=exp_config.going_wild,
@@ -902,20 +912,24 @@ def run_exp(exp_config: ExpConfig) -> None:
             if (step % exp_config.pruning_freq == 0) and exp_config.dynamic_pruning:
                 # jax.clear_backends()
                 gc.collect()
-            # Train step over single batch
+            # Train step over single or accumulated batch
+            if exp_config.accumulate_batches > 1:
+                next_batches = train
+            else:
+                next_batches = next(train)
             if with_dropout or exp_config.perturb_param:
-                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train),
+                params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next_batches,
                                                                   dropout_key,
                                                                   _reg_param=decaying_reg_param)
             else:
                 if not exp_config.add_noise:
-                    params, state, opt_state = update_fn(params, state, opt_state, next(train),
+                    params, state, opt_state = update_fn(params, state, opt_state, next_batches,
                                                          _reg_param=decaying_reg_param)
                 else:
                     # noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
                     # noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
                     noise_var = noise_sched(step)
-                    params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train),
+                    params, state, opt_state, noise_key = update_fn(params, state, opt_state, next_batches,
                                                                     noise_var,
                                                                     noise_key, _reg_param=decaying_reg_param)
             if exp_config.shifted_relu:
