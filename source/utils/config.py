@@ -37,6 +37,7 @@ baseline_pruning_method_choice = {
 optimizer_choice = {
     "adam": optax.adam,
     "adamw": optax.adamw,
+    "adamw_b2_98": Partial(optax.adamw, b2=0.98),
     "adamw_cdg": utl.adamw_cdg,
     "adam_to_momentum": utl.adam_to_momentum,  # Adam on schedule -> become momentum after ~10k steps
     "new_adam_to_momentum": utl.adam_to_momentum_v2,  # Required to know total number of steps
@@ -90,6 +91,7 @@ lr_scheduler_choice = {
     'warmup_cosine_decay': warmup_cosine_decay,
     'one_cycle': one_cycle_schedule,
     'warmup_piecewise_decay': warmup_piecewise_decay_schedule,
+    'step_warmup': utl.step_warmup,  # The very short warmup for grokking experiments
 }
 
 reg_param_scheduler_choice = {

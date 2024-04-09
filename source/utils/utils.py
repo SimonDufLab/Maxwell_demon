@@ -2278,6 +2278,11 @@ def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling
                                               warmup_steps=warmup_steps, decay_steps=training_steps)
 
 
+def step_warmup(training_steps, base_lr, final_lr, decay_bounds, scaling_factor, warmup_ratio=1e-5):
+    warmup_steps = training_steps * warmup_ratio
+    return lambda s: base_lr * jnp.minimum(s/warmup_steps, 1)
+
+
 def warmup_piecewise_decay_schedule(
     training_steps: int,
     base_lr: float,

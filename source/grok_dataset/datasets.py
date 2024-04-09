@@ -56,7 +56,7 @@ class AbstractDataset(abc.ABC):
 
 class ModSumDataset(AbstractDataset):
     def __init__(self, frac_train):
-        p=97
+        p = 97
         super(ModSumDataset, self).__init__(set(range(p)), set(range(p)), frac_train)
         self.p = p
 
@@ -66,7 +66,7 @@ class ModSumDataset(AbstractDataset):
 
 class ModSubtractDataset(AbstractDataset):
     def __init__(self, frac_train):
-        p=97
+        p = 97
         super(ModSubtractDataset, self).__init__(set(range(p)), set(range(p)), frac_train)
         self.p = p
 
@@ -76,7 +76,7 @@ class ModSubtractDataset(AbstractDataset):
 
 class ModDivisonDataset(AbstractDataset):
     def __init__(self, frac_train):
-        p=97
+        p = 97
         super(ModDivisonDataset, self).__init__(set(range(p)), set(range(1, p)), frac_train)
         self.p = p
 
@@ -86,7 +86,7 @@ class ModDivisonDataset(AbstractDataset):
 
 class PermutationGroup(AbstractDataset):
     def __init__(self, frac_train):
-        k=5
+        k = 5
         perms = set(map(tuple, permutations(list(range(k)))))
         super(PermutationGroup, self).__init__(perms, perms, frac_train)
         self.k = k
