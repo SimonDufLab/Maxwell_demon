@@ -1227,6 +1227,7 @@ def update_with_accumulated_grads(loss, optimizer, noise=False, noise_imp=(1, 1)
     @jax.jit
     def accumulate_grad(_acc_grads, _params, _state, _batch, _reg_param):
         grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param/accumulated_grads)
+        grads = jax.tree_map(jnp.divide, grads, accumulated_grads)
         _acc_grads = jax.tree_map(jnp.add, _acc_grads, grads)
         return _acc_grads, new_state
 
@@ -2277,6 +2278,11 @@ def warmup_cosine_decay(training_steps, base_lr, final_lr, decay_bounds, scaling
                                               warmup_steps=warmup_steps, decay_steps=training_steps)
 
 
+def step_warmup(training_steps, base_lr, final_lr, decay_bounds, scaling_factor, warmup_ratio=1e-5):
+    warmup_steps = training_steps * warmup_ratio
+    return lambda s: base_lr * jnp.minimum(s/warmup_steps, 1)
+
+
 def warmup_piecewise_decay_schedule(
     training_steps: int,
     base_lr: float,
@@ -3283,6 +3289,9 @@ def get_total_neurons(architecture, sizes):
     elif "vit_b" in architecture:  # Cover vit_b_4 and vit_b_16, both having 12 layers
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes,]*12
+    elif "grok_model_depth2" in architecture:  # Cover vit_b_4 and vit_b_16, both having 12 layers
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes,]*2
     else:
         raise NotImplementedError("get_size not implemented for current architecture")
 
