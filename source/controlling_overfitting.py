@@ -38,6 +38,7 @@ from utils.config import activation_choice, optimizer_choice, dataset_choice, da
 from utils.config import regularizer_choice, architecture_choice, bn_architecture_choice, lr_scheduler_choice, bn_config_choice
 from utils.config import reg_param_scheduler_choice
 from utils.config import pick_architecture
+from grok_dataset.datasets import vocab_size_mapping
 
 
 # Experience name -> for aim logger
@@ -246,6 +247,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             log_path = "./imagenet_exps_post_ICML"
         else:
             log_path = "./imagenet_exps"
+    if "grok" in exp_config.architecture:
+        log_path = "./grok_exps"
     # Logger config
     exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash, force_resume=True)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
@@ -284,6 +287,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             with_bn=True).keys(), "Current architectures available with batchnorm: " + str(
             pick_architecture(with_bn=True).keys())
         net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
+
+    if 'grok' in exp_config.architecture:
+        net_config['vocab_size'] = vocab_size_mapping[exp_config.dataset]
 
     # warmup:
     if 'warmup' in exp_config.lr_schedule:

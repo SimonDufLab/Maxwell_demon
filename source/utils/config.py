@@ -20,6 +20,8 @@ from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.vgg16 import vgg16
 from models.resnet import resnet18, resnet50, srigl_resnet18, srigl_resnet50
 from models.vit import vit_b_4, vit_b_16
+from models.grokking_model import grok_model_depth2
+from grok_dataset.datasets import ModDivisonDataset, ModSubtractDataset, ModSumDataset, PermutationGroup, load_grok_ds
 
 
 baseline_pruning_method_choice = {
@@ -35,6 +37,7 @@ baseline_pruning_method_choice = {
 optimizer_choice = {
     "adam": optax.adam,
     "adamw": optax.adamw,
+    "adamw_b2_98": Partial(optax.adamw, b2=0.98),
     "adamw_cdg": utl.adamw_cdg,
     "adam_to_momentum": utl.adam_to_momentum,  # Adam on schedule -> become momentum after ~10k steps
     "new_adam_to_momentum": utl.adam_to_momentum_v2,  # Required to know total number of steps
@@ -63,7 +66,11 @@ dataset_choice = {
     # "cifar10-torch": load_cifar10_torch,
     "cifar100": load_cifar100_tf,
     'imagenet': load_imagenet_tf,
-    'imagenet_vit': Partial(load_imagenet_tf, dataset="imagenet_vit")
+    'imagenet_vit': Partial(load_imagenet_tf, dataset="imagenet_vit"),
+    "mod_division_dataset": Partial(load_grok_ds, dataset=ModDivisonDataset(0.4)),
+    "mod_subtract_dataset": Partial(load_grok_ds, dataset=ModSubtractDataset(0.4)),
+    "mod_sum_dataset": Partial(load_grok_ds, dataset=ModSumDataset(0.4)),
+    "permutation_group_dataset": Partial(load_grok_ds, dataset=PermutationGroup(0.4)),
 }
 
 regularizer_choice = (
@@ -84,6 +91,7 @@ lr_scheduler_choice = {
     'warmup_cosine_decay': warmup_cosine_decay,
     'one_cycle': one_cycle_schedule,
     'warmup_piecewise_decay': warmup_piecewise_decay_schedule,
+    'step_warmup': utl.step_warmup,  # The very short warmup for grokking experiments
 }
 
 reg_param_scheduler_choice = {
@@ -142,6 +150,7 @@ bn_architecture_choice = {
     "srigl_resnet50": srigl_resnet50,
     "vit_b_4": vit_b_4,
     "vit_b_16": vit_b_16,
+    "grok_model_depth2": grok_model_depth2,
 }
 
 bn_config_choice = {
@@ -186,6 +195,10 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
     "cifar100": 100,
     "imagenet": 1000,
     "imagenet_vit": 1000,
+    "mod_division_dataset": ModDivisonDataset(0.4).n_out,
+    "mod_subtract_dataset": ModSubtractDataset(0.4).n_out,
+    "mod_sum_dataset": ModSumDataset(0.4).n_out,
+    "permutation_group_dataset": PermutationGroup(0.4).n_out,
 }
 
 pruning_criterion_choice = {
