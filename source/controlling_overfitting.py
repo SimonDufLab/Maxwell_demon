@@ -950,28 +950,29 @@ def run_exp(exp_config: ExpConfig) -> None:
             final_dead_neurons = scan_death_check_fn(params, state, test_death)
 
         neuron_states.update_from_ordered_list(final_dead_neurons)
-        params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
+        _params, _opt_state, _state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
                                                                               neuron_states, opt_state,
                                                                               state)  # Final pruning before eval
-        final_params_count = utl.count_params(params)
+        final_params_count = utl.count_params(_params)
 
-        # final_dead_neurons_count, final_dead_per_layer = utl.count_dead_neurons(final_dead_neurons)
         del final_dead_neurons  # Freeing memory
-        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
-            exp_config.architecture]
-        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
-        net = build_models(*architecture)[0]
-        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+        if exp_config.activation == "relu" or exp_config.dynamic_pruning:  # Only performs end-of-training actual pruning if activation is relu
+            params, opt_state, state = _params, _opt_state, _state
+            architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+                exp_config.architecture]
+            architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+            net = build_models(*architecture)[0]
+            total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
 
-        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-        # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
-        #                                                  epsilon=exp_config.epsilon_close,
-        #                                                  avg=exp_config.avg_for_eps)
-        # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
-        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
-        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
+            accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+            death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+            # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+            #                                                  epsilon=exp_config.epsilon_close,
+            #                                                  avg=exp_config.avg_for_eps)
+            # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+            scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+            final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+            full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
         final_accuracy = final_accuracy_fn(params, state, test_eval)
         final_train_acc = full_train_acc_fn(params, state, train_eval)
