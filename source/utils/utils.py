@@ -1226,8 +1226,8 @@ def update_with_accumulated_grads(loss, optimizer, noise=False, noise_imp=(1, 1)
 
     @jax.jit
     def accumulate_grad(_acc_grads, _params, _state, _batch, _reg_param):
-        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param/accumulated_grads)
-        grads = jax.tree_map(jnp.divide, grads, accumulated_grads)
+        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+        grads = jax.tree_map(lambda g: g/accumulated_grads, grads)
         _acc_grads = jax.tree_map(jnp.add, _acc_grads, grads)
         return _acc_grads, new_state
 
