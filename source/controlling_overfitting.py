@@ -11,6 +11,9 @@ import jax.numpy as jnp
 import haiku as hk
 import numpy as np
 import tensorflow as tf
+
+import utils.grok_utils
+
 tf.config.experimental.set_visible_devices([], "GPU")
 from aim import Run, Distribution
 import os
@@ -1073,6 +1076,24 @@ def run_exp(exp_config: ExpConfig) -> None:
         #         jax.device_get(jnp.linalg.norm(params_vec - initial_params_vec) / jnp.linalg.norm(initial_params_vec)),
         #         name="Relative change in norm of weights from init after convergence w/r reg param",
         #         step=log_step)
+
+        if 'grok' in exp_config.architecture:
+            _params = utils.grok_utils.mask_ff_init_layer(params, 'wb')
+            masked_accuracy = final_accuracy_fn(_params, state, test_eval)
+            exp_run.track(masked_accuracy,
+                          name="Accuracy, final, with masking on w and b of init layer", step=0)
+            _params = utils.grok_utils.mask_ff_init_layer(params, 'w')
+            masked_accuracy = final_accuracy_fn(_params, state, test_eval)
+            exp_run.track(masked_accuracy,
+                          name="Accuracy, final, with masking on w only of init layer", step=0)
+            _params = utils.grok_utils.mask_ff_last_layer(params, 'wb')
+            masked_accuracy = final_accuracy_fn(_params, state, test_eval)
+            exp_run.track(masked_accuracy,
+                          name="Accuracy, final, with masking on w and b of second layer", step=0)
+            _params = utils.grok_utils.mask_ff_last_layer(params, 'w')
+            masked_accuracy = final_accuracy_fn(_params, state, test_eval)
+            exp_run.track(masked_accuracy,
+                          name="Accuracy, final, with masking on w only of second layer", step=0)
 
         if exp_config.record_distribution_data:
             activations_max, activations_mean, activations_count, _ = activations_data

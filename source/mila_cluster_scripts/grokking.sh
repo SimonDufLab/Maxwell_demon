@@ -101,5 +101,5 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
 # mod_subtract_dataset
- python source/controlling_overfitting.py training_steps=1000001 report_freq=10000 pruning_freq=10000 lr=1e-3 optimizer=adamw_b2_98 wd_param=0.0 regularizer=None dataset=mod_subtract_dataset size=512 architecture=grok_model_depth2 with_bn=True 'reg_params="(0.0,)"' train_batch_size=512 record_freq=100 lr_schedule=step_warmup warmup_ratio=1e-5
+ python source/controlling_overfitting.py training_steps=1000001 report_freq=10000 pruning_freq=10000 lr=1e-3 optimizer=adamw_b2_98 wd_param=1.0 regularizer=None dataset=mod_subtract_dataset size=512 architecture=grok_model_depth2 with_bn=True 'reg_params="(0.0,)"' train_batch_size=512 record_freq=100 lr_schedule=step_warmup warmup_ratio=1e-5
  wait $!
