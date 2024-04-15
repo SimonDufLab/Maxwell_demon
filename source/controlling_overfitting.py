@@ -246,10 +246,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         log_path = "./ICML2024_rebuttal_main"  # "./preempt_test"  #
     if "imagenet" in exp_config.dataset:
-        if exp_config.accumulate_batches > 1:  # TODO: Remove after completion of ongoing runs on cluster
-            log_path = "./imagenet_exps_post_ICML"
-        else:
-            log_path = "./imagenet_exps"
+        log_path = "./imagenet_exps_post_ICML"
     if "grok" in exp_config.architecture:
         log_path = "./grok_exps"
     # Logger config
