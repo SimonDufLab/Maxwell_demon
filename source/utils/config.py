@@ -67,10 +67,10 @@ dataset_choice = {
     "cifar100": load_cifar100_tf,
     'imagenet': load_imagenet_tf,
     'imagenet_vit': Partial(load_imagenet_tf, dataset="imagenet_vit"),
-    "mod_division_dataset": Partial(load_grok_ds, dataset=ModDivisonDataset(0.4)),
-    "mod_subtract_dataset": Partial(load_grok_ds, dataset=ModSubtractDataset(0.4)),
-    "mod_sum_dataset": Partial(load_grok_ds, dataset=ModSumDataset(0.4)),
-    "permutation_group_dataset": Partial(load_grok_ds, dataset=PermutationGroup(0.4)),
+    "mod_division_dataset": Partial(load_grok_ds, dataset=ModDivisonDataset(0.4, p=97, k=5)),
+    "mod_subtract_dataset": Partial(load_grok_ds, dataset=ModSubtractDataset(0.4, p=97, k=5)),
+    "mod_sum_dataset": Partial(load_grok_ds, dataset=ModSumDataset(0.4, p=97, k=5)),
+    # "permutation_group_dataset": Partial(load_grok_ds, dataset=PermutationGroup(0.4, p=97, k=5)),
 }
 
 regularizer_choice = (
@@ -195,10 +195,10 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
     "cifar100": 100,
     "imagenet": 1000,
     "imagenet_vit": 1000,
-    "mod_division_dataset": ModDivisonDataset(0.4).n_out,
-    "mod_subtract_dataset": ModSubtractDataset(0.4).n_out,
-    "mod_sum_dataset": ModSumDataset(0.4).n_out,
-    "permutation_group_dataset": PermutationGroup(0.4).n_out,
+    "mod_division_dataset": ModDivisonDataset(0.4, p=97, k=5).n_out,
+    "mod_subtract_dataset": ModSubtractDataset(0.4, p=97, k=5).n_out,
+    "mod_sum_dataset": ModSumDataset(0.4, p=97, k=5).n_out,
+    # "permutation_group_dataset": PermutationGroup(0.4, p=97, k=5).n_out,
 }
 
 pruning_criterion_choice = {
