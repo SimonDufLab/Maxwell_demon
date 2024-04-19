@@ -5,14 +5,14 @@ import abc
 import random
 import jax
 import jax.numpy as jnp
+from jax.tree_util import Partial
 from dataclasses import dataclass, field
 from collections.abc import Iterable
 from itertools import permutations
-from typing import Set, Optional, Sequence
+from typing import Callable, Optional, Sequence
 
 
-def get_batch_generator(dataset, frac_train, bs, split='train', p=97, k=5, split_seed=0):
-    assert split in {'train', 'test'}
+def get_group_elements_and_output_fn(dataset, p, k):
     if dataset == "mod_sum_dataset":
         group_elements1, group_elements2 = set(range(p)), set(range(p))
 
@@ -37,17 +37,24 @@ def get_batch_generator(dataset, frac_train, bs, split='train', p=97, k=5, split
     else:
         raise NotImplementedError(dataset+" dataset not implemented yet.")
 
+    return fetch_output, group_elements1, group_elements2
+
+
+def get_batch_generator(dataset, frac_train, split='train', p=97, k=5, split_seed=0):
+    assert split in {'train', 'test'}
+    fetch_output, group_elements1, group_elements2 = get_group_elements_and_output_fn(dataset, p, k)
+
     ordered_group_elements1 = jnp.array(list(group_elements1))
     ordered_group_elements2 = jnp.array(list(group_elements2))
     all_elements = list(group_elements1.union(group_elements2))
     idx2vocab = ['o', '='] + all_elements
     vocab2idx = {vocab: idx for idx, vocab in enumerate(idx2vocab)}
-    max_value = max(all_elements)
-    vocab2idx_array = jnp.zeros(max_value + 1, dtype=int)  # +1 because indexing starts at 0
-    # Now populate the array with actual indices
-    for i, element in enumerate(all_elements):
-        vocab2idx_array = vocab2idx_array.at[element].set(i+2)
-    n_out = len(group_elements1.union(group_elements2))
+    # max_value = max(all_elements)
+    # vocab2idx_array = jnp.zeros(max_value + 1, dtype=int)  # +1 because indexing starts at 0
+    # # Now populate the array with actual indices
+    # for i, element in enumerate(all_elements):
+    #     vocab2idx_array = vocab2idx_array.at[element].set(i+2)
+    # n_out = len(group_elements1.union(group_elements2))
     idxs = jax.random.permutation(jax.random.PRNGKey(split_seed), len(group_elements1) * len(group_elements2))
     if split == 'train':
         pairs = idxs[:int(len(idxs) * frac_train)]
@@ -56,16 +63,39 @@ def get_batch_generator(dataset, frac_train, bs, split='train', p=97, k=5, split
     train_cardinality = len(idxs[:int(len(idxs) * frac_train)])
     test_cardinality = len(idxs[int(len(idxs) * frac_train):])
 
-    @jax.jit
-    def fetch_batch(rng_key):
-        batch_idxs = jax.random.choice(rng_key, len(pairs), shape=(bs,), replace=False)
-        batch_a = jax.vmap(lambda idx: ordered_group_elements1[idx // len(group_elements2)])(batch_idxs)
-        batch_b = jax.vmap(lambda idx: ordered_group_elements2[idx % len(group_elements2)])(batch_idxs)
-        batch_c = jax.vmap(fetch_output)(batch_a, batch_b)
-        return (jax.vmap(lambda a, b: jnp.array([vocab2idx_array[a], vocab2idx['o'], vocab2idx_array[b], vocab2idx['=']]))(batch_a, batch_b),
-                jax.vmap(lambda c: vocab2idx_array[c] - 2)(batch_c))
+    # Construct dataset and store in memory:
+    pairs_a = jax.vmap(lambda idx: ordered_group_elements1[idx // len(group_elements2)])(pairs)
+    pairs_b = jax.vmap(lambda idx: ordered_group_elements2[idx % len(group_elements2)])(pairs)
+    pairs_c = jax.vmap(fetch_output)(pairs_a, pairs_b)
+    pairs = jnp.stack([pairs_a, pairs_b, pairs_c], axis=-1)
 
-    return fetch_batch, len(idx2vocab), n_out, train_cardinality, test_cardinality
+    def apply_mapping(x):
+        a_i, b_i, c_i = x
+        a_i, b_i, c_i = int(a_i), int(b_i), int(c_i)
+        mapped_indices = jnp.array([vocab2idx.get(a_i), vocab2idx['o'], vocab2idx.get(b_i), vocab2idx['='], vocab2idx.get(c_i)-2])
+        return mapped_indices
+
+    array_dataset = apply_mapping(pairs[0])
+    for el in pairs[1:]:
+        array_dataset = jnp.vstack((array_dataset, apply_mapping(el)))
+    # _, array_dataset = jax.lax.scan(apply_mapping, None, pairs)
+
+    # @jax.jit
+    # def fetch_batch(rng_key):
+    #     batch_idxs = jax.random.choice(rng_key, len(pairs), shape=(bs,), replace=False)
+    #     batch_a = jax.vmap(lambda idx: ordered_group_elements1[idx // len(group_elements2)])(batch_idxs)
+    #     batch_b = jax.vmap(lambda idx: ordered_group_elements2[idx % len(group_elements2)])(batch_idxs)
+    #     batch_c = jax.vmap(fetch_output)(batch_a, batch_b)
+    #     return (jax.vmap(lambda a, b: jnp.array([vocab2idx_array[a], vocab2idx['o'], vocab2idx_array[b], vocab2idx['=']]))(batch_a, batch_b),
+    #             jax.vmap(lambda c: vocab2idx_array[c] - 2)(batch_c))
+
+    # @jax.jit(static_argnums=1)
+    def fetch_batch(rng_key, _bs):
+        batch_ind = jax.random.randint(rng_key, shape=(_bs,), minval=0, maxval=len(array_dataset))
+        return array_dataset[batch_ind, :-1], array_dataset[batch_ind, -1]
+
+    # return fetch_batch, len(idx2vocab), n_out, train_cardinality, test_cardinality
+    return jax.jit(fetch_batch, static_argnums=(1,)), train_cardinality, test_cardinality
 
 
 @dataclass
@@ -74,16 +104,22 @@ class AbstractDataset:
     frac_train: float
     p: int
     k: int
-    n_vocab: int = field(init=False)
-    n_out: int = field(init=False)
+    # n_vocab: int = field(init=False)
+    # n_out: int = field(init=False)
     train_cardinality: int = field(init=False)
     test_cardinality: int = field(init=False)
 
-    def __post_init__(self):
-        _, self.n_vocab, self.n_out, self.train_cardinality, self.test_cardinality = get_batch_generator(self.dataset,
-                                                                                             self.frac_train, 1,
-                                                                                             split='train', p=self.p,
-                                                                                             k=self.k)
+    def build_dataset(self, split='train'):
+        # _, self.n_vocab, self.n_out, self.train_cardinality, self.test_cardinality = get_batch_generator(self.dataset,
+        #                                                                                      self.frac_train, 1,
+        #                                                                                      split='train', p=self.p,
+        #                                                                                      k=self.k)
+        generator, self.train_cardinality, self.test_cardinality = get_batch_generator(self.dataset,
+                                                                               self.frac_train,
+                                                                               split=split,
+                                                                               p=self.p,
+                                                                               k=self.k)
+        return generator
 
 
 # class AbstractDataset(abc.ABC):
@@ -226,12 +262,23 @@ class BatchingIterator:
         return self.fetching_fn(rng_key)
 
 
-vocab_size_mapping = {
-    "mod_division_dataset": ModDivisonDataset(1.0, p=97, k=5).n_vocab,
-    "mod_subtract_dataset": ModSubtractDataset(1.0, p=97, k=5).n_vocab,
-    "mod_sum_dataset": ModSumDataset(1.0, p=97, k=5).n_vocab,
-    # "permutation_group_dataset": PermutationGroup(1.0, p=97, k=5).n_vocab,
-}
+def get_n_out(_, group_elements1, group_elements2):
+    return len(group_elements1.union(group_elements2))
+
+
+def get_vocab_size(_, group_elements1, group_elements2):
+    return len(list(group_elements1.union(group_elements2))) + 2
+
+
+all_ds = ["mod_division_dataset", "mod_subtract_dataset", "mod_sum_dataset", "permutation_group_dataset"]
+n_out_mapping = {ds: get_n_out(*get_group_elements_and_output_fn(ds, p=97, k=5)) for ds in all_ds}
+vocab_size_mapping = {ds: get_vocab_size(*get_group_elements_and_output_fn(ds, p=97, k=5)) for ds in all_ds}
+# vocab_size_mapping = {
+#     "mod_division_dataset": ModDivisonDataset(1.0, p=97, k=5).n_vocab,
+#     "mod_subtract_dataset": ModSubtractDataset(1.0, p=97, k=5).n_vocab,
+#     "mod_sum_dataset": ModSumDataset(1.0, p=97, k=5).n_vocab,
+#     "permutation_group_dataset": PermutationGroup(1.0, p=97, k=5).n_vocab,
+# }
 
 
 def load_grok_ds(dataset: AbstractDataset, split: str, *, is_training: bool, batch_size: int,
@@ -248,29 +295,24 @@ def load_grok_ds(dataset: AbstractDataset, split: str, *, is_training: bool, bat
     assert not normalize, "grokking datasets do not support data normalization"
     assert reduced_ds_size is None, "reduced_ds_size must be None for grokking datasets"
 
+    generator = dataset.build_dataset(split=split)
     if split == "train":
         ds_size = dataset.train_cardinality
     elif split == "test":
         ds_size = dataset.test_cardinality
     # dataset is a AbstractDataset object
     if other_bs:
-        all_ds = [BatchingIterator(
-            get_batch_generator(dataset.dataset, frac_train=dataset.frac_train, bs=batch_size, split=split, p=dataset.p,
-                                k=dataset.k)[0])]
+        all_ds = [BatchingIterator(Partial(generator, _bs=batch_size))]
 
         for bs in other_bs:
-            all_ds.append(BatchingIterator(
-                get_batch_generator(dataset.dataset, frac_train=dataset.frac_train, bs=bs, split=split, p=dataset.p,
-                                    k=dataset.k)[0]))
+            all_ds.append(BatchingIterator(Partial(generator, _bs=bs)))
 
         if cardinality:
             return (ds_size, ) + tuple(all_ds)
         else:
             return tuple(all_ds)
     else:
-        grok_iterator = BatchingIterator(
-            get_batch_generator(dataset.dataset, frac_train=dataset.frac_train, bs=batch_size, split=split, p=dataset.p,
-                                k=dataset.k)[0])
+        grok_iterator = BatchingIterator(Partial(generator, _bs=batch_size))
         if cardinality:
             return ds_size, grok_iterator
         else:

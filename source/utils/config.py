@@ -21,7 +21,7 @@ from models.vgg16 import vgg16
 from models.resnet import resnet18, resnet50, srigl_resnet18, srigl_resnet50
 from models.vit import vit_b_4, vit_b_16
 from models.grokking_model import grok_model_depth2
-from grok_dataset.datasets import ModDivisonDataset, ModSubtractDataset, ModSumDataset, PermutationGroup, load_grok_ds
+from grok_dataset.datasets import ModDivisonDataset, ModSubtractDataset, ModSumDataset, PermutationGroup, load_grok_ds, n_out_mapping
 
 
 baseline_pruning_method_choice = {
@@ -70,7 +70,7 @@ dataset_choice = {
     "mod_division_dataset": Partial(load_grok_ds, dataset=ModDivisonDataset(0.4, p=97, k=5)),
     "mod_subtract_dataset": Partial(load_grok_ds, dataset=ModSubtractDataset(0.4, p=97, k=5)),
     "mod_sum_dataset": Partial(load_grok_ds, dataset=ModSumDataset(0.4, p=97, k=5)),
-    # "permutation_group_dataset": Partial(load_grok_ds, dataset=PermutationGroup(0.4, p=97, k=5)),
+    "permutation_group_dataset": Partial(load_grok_ds, dataset=PermutationGroup(0.4, p=97, k=5)),
 }
 
 regularizer_choice = (
@@ -195,9 +195,13 @@ dataset_target_cardinality = {  # Hard-encoding the number of classes in given d
     "cifar100": 100,
     "imagenet": 1000,
     "imagenet_vit": 1000,
-    "mod_division_dataset": ModDivisonDataset(0.4, p=97, k=5).n_out,
-    "mod_subtract_dataset": ModSubtractDataset(0.4, p=97, k=5).n_out,
-    "mod_sum_dataset": ModSumDataset(0.4, p=97, k=5).n_out,
+    "mod_division_dataset": n_out_mapping["mod_division_dataset"],
+    "mod_subtract_dataset": n_out_mapping["mod_subtract_dataset"],
+    "mod_sum_dataset": n_out_mapping["mod_sum_dataset"],
+    "permutation_group_dataset": n_out_mapping["permutation_group_dataset"],
+    # "mod_division_dataset": ModDivisonDataset(0.4, p=97, k=5).n_out,
+    # "mod_subtract_dataset": ModSubtractDataset(0.4, p=97, k=5).n_out,
+    # "mod_sum_dataset": ModSumDataset(0.4, p=97, k=5).n_out,
     # "permutation_group_dataset": PermutationGroup(0.4, p=97, k=5).n_out,
 }
 
