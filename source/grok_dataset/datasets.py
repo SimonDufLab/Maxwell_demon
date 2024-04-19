@@ -89,13 +89,15 @@ def get_batch_generator(dataset, frac_train, split='train', p=97, k=5, split_see
     #     return (jax.vmap(lambda a, b: jnp.array([vocab2idx_array[a], vocab2idx['o'], vocab2idx_array[b], vocab2idx['=']]))(batch_a, batch_b),
     #             jax.vmap(lambda c: vocab2idx_array[c] - 2)(batch_c))
 
-    # @jax.jit(static_argnums=1)
-    def fetch_batch(rng_key, _bs):
-        batch_ind = jax.random.randint(rng_key, shape=(_bs,), minval=0, maxval=len(array_dataset))
-        return array_dataset[batch_ind, :-1], array_dataset[batch_ind, -1]
+    def get_fetch_batch(_bs):
+        @jax.jit
+        def fetch_batch(rng_key):
+            batch_ind = jax.random.randint(rng_key, shape=(_bs,), minval=0, maxval=len(array_dataset))
+            return array_dataset[batch_ind, :-1], array_dataset[batch_ind, -1]
+        return fetch_batch
 
     # return fetch_batch, len(idx2vocab), n_out, train_cardinality, test_cardinality
-    return jax.jit(fetch_batch, static_argnums=(1,)), train_cardinality, test_cardinality
+    return get_fetch_batch, train_cardinality, test_cardinality
 
 
 @dataclass
@@ -114,12 +116,12 @@ class AbstractDataset:
         #                                                                                      self.frac_train, 1,
         #                                                                                      split='train', p=self.p,
         #                                                                                      k=self.k)
-        generator, self.train_cardinality, self.test_cardinality = get_batch_generator(self.dataset,
+        get_generator, self.train_cardinality, self.test_cardinality = get_batch_generator(self.dataset,
                                                                                self.frac_train,
                                                                                split=split,
                                                                                p=self.p,
                                                                                k=self.k)
-        return generator
+        return get_generator
 
 
 # class AbstractDataset(abc.ABC):
@@ -295,24 +297,24 @@ def load_grok_ds(dataset: AbstractDataset, split: str, *, is_training: bool, bat
     assert not normalize, "grokking datasets do not support data normalization"
     assert reduced_ds_size is None, "reduced_ds_size must be None for grokking datasets"
 
-    generator = dataset.build_dataset(split=split)
+    get_generator = dataset.build_dataset(split=split)
     if split == "train":
         ds_size = dataset.train_cardinality
     elif split == "test":
         ds_size = dataset.test_cardinality
     # dataset is a AbstractDataset object
     if other_bs:
-        all_ds = [BatchingIterator(Partial(generator, _bs=batch_size))]
+        all_ds = [BatchingIterator(get_generator(_bs=batch_size))]
 
         for bs in other_bs:
-            all_ds.append(BatchingIterator(Partial(generator, _bs=bs)))
+            all_ds.append(BatchingIterator(get_generator(_bs=bs)))
 
         if cardinality:
             return (ds_size, ) + tuple(all_ds)
         else:
             return tuple(all_ds)
     else:
-        grok_iterator = BatchingIterator(Partial(generator, _bs=batch_size))
+        grok_iterator = BatchingIterator(get_generator(_bs=batch_size))
         if cardinality:
             return ds_size, grok_iterator
         else:
