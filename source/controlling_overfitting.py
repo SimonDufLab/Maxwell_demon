@@ -489,18 +489,30 @@ def run_exp(exp_config: ExpConfig) -> None:
                     masked_accuracy = accuracy_fn(_params, state, next(test_eval))
                     exp_run.track(masked_accuracy,
                                   name="Test accuracy, with masking on w and b of init layer", step=step)
+                    masked_accuracy = accuracy_fn(_params, state, next(train_eval))
+                    exp_run.track(masked_accuracy,
+                                  name="Train accuracy, with masking on w and b of init layer", step=step)
                     _params = utils.grok_utils.mask_ff_init_layer(params, 'w')
                     masked_accuracy = accuracy_fn(_params, state, next(test_eval))
                     exp_run.track(masked_accuracy,
                                   name="Test accuracy, with masking on w only of init layer", step=step)
+                    masked_accuracy = accuracy_fn(_params, state, next(train_eval))
+                    exp_run.track(masked_accuracy,
+                                  name="Train accuracy, with masking on w only of init layer", step=step)
                     _params = utils.grok_utils.mask_ff_last_layer(params, 'wb')
                     masked_accuracy = accuracy_fn(_params, state, next(test_eval))
                     exp_run.track(masked_accuracy,
                                   name="Test accuracy, with masking on w and b of second layer", step=step)
+                    masked_accuracy = accuracy_fn(_params, state, next(train_eval))
+                    exp_run.track(masked_accuracy,
+                                  name="Train accuracy, with masking on w and b of second layer", step=step)
                     _params = utils.grok_utils.mask_ff_last_layer(params, 'w')
                     masked_accuracy = accuracy_fn(_params, state, next(test_eval))
                     exp_run.track(masked_accuracy,
                                   name="Test accuracy, with masking on w only of second layer", step=step)
+                    masked_accuracy = accuracy_fn(_params, state, next(train_eval))
+                    exp_run.track(masked_accuracy,
+                                  name="Train accuracy, with masking on w only of second layer", step=step)
 
             if step % exp_config.pruning_freq == 0:
                 dead_neurons = scan_death_check_fn(params, state, test_death)
