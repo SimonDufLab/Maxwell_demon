@@ -30,3 +30,12 @@ def mask_ff_last_layer(params, target="wb"):
                     if subkey in target:
                         _params[_key][subkey] = jnp.zeros_like(subval)
     return _params
+
+
+def mask_all_except_norm(params):
+    _params = copy.deepcopy(params)
+    for _key, _val in params.items():
+        if 'norm' not in _key:
+            for subkey, subval in params[_key].items():
+                _params[_key][subkey] = jnp.zeros_like(subval)
+    return _params
