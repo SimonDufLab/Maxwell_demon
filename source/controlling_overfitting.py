@@ -100,6 +100,7 @@ class ExpConfig:
     dynamic_pruning: bool = False
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     prune_at_end: Any = None  # If prune after training, tuple like (reg_param, lr, additional_steps)
+    pretrain: int = 0  # Train only the normalization parameters for <pretrain> steps
     pruning_reg: Optional[str] = "cdg_l2"
     pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
@@ -266,6 +267,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     # Batch accumulation
     if exp_config.accumulate_batches > 1:
         get_updater = Partial(utl.update_with_accumulated_grads, accumulated_grads=exp_config.accumulate_batches)
+    elif exp_config.pretrain:
+        get_updater = utl.get_mask_update_fn
     else:
         get_updater = utl.update_given_loss_and_optimizer
 
@@ -366,7 +369,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn,
                                      dead_neurons_union, init_fn):
             """ Inside a function to make sure variables in function scope are cleared from memory"""
-            if step == exp_config.training_steps and bool(add_steps):
+            if step == exp_config.training_steps and bool(add_steps_end):
                 print("Entered pruning phase")
                 #  Reset optimizer:
                 optimizer = optimizer_choice[exp_config.pruning_opt]
@@ -380,7 +383,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                     opt_chain.append(optax.add_decayed_weights(weight_decay=exp_config.wd_param))
                 # if exp_config.gradient_clipping:
                 #     opt_chain.append(optax.clip(0.1))
-                lr_schedule = lr_scheduler_choice["one_cycle"](add_steps, pruning_lr, None, None)  # TODO: fixed schd...
+                lr_schedule = lr_scheduler_choice["one_cycle"](add_steps_end, pruning_lr, None, None)  # TODO: fixed schd...
                 opt_chain.append(optimizer(lr_schedule))
                 opt = optax.chain(*opt_chain)
                 opt_state = opt.init(params)
@@ -862,9 +865,16 @@ def run_exp(exp_config: ExpConfig) -> None:
             shift_relu_sched = utl.linear_warmup(exp_config.reg_param_span, exp_config.shifted_relu)
 
         if exp_config.prune_at_end:
-            pruning_reg_param, pruning_lr, add_steps = exp_config.prune_at_end
+            pruning_reg_param, pruning_lr, add_steps_end = exp_config.prune_at_end
         else:
-            add_steps = 0
+            add_steps_end = 0
+        if exp_config.pretrain:
+            add_steps_start = exp_config.pretrain
+            pretrain_mask = {'_mask': utils.grok_utils.mask_all_except_norm(params)}
+        else:
+            add_steps_start = 0
+            pretrain_mask = {}
+
 
         if load_from_preexisting_model_state:
             starting_step = run_state["training_step"]
@@ -896,7 +906,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         print(f"Continuing training from step {starting_step} and reg_param {reg_param}")
         training_timer = time.time()
-        for step in range(starting_step, exp_config.training_steps + add_steps):
+        for step in range(starting_step, exp_config.training_steps + add_steps_end + add_steps_start):
+            if step == add_steps_start:
+                pretrain_mask = {}
             if (step > 0) and (step % steps_per_epoch == 0):  # Keep track of the best accuracy along training
                 architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[  # TODO: those line should not be necessary ...
                     exp_config.architecture]
@@ -955,18 +967,21 @@ def run_exp(exp_config: ExpConfig) -> None:
             if with_dropout or exp_config.perturb_param:
                 params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next_batches,
                                                                   dropout_key,
-                                                                  _reg_param=decaying_reg_param)
+                                                                  _reg_param=decaying_reg_param,
+                                                                  **pretrain_mask)
             else:
                 if not exp_config.add_noise:
                     params, state, opt_state = update_fn(params, state, opt_state, next_batches,
-                                                         _reg_param=decaying_reg_param)
+                                                         _reg_param=decaying_reg_param,
+                                                         **pretrain_mask)
                 else:
                     # noise_var = exp_config.noise_eta / ((1 + step) ** exp_config.noise_gamma)
                     # noise_var = exp_config.lr * noise_var  # Apply lr for consistency with update size
                     noise_var = noise_sched(step)
                     params, state, opt_state, noise_key = update_fn(params, state, opt_state, next_batches,
                                                                     noise_var,
-                                                                    noise_key, _reg_param=decaying_reg_param)
+                                                                    noise_key, _reg_param=decaying_reg_param,
+                                                                    **pretrain_mask)
             if exp_config.shifted_relu:
                 state = utl.update_gate_constant(state, shift_relu_sched(step))
 
