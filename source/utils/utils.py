@@ -1370,15 +1370,20 @@ def update_from_gaussian_noise(loss, optimizer, lr, bs, asymmetric_noise=False, 
     return _update
 
 
-def get_mask_update_fn(loss, optimizer):
+def get_mask_update_fn(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetric_noise=False, going_wild=False,
+                       live_only=True, noise_offset_only=False, positive_offset=False, norm_grad=False,
+                       with_dropout=False,
+                       return_grad=False, modulate_via_gate_grad=False, acti_map=None, perturb=0,
+                       init_fn=None):
     """ Return the update function, but taking into account a mask for neurons that we want to freeze the weights"""
 
     @jax.jit
-    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, grad_mask: hk.Params, zero_grad: hk.Params,
-                _batch: Batch) -> Tuple[hk.Params, Any, OptState]:
-        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch)
-        grads = reinitialize_excluding_head(grad_mask, grads, zero_grad)
+    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                _batch: Batch, _reg_param: float = 0.0, _mask: Optional[hk.Params] = None) -> Tuple[hk.Params, Any, OptState]:
+        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
         updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+        if _mask:
+            updates = jax.tree_map(jnp.multiply, updates, _mask)
         new_params = optax.apply_updates(_params, updates)
         return new_params, new_state, _opt_state
 
