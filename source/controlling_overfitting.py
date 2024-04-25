@@ -98,6 +98,7 @@ class ExpConfig:
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
     dynamic_pruning: bool = False
+    exclude_layer: Optional[str] = None
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     prune_at_end: Any = None  # If prune after training, tuple like (reg_param, lr, additional_steps)
     pretrain: int = 0  # Train only the normalization parameters for <pretrain> steps
@@ -818,6 +819,14 @@ def run_exp(exp_config: ExpConfig) -> None:
         # frozen_layer_lists = utl.extract_layer_lists(params)
         neuron_states = utl.NeuronStates(activation_layer_order)
         acti_map = utl.get_activation_mapping(raw_net, next(train))
+        if exp_config.exclude_layer:
+            for d_key, d_val in acti_map.items():
+                if exp_config.exclude_layer in d_key:
+                    acti_map[d_key]['preceding'] = None
+                    acti_map[d_key]['following'] = None
+
+        # print(acti_map)
+        # raise SystemExit
         del raw_net
         if exp_config.record_gate_grad_stat:
             gate_grad = utl.NeuronStates(activation_layer_order)
