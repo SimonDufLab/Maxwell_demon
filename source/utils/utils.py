@@ -718,7 +718,13 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
         else:
             new_opt_state = (filtered_opt_state,)
 
-    new_sizes = [int(jnp.sum(jnp.logical_not(state))) for state in neurons_state_dict.values()]
+    excluded_state = {
+        _state: _val if (activation_mapping[_state]["preceding"] is not None or
+                         activation_mapping[_state]["following"] is not None)
+        else jnp.zeros_like(_val)
+        for _state, _val in neurons_state_dict.items()
+    }  # Excluded layers from pruning are unaccounted for when returning the new sizes to modify the architecture
+    new_sizes = [int(jnp.sum(jnp.logical_not(state))) for state in excluded_state.values()]
 
     if opt_state:
         if state:
