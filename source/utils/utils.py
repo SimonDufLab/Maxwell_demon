@@ -1449,12 +1449,18 @@ srigl_data_augmentation_tf = tf.keras.Sequential([
 
 
 @tf.function
-def augment_train_imagenet_dataset_res50(image, label):
-    # Randomly crop the image
-    image = tf.image.random_crop(image, [224, 224, 3])  # assuming image has 3 color channels
-    # Randomly flip the image horizontally
-    image = tf.image.random_flip_left_right(image)
-    return image, tf.one_hot(label, 1000)
+def augment_train_imagenet_dataset_res50(images, label):
+    # Map function to apply to each individual image in the batch
+    def augment_image(image):
+        # Randomly crop the image
+        image = tf.image.random_crop(image, [224, 224, 3])  # Assuming image has 3 color channels
+        # Randomly flip the image horizontally
+        image = tf.image.random_flip_left_right(image)
+        return image
+
+    # Apply the `augment_image` function to each image in the batch
+    augmented_images = tf.map_fn(augment_image, images, dtype=tf.float32)
+    return augmented_images, tf.one_hot(label, 1000)
 
 
 @tf.function
