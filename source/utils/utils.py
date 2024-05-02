@@ -290,21 +290,30 @@ def map_decision_with_bool_array(decision, current_leaf, potential_leaf):
     return jnp.where(decision, current_leaf, potential_leaf)
 
 
-@jax.jit
-def reinitialize_dead_neurons(neuron_states, old_params, new_params):
+# def reinitialize_dead_neurons(neuron_states, old_params, new_params):
+#     # neuron_states = [jnp.logical_not(state) for state in neuron_states]
+#     # neuron_states = jax.tree_map(jnp.logical_not, neuron_states)
+#     print(print(jax.tree_map(jnp.shape, neuron_states.state())))
+#     neuron_states = [jnp.logical_not(state) for layer, state in neuron_states.items() if 'activation' in layer]
+#     print(jax.tree_map(jnp.shape, neuron_states))
+#     return _reinitialize_dead_neurons(neuron_states, old_params, new_params)
+
+
+# @jax.jit
+def reinitialize_dead_neurons(acti_map, neuron_states, old_params, new_params):
     """ Given the activations value for the whole training set, build a mask that is used for reinitialization
       neurons_state: neuron states (either 0 or 1) post-activation. Will be 1 if y <=  0
       old_params: current parameters value
       new_params: new parameters' dict to pick from weights being reinitialized"""
-    neuron_states = [jnp.logical_not(state) for state in neuron_states]
-    # neuron_states = jax.tree_map(jnp.logical_not, neuron_states)
-    layers = list(old_params.keys())
-    for i in range(len(neuron_states)):
-        for weight_type in list(old_params[layers[i]].keys()):  # Usually, 'w' and 'b'
-            old_params[layers[i]][weight_type] = old_params[layers[i]][weight_type] * neuron_states[i]
+    for layer in old_params.keys():
+        if acti_map[layer]['following'] is not None:
+            neuron_state = neuron_states[acti_map[layer]['following']]
+            for weight_type in list(old_params[layer].keys()):  # Usually, 'w' and 'b'
+                old_params[layer][weight_type] = old_params[layer][weight_type] * jnp.logical_not(neuron_state)
         kernel_param = 'w'
-        old_params[layers[i + 1]][kernel_param] = old_params[layers[i + 1]][kernel_param] * neuron_states[
-            i].reshape(-1, 1)
+        if acti_map[layer]['preceding'] is not None:
+            neuron_state = neuron_states[acti_map[layer]['preceding']]
+            old_params[layer][kernel_param] = old_params[layer][kernel_param] * jnp.logical_not(neuron_state).reshape(-1, 1)
     reinitialized_params = jax.tree_util.tree_map(map_decision, old_params, new_params)
 
     return reinitialized_params
@@ -1383,15 +1392,71 @@ def get_mask_update_fn(loss, optimizer, noise=False, noise_imp=(1, 1), asymmetri
                        init_fn=None):
     """ Return the update function, but taking into account a mask for neurons that we want to freeze the weights"""
 
-    @jax.jit
-    def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
-                _batch: Batch, _reg_param: float = 0.0, _mask: Optional[hk.Params] = None) -> Tuple[hk.Params, Any, OptState]:
-        grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
-        updates, _opt_state = optimizer.update(grads, _opt_state, _params)
-        if _mask:
-            updates = jax.tree_map(jnp.multiply, updates, _mask)
-        new_params = optax.apply_updates(_params, updates)
-        return new_params, new_state, _opt_state
+    if not noise:
+        @jax.jit
+        def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState,
+                    _batch: Batch, _reg_param: float = 0.0, _mask: Optional[hk.Params] = None) -> Tuple[hk.Params, Any, OptState]:
+            grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+            updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+            if _mask:
+                updates = jax.tree_map(jnp.multiply, updates, _mask)
+            new_params = optax.apply_updates(_params, updates)
+            return new_params, new_state, _opt_state
+    else:
+        a, b = noise_imp
+        assert not return_grad, 'return_grad option not coded yet with noisy grad'
+        if asymmetric_noise:
+            @jax.jit
+            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
+                        _key: Any, _reg_param: float = 0.0, _mask: Optional[hk.Params] = None) -> Tuple[hk.Params, Any, OptState, Any]:
+                grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                key, next_key = jax.random.split(_key)
+                flat_grads, unravel_fn = ravel_pytree(grads)
+                added_noise = _var * jax.random.normal(key, shape=flat_grads.shape)
+                if live_only:
+                    added_noise = added_noise * (
+                            jnp.abs(flat_grads) >= 0)  # Only apply noise to weights with gradient!=0 (live neurons)
+                else:
+                    added_noise = added_noise * (
+                            jnp.abs(flat_grads) == 0)  # Only apply noise to weights with gradient==0 (dead neurons)
+                # noisy_grad = unravel_fn(a * flat_grads + b * added_noise)
+                updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+                flat_updates, _ = ravel_pytree(updates)
+                if noise_offset_only:  # Watch-out, will work even if no normalization layer with offset params
+                    offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                    if positive_offset:
+                        added_noise = jnp.abs(added_noise)  # More efficient revival if solely increasing offset
+                    added_noise *= offset_mask
+                elif positive_offset:
+                    offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                    added_noise = jnp.where(offset_mask, jnp.abs(added_noise), added_noise)
+                noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
+                if _mask:
+                    noisy_updates = jax.tree_map(jnp.multiply, noisy_updates, _mask)
+                new_params = optax.apply_updates(_params, noisy_updates)
+                return new_params, new_state, _opt_state, next_key
+        else:
+            @jax.jit
+            def _update(_params: hk.Params, _state: hk.State, _opt_state: OptState, _batch: Batch, _var: float,
+                        _key: Any, _reg_param: float = 0.0, _mask: Optional[hk.Params] = None) -> Tuple[hk.Params, Any, OptState, Any]:
+                grads, new_state = jax.grad(loss, has_aux=True)(_params, _state, _batch, _reg_param)
+                updates, _opt_state = optimizer.update(grads, _opt_state, _params)
+                key, next_key = jax.random.split(_key)
+                flat_updates, unravel_fn = ravel_pytree(updates)
+                added_noise = _var * jax.random.normal(key, shape=flat_updates.shape)
+                if noise_offset_only:  # Watch-out, will work even if no normalization layer with offset params
+                    offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                    if positive_offset:
+                        added_noise = jnp.abs(added_noise)  # More efficient revival if solely increasing offset
+                    added_noise *= offset_mask
+                elif positive_offset:
+                    offset_mask, _ = ravel_pytree(zero_out_all_except_bn_offset(grads))
+                    added_noise = jnp.where(offset_mask, jnp.abs(added_noise), added_noise)
+                noisy_updates = unravel_fn(a * flat_updates + b * added_noise)
+                if _mask:
+                    noisy_updates = jax.tree_map(jnp.multiply, noisy_updates, _mask)
+                new_params = optax.apply_updates(_params, noisy_updates)
+                return new_params, new_state, _opt_state, next_key
 
     return _update
 
@@ -1459,7 +1524,8 @@ def augment_train_imagenet_dataset_res50(images, label):
         return image
 
     # Apply the `augment_image` function to each image in the batch
-    augmented_images = tf.map_fn(augment_image, images, dtype=tf.float32)
+    augmented_images = tf.map_fn(augment_image, images,
+                                 fn_output_signature=tf.TensorSpec(shape=[224, 224, 3], dtype=tf.float32))
     return augmented_images, tf.one_hot(label, 1000)
 
 
