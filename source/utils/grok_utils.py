@@ -39,3 +39,12 @@ def mask_all_except_norm(params):
             for subkey, subval in params[_key].items():
                 _params[_key][subkey] = jnp.zeros_like(subval)
     return _params
+
+
+def mask_all_except_norm_and_output(params):
+    _params = copy.deepcopy(params)
+    for _key, _val in params.items():
+        if ('norm' not in _key) and ('logits' not in _key):
+            for subkey, subval in params[_key].items():
+                _params[_key][subkey] = jnp.zeros_like(subval)
+    return _params

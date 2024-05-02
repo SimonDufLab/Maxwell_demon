@@ -889,7 +889,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             add_steps_end = 0
         if exp_config.pretrain:
             add_steps_start = exp_config.pretrain
-            pretrain_mask = {'_mask': utils.grok_utils.mask_all_except_norm(params)}
+            pretrain_mask = {'_mask': utils.grok_utils.mask_all_except_norm_and_output(params)}
         else:
             add_steps_start = 0
             pretrain_mask = {}

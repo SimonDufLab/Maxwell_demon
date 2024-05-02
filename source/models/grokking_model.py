@@ -151,7 +151,7 @@ class LastLayer(hk.Module):
 
         self.mlp_head = hk.Sequential([
             LayerNorm(),
-            hk.Linear(num_classes)
+            hk.Linear(num_classes, name='logits')
         ])
 
     def __call__(self, inputs):
