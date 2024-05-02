@@ -928,6 +928,9 @@ def run_exp(exp_config: ExpConfig) -> None:
         for step in range(starting_step, exp_config.training_steps + add_steps_end + add_steps_start):
             if step == add_steps_start:
                 pretrain_mask = {}
+                # Reset state and opt_state
+                _, state = net.init(init_key, next(train))
+                opt_state = opt.init(params)
             if (step > 0) and (step % steps_per_epoch == 0):  # Keep track of the best accuracy along training
                 architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[  # TODO: those line should not be necessary ...
                     exp_config.architecture]
