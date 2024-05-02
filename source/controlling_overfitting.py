@@ -118,7 +118,7 @@ class ExpConfig:
     dropout_rate: float = 0
     perturb_param: float = 0  # Perturbation parameter for rnadam
     with_rng_seed: int = 428
-    linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
+    # linear_switch: bool = False  # Whether to switch mid-training steps to linear activations
     measure_linear_perf: bool = False  # Measure performance over the linear network without changing activation
     record_distribution_data: bool = False  # Whether to record distribution at end of training -- high memory usage
     preempt_handling: bool = False  # Frequent checkpointing to handle SLURM preemption
@@ -662,43 +662,43 @@ def run_exp(exp_config: ExpConfig) -> None:
             #     exp_run.track(jax.device_get(total_neurons - current_dead_neurons_count),
             #                   name=f"Live neurons at training step {step+1}", step=starting_neurons)
 
-            if (((step + 1) % (exp_config.training_steps // 2)) == 0) and exp_config.linear_switch:
-                activation_fn = activation_choice["linear"]
-                architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
-                    exp_config.architecture]
-                architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
-                net = build_models(*architecture, with_dropout=with_dropout)[0]
-                init_fn = utl.get_init_fn(net, ones_init)
-
-                # Reset training/monitoring functions
-                # utl.clear_caches()
-                loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                               classes=classes, with_dropout=with_dropout,
-                                               exclude_bias_bn_from_reg=exp_config.masked_reg,
-                                               label_smoothing=exp_config.label_smoothing)
-                test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                                       reg_param=decaying_reg_param,
-                                                       classes=classes, is_training=False, with_dropout=with_dropout,
-                                                       exclude_bias_bn_from_reg=exp_config.masked_reg)
-                accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-                update_fn = get_updater(loss, opt, exp_config.add_noise, exp_config.noise_imp,
-                                                                exp_config.asymmetric_noise,
-                                                                going_wild=exp_config.going_wild,
-                                                                live_only=exp_config.noise_live_only,
-                                                                noise_offset_only=exp_config.noise_offset_only,
-                                                                positive_offset=exp_config.positive_offset,
-                                                                with_dropout=with_dropout,
-                                                                modulate_via_gate_grad=exp_config.mod_via_gate_grad,
-                                                                acti_map=acti_map, perturb=exp_config.perturb_param,
-                                                                init_fn=init_fn)
-                death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
-                # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
-                #                                                  epsilon=exp_config.epsilon_close,
-                #                                                  avg=exp_config.avg_for_eps)
-                scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
-                # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
-                final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
-                full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
+            # if (((step + 1) % (exp_config.training_steps // 2)) == 0) and exp_config.linear_switch:
+            #     activation_fn = activation_choice["linear"]
+            #     architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+            #         exp_config.architecture]
+            #     architecture = architecture(size, classes, activation_fn=activation_fn, **net_config)
+            #     net = build_models(*architecture, with_dropout=with_dropout)[0]
+            #     init_fn = utl.get_init_fn(net, ones_init)
+            #
+            #     # Reset training/monitoring functions
+            #     # utl.clear_caches()
+            #     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
+            #                                    classes=classes, with_dropout=with_dropout,
+            #                                    exclude_bias_bn_from_reg=exp_config.masked_reg,
+            #                                    label_smoothing=exp_config.label_smoothing)
+            #     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+            #                                            reg_param=decaying_reg_param,
+            #                                            classes=classes, is_training=False, with_dropout=with_dropout,
+            #                                            exclude_bias_bn_from_reg=exp_config.masked_reg)
+            #     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+            #     update_fn = get_updater(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+            #                                                     exp_config.asymmetric_noise,
+            #                                                     going_wild=exp_config.going_wild,
+            #                                                     live_only=exp_config.noise_live_only,
+            #                                                     noise_offset_only=exp_config.noise_offset_only,
+            #                                                     positive_offset=exp_config.positive_offset,
+            #                                                     with_dropout=with_dropout,
+            #                                                     modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+            #                                                     acti_map=acti_map, perturb=exp_config.perturb_param,
+            #                                                     init_fn=init_fn)
+            #     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+            #     # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+            #     #                                                  epsilon=exp_config.epsilon_close,
+            #     #                                                  avg=exp_config.avg_for_eps)
+            #     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+            #     # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+            #     final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+            #     full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
             return (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer,
                     loss, test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
