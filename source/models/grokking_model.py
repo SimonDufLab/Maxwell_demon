@@ -213,7 +213,7 @@ def grok_models(size: Union[int, Sequence[int]],
                 depth: int = 2,
                 ):
     if type(size) == int:
-        sizes = [size,]*2
+        sizes = [size,]*depth
     else:
         sizes = size
 
