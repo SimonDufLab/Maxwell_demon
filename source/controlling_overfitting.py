@@ -619,7 +619,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                         architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
                         net = build_models(*architecture)[0]
                         init_fn = utl.get_init_fn(net, ones_init)
-                        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+                        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes, exp_config.grok_depth)
 
                         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                        reg_param=decaying_reg_param, classes=classes,
@@ -856,9 +856,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         noise_key = jax.random.PRNGKey(exp_config.noise_seed)
 
-        starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size)
+        starting_neurons, starting_per_layer = utl.get_total_neurons(exp_config.architecture, size, exp_config.grok_depth)
         # total_neurons, total_per_layer = starting_neurons, starting_per_layer
-        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes, exp_config.grok_depth)
         init_total_neurons = copy.copy(starting_neurons)
         init_total_per_layer = copy.copy(starting_per_layer)
 
@@ -948,7 +948,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 if curr_acc > best_acc:
                     best_acc = curr_acc
                     best_params_count = utl.count_params(params)
-                    best_total_neurons = utl.get_total_neurons(exp_config.architecture, new_sizes)[0]
+                    best_total_neurons = utl.get_total_neurons(exp_config.architecture, new_sizes, exp_config.grok_depth)[0]
             # Update decaying reg_param if needed:
             if exp_config.reg_param_schedule and step < exp_config.training_steps:
                 decaying_reg_param = reg_sched(step)
@@ -1036,7 +1036,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 exp_config.architecture]
             architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
             net = build_models(*architecture)[0]
-            total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes)
+            total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes, exp_config.grok_depth)
 
             accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
             death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
