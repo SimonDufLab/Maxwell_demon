@@ -20,7 +20,7 @@ from models.convnet import conv_4_2_dropout, conv_4_2_ln
 from models.vgg16 import vgg16
 from models.resnet import resnet18, resnet50, srigl_resnet18, srigl_resnet50
 from models.vit import vit_b_4, vit_b_16
-from models.grokking_model import grok_model_depth2
+from models.grokking_model import grok_models
 from grok_dataset.datasets import ModDivisonDataset, ModSubtractDataset, ModSumDataset, PermutationGroup, load_grok_ds, n_out_mapping
 
 
@@ -150,7 +150,7 @@ bn_architecture_choice = {
     "srigl_resnet50": srigl_resnet50,
     "vit_b_4": vit_b_4,
     "vit_b_16": vit_b_16,
-    "grok_model_depth2": grok_model_depth2,
+    "grok_models": grok_models,
 }
 
 bn_config_choice = {
