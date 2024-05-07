@@ -2383,11 +2383,12 @@ def warmup_piecewise_decay_schedule(
     base_lr: float,
     final_lr: float,
     decay_bounds: List,
-    scaling_factor: float
+    scaling_factor: float,
+    warmup_ratio: float = 0.05
 ) -> optax.Schedule:
     """Linear warmup followed by piecewise decay
     """
-    warmup_steps = int(0.05 * training_steps)  # warmup is done for 5% of training_steps
+    warmup_steps = int(warmup_ratio * training_steps)  # warmup is done for 5% of training_steps
     bound_dict = {i-warmup_steps: scaling_factor for i in decay_bounds}
     schedules = [
         optax.linear_schedule(
