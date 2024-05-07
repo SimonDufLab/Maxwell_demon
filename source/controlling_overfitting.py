@@ -87,6 +87,7 @@ class ExpConfig:
     with_bn: bool = False  # Add batchnorm layers or not in the models
     bn_config: str = "default"  # Different configs for bn; default have offset and scale trainable params
     size: Any = 50  # Can also be a tuple for convnets
+    grok_depth: int = 2  # Depth control for grokking models
     regularizer: Optional[str] = "cdg_l2"
     reg_params: Any = (0.0, 1e-6, 5e-6, 1e-5, 5e-5, 1e-4, 5e-4, 1e-3, 5e-3, 1e-2, 5e-2, 1e-1)
     masked_reg: Optional[str] = None  # If "all" exclude all bias and bn params, if "scale" only exclude scale param/ also offset_only, scale_only and bn_params_only
@@ -298,6 +299,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if 'grok' in exp_config.architecture:
         net_config['vocab_size'] = vocab_size_mapping[exp_config.dataset]
+        net_config['depth'] = exp_config.grok_depth
 
     # warmup:
     if 'warmup' in exp_config.lr_schedule:
