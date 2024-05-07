@@ -181,11 +181,36 @@ def grokking_base_models(*, vocab_size, max_length, num_classes, heads, hidden_d
     return layers, None
 
 
-def grok_model_depth2(size: Union[int, Sequence[int]],
+# def grok_model_depth2(size: Union[int, Sequence[int]],
+#                 num_classes: int,
+#                 vocab_size: int,
+#                 activation_fn: hk.Module = GeluActivationModule,
+#                 bn_config: dict = {},
+#                 ):
+#     if type(size) == int:
+#         sizes = [size,]*2
+#     else:
+#         sizes = size
+#
+#     return grokking_base_models(
+#         vocab_size=vocab_size,
+#         max_length=5,
+#         num_classes=num_classes,
+#         heads=4,
+#         hidden_dim=128,
+#         attn_dim=32,
+#         mlp_dim=sizes,
+#         depth=2,
+#         activation_fn=activation_fn,
+#     )
+
+
+def grok_models(size: Union[int, Sequence[int]],
                 num_classes: int,
                 vocab_size: int,
                 activation_fn: hk.Module = GeluActivationModule,
                 bn_config: dict = {},
+                depth: int = 2,
                 ):
     if type(size) == int:
         sizes = [size,]*2
@@ -200,6 +225,6 @@ def grok_model_depth2(size: Union[int, Sequence[int]],
         hidden_dim=128,
         attn_dim=32,
         mlp_dim=sizes,
-        depth=2,
+        depth=depth,
         activation_fn=activation_fn,
     )
