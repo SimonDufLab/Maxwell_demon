@@ -3321,7 +3321,7 @@ def signal_handler(signum: int, frame: Optional[FrameType]):  # Taken from: http
 ##############################
 # Varia
 ##############################
-def get_total_neurons(architecture, sizes):
+def get_total_neurons(architecture, sizes, grok_depth):
     if 'mlp_3' in architecture:
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes, sizes * 3]
@@ -3385,9 +3385,9 @@ def get_total_neurons(architecture, sizes):
     elif "vit_b" in architecture:  # Cover vit_b_4 and vit_b_16, both having 12 layers
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes,]*12
-    elif "grok_model_depth2" in architecture:  # Cover vit_b_4 and vit_b_16, both having 12 layers
+    elif "grok_models" in architecture:  # Cover vit_b_4 and vit_b_16, both having 12 layers
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
-            sizes = [sizes,]*2
+            sizes = [sizes,]*grok_depth
     else:
         raise NotImplementedError("get_size not implemented for current architecture")
 
