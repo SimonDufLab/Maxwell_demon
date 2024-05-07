@@ -73,6 +73,7 @@ class ExpConfig:
     alpha_decay: float = 5.0  # Param controlling transition speed from adam to momentum in adam_to_momentum optimizers
     activation: str = "relu"  # Activation function used throughout the model
     shifted_relu: float = 0.0  # Shift value (b) applied on output before activation. To promote dead neurons
+    srelu_sched: str = "constant"  # Schedule for shifted ReLU, same choices as reg_param_schedule
     dataset: str = "mnist"
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
@@ -881,7 +882,9 @@ def run_exp(exp_config: ExpConfig) -> None:
             if exp_config.add_noise:
                 noise_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, exp_config.noise_eta)
         if exp_config.shifted_relu:
-            shift_relu_sched = utl.linear_warmup(exp_config.reg_param_span, exp_config.shifted_relu)
+            # shift_relu_sched = utl.linear_warmup(exp_config.reg_param_span, exp_config.shifted_relu)
+            shift_relu_sched = reg_param_scheduler_choice[exp_config.srelu_sched](exp_config.reg_param_span,
+                                                                                  exp_config.shifted_relu)
 
         if exp_config.prune_at_end:
             pruning_reg_param, pruning_lr, add_steps_end = exp_config.prune_at_end
