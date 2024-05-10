@@ -338,7 +338,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         partial_train_ds_size = train_ds_size/1000  # .1% of dataset used for evaluation on train
         test_death = train_eval  # Don't want to prefetch too many ds
     else:
-        partial_train_ds_size = train_ds_size /25
+        partial_train_ds_size = train_ds_size / 25
 
     # # Recording over all widths
     # live_neurons = []
