@@ -46,7 +46,7 @@ class ExpConfig:
     # live_freq: int = 25000  # Take a snapshot of the 'effective capacity' every <live_freq> iterations
     lr: float = 1e-3
     gradient_clipping: bool = False
-    lr_schedule: str = "None"
+    lr_schedule: str = "constant"
     final_lr: float = 1e-6
     lr_decay_steps: Any = 5  # If applicable, amount of time the lr is decayed (example: piecewise constant schedule)
     lr_decay_scaling_factor: float = 0.1  # scaling factor for lr decay
@@ -58,6 +58,7 @@ class ExpConfig:
     dataset: str = "mnist"
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
+    label_smoothing: float = 0.0  # Level of smoothing applied during the loss calculation, 0.0 -> no smoothing
     kept_classes: Optional[int] = None  # Number of classes in the randomly selected subset
     noisy_label: float = 0.0  # ratio (between [0,1]) of labels to randomly (uniformly) flip
     permuted_img_ratio: float = 0  # ratio ([0,1]) of training image in training ds to randomly permute their pixels
@@ -69,10 +70,12 @@ class ExpConfig:
     size: Any = 50  # Can also be a tuple for convnets
     regularizer: Optional[str] = "None"
     reg_param: float = 5e-4
+    masked_reg: Optional[str] = None  # If "all" exclude all bias and bn params, if "scale" only exclude scale param/ also offset_only, scale_only and bn_params_only
     wd_param: Optional[float] = None
     reg_param_decay_cycles: int = 1  # number of cycles inside a switching_period that reg_param is divided by 10
     zero_end_reg_param: bool = False  # Put reg_param to 0 at end of training
     reg_param_schedule: Optional[str] = None  # Schedule for reg_param, priority over reg_param_decay_cycles flag
+    reg_param_span: Optional[int] = None  # More general than zero_end_reg_param, allow to decide when reg_param schedule falls to 0
     epsilon_close: Any = None  # Relaxing criterion for dead neurons, epsilon-close to relu gate (second check)
     avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
     init_seed: int = 41
@@ -81,6 +84,15 @@ class ExpConfig:
     spar_levels: Any = (0.5, 0.8)
     sparsity_distribution: str = "uniform"  # uniform or erk : available distribution in jaxpruner
     pruning_method: str = "WMP"  # See config.py for option
+    update_start_step: float = 0.32  # When to start pruning during training
+    update_end_step: float = 0.8  # When to end pruning during training
+    drop_fraction: float = 0.1  # Jaxpruner parameter
+    add_noise: bool = False  # Add Gaussian noise to the gradient signal
+    asymmetric_noise: bool = True  # Use an asymmetric noise addition, not applied to all neurons' weights
+    noise_live_only: bool = True  # Only add noise signal to live neurons, not to dead ones. reverse if False
+    noise_imp: Any = (1, 1)  # Importance ratio given to (batch gradient, noise)
+    noise_eta: float = 0.01  # Variance of added noise; can only be used with a reg_param_schedule that it will match
+    noise_seed: int = 1
     dropout_rate: float = 0
     with_rng_seed: int = 428
     preempt_handling: bool = False  # Frequent checkpointing to handle SLURM preemption
@@ -98,6 +110,13 @@ cs.store(name=exp_name+"_config", node=ExpConfig)
 @hydra.main(version_base=None, config_name=exp_name+"_config")
 def run_exp(exp_config: ExpConfig) -> None:
     run_start_time = time.time()
+
+    if "imagenet" in exp_config.dataset:
+        dataset_dir = exp_config.dataset
+        if "vit" in exp_config.architecture:
+            exp_config.dataset = "imagenet_vit"
+        else:
+            exp_config.dataset = "imagenet"
 
     assert exp_config.optimizer in optimizer_choice.keys(), "Currently supported optimizers: " + str(
         optimizer_choice.keys())
@@ -129,6 +148,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.epsilon_close = literal_eval(exp_config.epsilon_close)
     if type(exp_config.spar_levels) == str:
         exp_config.spar_levels = literal_eval(exp_config.spar_levels)
+    if type(exp_config.noise_imp) == str:
+        exp_config.noise_imp = literal_eval(exp_config.noise_imp)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
@@ -172,7 +193,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         aim_hash = None
 
     # Logger config
-    log_path = "./ICLR2023_jaxpruner_baseline"
+    log_path = "./NEURIPS2024_jaxpruner_baseline"
     exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash, force_resume=True)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
     if exp_config.preempt_handling:
@@ -216,6 +237,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     else:
         kept_indices = None
     load_data = dataset_choice[exp_config.dataset]
+    if 'imagenet' in exp_config.dataset:
+        load_data = Partial(load_data, dataset_dir)
     eval_size = exp_config.eval_batch_size
     death_minibatch_size = exp_config.death_batch_size
     train_ds_size, train, train_eval, test_death = load_data(split="train", is_training=True,
@@ -232,6 +255,11 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      cardinality=True, augment_dataset=exp_config.augment_dataset,
                                      normalize=exp_config.normalize_inputs)
     steps_per_epoch = train_ds_size // exp_config.train_batch_size
+    if 'imagenet' in exp_config.dataset:
+        partial_train_ds_size = train_ds_size/1000  # .1% of dataset used for evaluation on train
+        test_death = train_eval  # Don't want to prefetch too many ds
+    else:
+        partial_train_ds_size = train_ds_size / 25
 
     if exp_config.save_wanda:
         # Recording metadata about activations that will be pickled
@@ -326,11 +354,18 @@ def run_exp(exp_config: ExpConfig) -> None:
                     key in _sparsity_dict}
 
         _pruning_method = baseline_pruning_method_choice[exp_config.pruning_method]
+        if exp_config.pruning_method in ('RigL', 'Set'):
+            updater_config = {"drop_fraction_fn": optax.cosine_decay_schedule(
+                exp_config.drop_fraction, int(exp_config.update_end_step * exp_config.training_steps)
+            )}
+        else:
+            updater_config = {}
         pruner = _pruning_method(
             sparsity_distribution_fn=custom_distribution,
             scheduler=jaxpruner.sparsity_schedules.PolynomialSchedule(
-                update_freq=500, update_start_step=int(.30 * exp_config.training_steps),
-                update_end_step=int(.80 * exp_config.training_steps))
+                update_freq=1000, update_start_step=int(exp_config.update_start_step * exp_config.training_steps),
+                update_end_step=int(exp_config.update_end_step * exp_config.training_steps)),
+            **updater_config
         )
 
         # if exp_config.pruning_method == "WMP":
@@ -350,21 +385,28 @@ def run_exp(exp_config: ExpConfig) -> None:
 
         # Set training/monitoring functions
         loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                       classes=classes, with_dropout=with_dropout)
+                                       classes=classes, with_dropout=with_dropout,
+                                       exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                       label_smoothing=exp_config.label_smoothing)
         test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=exp_config.reg_param,
-                                               classes=classes, is_training=False, with_dropout=with_dropout)
+                                               classes=classes, is_training=False, with_dropout=with_dropout,
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
         accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-        update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+        update_fn = utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                        exp_config.asymmetric_noise,
+                                                        live_only=exp_config.noise_live_only,
+                                                        with_dropout=with_dropout)
+        noise_key = jax.random.PRNGKey(exp_config.noise_seed)
         death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
         # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
         #                                                  epsilon=exp_config.epsilon_close, avg=exp_config.avg_for_eps)
-        scan_len = train_ds_size // death_minibatch_size
+        scan_len = int(partial_train_ds_size // death_minibatch_size)
         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
         # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
         scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
             utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
         if load_from_preexisting_model_state:
             params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
@@ -393,11 +435,15 @@ def run_exp(exp_config: ExpConfig) -> None:
             reg_param_decay_period = exp_config.training_steps // decay_cycles
 
         if exp_config.reg_param_schedule:
-            if exp_config.zero_end_reg_param:
+            if exp_config.reg_param_span:
+                sched_end = exp_config.reg_param_span
+            elif exp_config.zero_end_reg_param:
                 sched_end = int(0.9 * exp_config.training_steps)
             else:
                 sched_end = exp_config.training_steps
             reg_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, reg_param)
+            if exp_config.add_noise:
+                noise_sched = reg_param_scheduler_choice[exp_config.reg_param_schedule](sched_end, exp_config.noise_eta)
 
         subrun_start_time = time.time()
 
@@ -419,11 +465,17 @@ def run_exp(exp_config: ExpConfig) -> None:
                 test_loss_fn.clear_cache()
                 update_fn.clear_cache()
                 loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer, reg_param=decaying_reg_param,
-                                               classes=classes, with_dropout=with_dropout)
+                                               classes=classes, with_dropout=with_dropout,
+                                               exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                               label_smoothing=exp_config.label_smoothing)
                 test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                        reg_param=decaying_reg_param,
-                                                       classes=classes, is_training=False, with_dropout=with_dropout)
-                update_fn = utl.update_given_loss_and_optimizer(loss, opt, with_dropout=with_dropout)
+                                                       classes=classes, is_training=False, with_dropout=with_dropout,
+                                                       exclude_bias_bn_from_reg=exp_config.masked_reg)
+                utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                    exp_config.asymmetric_noise,
+                                                    live_only=exp_config.noise_live_only,
+                                                    with_dropout=with_dropout)
             if exp_config.reg_param_schedule and step < exp_config.training_steps:
                 decaying_reg_param = reg_sched(step)
             if (step > 0) and exp_config.preempt_handling and (step % (exp_config.checkpoint_freq * steps_per_epoch) == 0):
@@ -529,31 +581,37 @@ def run_exp(exp_config: ExpConfig) -> None:
                     # Recompile training/monitoring functions
                     loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
                                                    reg_param=decaying_reg_param, classes=classes,
-                                                   with_dropout=with_dropout)
+                                                   with_dropout=with_dropout,
+                                                   exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                                   label_smoothing=exp_config.label_smoothing)
                     test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
-                                                        reg_param=decaying_reg_param,
-                                                        classes=classes,
-                                                        is_training=False, with_dropout=with_dropout)
+                                                           reg_param=decaying_reg_param,
+                                                           classes=classes,
+                                                           is_training=False, with_dropout=with_dropout,
+                                                           exclude_bias_bn_from_reg=exp_config.masked_reg)
                     accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
-                    update_fn = utl.update_given_loss_and_optimizer(loss, opt,
-                                                                    with_dropout=with_dropout)
+                    utl.update_given_loss_and_optimizer(loss, opt, exp_config.add_noise, exp_config.noise_imp,
+                                                        exp_config.asymmetric_noise,
+                                                        live_only=exp_config.noise_live_only,
+                                                        with_dropout=with_dropout)
                     death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
                     # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
                     #                                                  epsilon=exp_config.epsilon_close,
                     #                                                  avg=exp_config.avg_for_eps)
-                    scan_len = train_ds_size // death_minibatch_size
+                    scan_len = int(partial_train_ds_size // death_minibatch_size)
                     # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
                     scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                     scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
                         utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout), scan_len, True)
                     final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, test_size // eval_size)
-                    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, train_ds_size // eval_size)
+                    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
 
                 del dead_neurons  # Freeing memory
-                train_acc_whole_ds = jax.device_get(full_train_acc_fn(params, state, train_eval))
-                exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
-                              step=step,
-                              context={"sparsity level": str(sparsity)})
+                if "imagenet" not in exp_config.dataset:
+                    train_acc_whole_ds = full_train_acc_fn(params, state, train_eval)
+                    exp_run.track(train_acc_whole_ds, name="Train accuracy; whole training dataset",
+                                  step=step,
+                                  context={"sparsity level": str(sparsity)})
 
             # if ((step+1) % exp_config.live_freq == 0) and (step+2 < exp_config.training_steps):
             #     current_dead_neurons = scan_death_check_fn(params, state, test_death)
@@ -568,7 +626,13 @@ def run_exp(exp_config: ExpConfig) -> None:
                 params, state, opt_state, dropout_key = update_fn(params, state, opt_state, next(train), dropout_key, _reg_param=decaying_reg_param)
                 params = pruner.post_gradient_update(params, opt_state)
             else:
-                params, state, opt_state = update_fn(params, state, opt_state, next(train), _reg_param=decaying_reg_param)
+                if not exp_config.add_noise:
+                    params, state, opt_state = update_fn(params, state, opt_state, next(train), _reg_param=decaying_reg_param)
+                else:
+                    noise_var = noise_sched(step)
+                    params, state, opt_state, noise_key = update_fn(params, state, opt_state, next(train),
+                                                                    noise_var,
+                                                                    noise_key, _reg_param=decaying_reg_param)
                 params = pruner.post_gradient_update(params, opt_state)
 
         final_accuracy = jax.device_get(final_accuracy_fn(params, state, test_eval))
