@@ -1,11 +1,11 @@
 #!/bin/bash
 
-#SBATCH --job-name=controlling_overfitting
-#SBATCH --partition=long-cpu                           #  Ask for unkillable job
+#SBATCH --job-name=boosted_init
+#SBATCH --partition=main                           #  Ask for unkillable job
 #SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
-# #SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=24G   #24G for Resnet18  #32G on cpu nodes for grok                                       # Ask for 10 GB of RAM
-#SBATCH --time=24:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+#SBATCH --gres=gpu:1                                     # Ask for 1 GPU
+#SBATCH --mem=24G   #24G for Resnet18                                        # Ask for 10 GB of RAM
+#SBATCH --time=15:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
 #SBATCH -x 'cn-d[001-004], cn-g[005-012,017-026]'  # Excluding DGX system, will require a jaxlib update
 
 # Make sure we are located in the right directory and on right branch
@@ -23,10 +23,10 @@ conda activate py38jax_tf
 
 # Flags
 export XLA_PYTHON_CLIENT_PREALLOCATE=true
-#export TF_FORCE_GPU_ALLOW_GROWTH=true
+export TF_FORCE_GPU_ALLOW_GROWTH=true
 
 # Default configuration:
-#    training_steps: int = 250001
+#   training_steps: int = 250001
 #    report_freq: int = 2500
 #    record_freq: int = 250
 #    pruning_freq: int = 1000
@@ -73,8 +73,11 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=true
 #    avg_for_eps: bool = False  # Using the mean instead than the sum for the epsilon_close criterion
 #    init_seed: int = 41
 #    dynamic_pruning: bool = False
+#    exclude_layer: Optional[str] = None
 #    prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
 #    prune_at_end: Any = None  # If prune after training, tuple like (reg_param, lr, additional_steps)
+#    pretrain: int = 0  # Train only the normalization parameters for <pretrain> steps
+#    reset_during_pretrain: bool = False  # Reset dead neurons during pretraining instead of pruning them
 #    pruning_reg: Optional[str] = "cdg_l2"
 #    pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
 #    add_noise: bool = False  # Add Gaussian noise to the gradient signal
@@ -100,10 +103,8 @@ export XLA_PYTHON_CLIENT_PREALLOCATE=true
 #    save_act_only: bool = True  # Only saving distributions with wanda, not the weights
 #    info: str = ''  # Option to add additional info regarding the exp; useful for filtering experiments in aim
 
-# mod_subtract_dataset
-#python source/controlling_overfitting.py training_steps=100001 report_freq=10000 pruning_freq=10000 record_freq=1000 lr=1e-3 optimizer=adamw_b2_98 wd_param=0.05 regularizer=lasso dataset=mod_subtract_dataset size=512 architecture=grok_models activation=relu with_bn=True 'reg_params="(0.000,)"' train_batch_size=512 lr_schedule=step_warmup warmup_ratio=1e-4 preempt_handling=True checkpoint_freq=1000 pretrain=10000 reg_param_span=10000
-#wait $!
+#Structured RigL setup/ ResNet-18 / CIFAR-10:
 
-#### Variable depth
-python source/controlling_overfitting.py training_steps=0 report_freq=10000 pruning_freq=10000 record_freq=1000 lr=1e-3 optimizer=adamw_b2_98 wd_param=0.1 regularizer=lasso dataset=mod_subtract_dataset size=512 architecture=grok_models activation=relu with_bn=True 'reg_params="(0.000,)"' train_batch_size=512 lr_schedule=step_warmup warmup_ratio=1e-4 preempt_handling=True checkpoint_freq=1000 pretrain=30001 reg_param_span=10000 grok_depth=16
+#### Momentum
+python source/controlling_overfitting.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=0 report_freq=2000 record_freq=100 pruning_freq=500 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=1 info=Resnet18_srigl 'reg_params="(0.0005,)"' optimizer=momentum9w wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=lasso activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True preempt_handling=True checkpoint_freq=5 init_seed=61 reg_param_schedule=one_cycle reg_param_span=97656 masked_reg=scale_only add_noise=True noise_eta=0.00005 noise_offset_only=True pretrain=97656 shifted_relu=0.1 reset_during_pretrain=True
 wait $!

@@ -5,6 +5,9 @@ import optax
 import jax
 import jax.numpy as jnp
 import numpy as np
+import tensorflow as tf
+
+tf.config.experimental.set_visible_devices([], "GPU")
 from aim import Run, Distribution
 import os
 import time
@@ -150,6 +153,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.spar_levels = literal_eval(exp_config.spar_levels)
     if type(exp_config.noise_imp) == str:
         exp_config.noise_imp = literal_eval(exp_config.noise_imp)
+    if type(exp_config.lr_decay_steps) == str:
+        exp_config.lr_decay_steps = literal_eval(exp_config.lr_decay_steps)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
