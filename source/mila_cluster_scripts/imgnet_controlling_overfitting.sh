@@ -5,7 +5,7 @@
 #SBATCH --cpus-per-task=16                                # Ask for 2 CPUs
 #SBATCH --gres=gpu:a100l:1                                     # Ask for 1 GPU
 #SBATCH --mem=256G   #24G for Resnet18                                        # Ask for 10 GB of RAM
-#SBATCH --time=76:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
+#SBATCH --time=48:00:00 #48 for Resnet/120 for ViT                                  # The job will run for t hours
 # #SBATCH --reservation=ubuntu2204
 # #SBATCH -x 'cn-b[001-005], cn-d[001-004], cn-g[005-012,017-026], cn-e[002-003], kepler5'  # Excluding DGX system, will require a jaxlib update and kepler 5 that have 16GB GPU memory and v100 with 32Gb memory
                                 # The job will run for 2.5 hours
@@ -53,7 +53,7 @@ module load anaconda/3
 # Load venv
 #source venv/bin/activate
 conda activate py38jax_tf
-ulimit -n 4096 # Aim hit too many files open while preparing ds
+ulimit -n 16000 # Aim hit too many files open while preparing ds
 
 # Flags
 export XLA_PYTHON_CLIENT_PREALLOCATE=false
@@ -128,8 +128,8 @@ echo $LD_PRELOAD
 # SrigL setup
 # Momentum reg_param values: 0.0, 0.0001, 0.0005, 0.0008, 0.001, 0.00125, 0.0015, 0.00175, 0.002, 0.005, 0.01
 
-#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=warmup_piecewise_decay "lr_decay_steps='(30, 70, 90)'" lr_decay_scaling_factor=0.1 normalize_inputs=True reg_param_decay_cycles=1 reg_param_schedule=one_cycle info=Resnet50_srigl_momentum 'reg_params="(0.0004,)"' optimizer=momentum9w wd_param=0.0001 lr=0.1 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 label_smoothing=0.1 regularizer=lasso activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True preempt_handling=True masked_reg=scale_only init_seed=31 reg_param_span=150000 add_noise=True noise_eta=0.00005
-#wait $!
+python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=warmup_piecewise_decay "lr_decay_steps='(30, 70, 90)'" lr_decay_scaling_factor=0.1 normalize_inputs=True reg_param_decay_cycles=1 reg_param_schedule=one_cycle info=Resnet50_srigl_momentum 'reg_params="(0.0004,)"' optimizer=momentum9w wd_param=0.0001 lr=0.1 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 label_smoothing=0.1 regularizer=lasso activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True preempt_handling=True masked_reg=scale_only init_seed=31 reg_param_span=150000 add_noise=True noise_eta=0.00005
+wait $!
 
 # Adam reg_param values: 0.0, 5e-7, 1e-6, 5e-6, 1e-5, 5e-5, 0.0001, 0.00025, 0.0005, 0.00075, 0.001 
 
@@ -139,8 +139,12 @@ echo $LD_PRELOAD
 ####################
 # ViT training setup
 
-python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='vit_b_16' training_steps=800729 report_freq=2000 record_freq=500 pruning_freq=5000 size=3072 with_bn=True lr_schedule=warmup_cosine_decay warmup_ratio=0.1067 normalize_inputs=True reg_param_decay_cycles=1 reg_param_schedule=one_cycle info=vit_16_adamw 'reg_params="(0.0,)"' optimizer=adamw wd_param=0.3 lr=0.003 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=True noisy_label=0.0 label_smoothing=0.0 regularizer=lasso activation=gelu zero_end_reg_param=False save_wanda=False dynamic_pruning=False preempt_handling=True masked_reg=scale_only init_seed=31 reg_param_span=225000 jobid=4406453 #add_noise=True noise_eta=0.00005
-wait $!
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='vit_b_16' training_steps=800729 report_freq=2000 record_freq=500 pruning_freq=5000 size=3072 with_bn=True lr_schedule=warmup_cosine_decay warmup_ratio=0.1067 normalize_inputs=True reg_param_decay_cycles=1 reg_param_schedule=one_cycle info=vit_16_adamw 'reg_params="(0.00005,)"' optimizer=adamw wd_param=0.3 lr=0.003 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=True noisy_label=0.0 label_smoothing=0.0 regularizer=lasso activation=gelu zero_end_reg_param=False save_wanda=False dynamic_pruning=True preempt_handling=True masked_reg=scale_only init_seed=31 reg_param_span=225000 jobid=4408284 add_noise=True noise_eta=0.00005
+#wait $!
+
+# With batch accumulation
+#python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='vit_b_16' training_steps=50046 report_freq=125 record_freq=32 pruning_freq=250 size=3072 with_bn=True lr_schedule=warmup_cosine_decay warmup_ratio=0.10 normalize_inputs=True reg_param_decay_cycles=1 reg_param_schedule=one_cycle info=vit_16_adamw_acc_grad 'reg_params="(0.0,)"' optimizer=adamw wd_param=0.3 lr=0.003 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=True noisy_label=0.0 label_smoothing=0.0 regularizer=lasso activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True preempt_handling=True masked_reg=scale_only init_seed=31 reg_param_span=14000 prune_after=14500 accumulate_batches=16 add_noise=True noise_eta=0.00005 #exclude_layer=transf_layer_10
+#wait $!
 
 ####################
 #python source/controlling_overfitting.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=90083 report_freq=1000 record_freq=200 pruning_freq=2500 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=True reg_param_decay_cycles=1 info=Resnet50_one_cycle_decay_chck_archt 'reg_params="(0.0,)"' optimizer=momentum9 wd_param=0.00001 lr=1.0 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=True init_seed=33

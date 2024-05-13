@@ -2,27 +2,70 @@
 
 #SBATCH --job-name=jaxpruner_baseline
 #SBATCH --partition=long                           # Ask for unkillable job
-#SBATCH --cpus-per-task=4                                # Ask for 2 CPUs
-#SBATCH --gres=gpu:1                                     # Ask for 1 GPU
-#SBATCH --mem=24G   #24G for Resnet18                                        # Ask for 10 GB of RAM
-#SBATCH --time=8:00:00 #36:00:00 #around 8 for Resnet                                  # The job will run for 2.5 hours
-#SBATCH -x 'cn-d[001-004], cn-g[005-012,017-026]'  # Excluding DGX system, will require a jaxlib update
-#SBATCH --reservation=ubuntu2204
+#SBATCH --cpus-per-task=16                                # Ask for 2 CPUs
+#SBATCH --gres=gpu:a100l:1                                     # Ask for 1 GPU
+#SBATCH --mem=256G   #24G for Resnet18                                        # Ask for 10 GB of RAM
+#SBATCH --time=48:00:00 #48 for Resnet/120 for ViT                                  # The job will run for t hours
+# #SBATCH -x 'cn-b[001-005], cn-d[001-004], cn-g[005-012,017-026], cn-e[002-003], kepler5'  # Excluding DGX system, will require a jaxlib update and kepler 5 that have 16GB GPU memory and v100 with 32Gb memory
+                                # The job will run for 2.5 hours
+
+# Copying Imagenet
+#echo "Started copying test data"
+#mkdir -p $SLURM_TMPDIR/imagenet2012/manual
+#cd       $SLURM_TMPDIR/imagenet2012/manual
+#cp /network/datasets/imagenet/ILSVRC2012_img_val.tar .
+## tar  -xf /network/datasets/imagenet/ILSVRC2012_img_val.tar # --to-command='mkdir ${TAR_REALNAME%.tar}; tar -xC ${TAR_REALNAME%.tar}'
+#echo "Finished copying test data"
+#echo "Started copying train data"
+## mkdir -p $SLURM_TMPDIR/imagenet2012/train
+## cd       $SLURM_TMPDIR/imagenet2012/train
+#cp /network/datasets/imagenet/ILSVRC2012_img_train.tar .
+## tar  -xf /network/datasets/imagenet/ILSVRC2012_img_train.tar --to-command='mkdir ${TAR_REALNAME%.tar}; tar -xC ${TAR_REALNAME%.tar}'
+#echo "Finished copying train data"
+#echo "Quickly extracting labels as well"
+#cd       $SLURM_TMPDIR/imagenet2012
+#tar  -xf /network/datasets/imagenet/ILSVRC2012_devkit_t12.tar.gz
+
+# Other approach, already prepared tf dataset
+echo "Copying tf imagenet dataset"
+cd $SLURM_TMPDIR
+tar -xzf $SCRATCH/tf_tar_imagenet/tf_imagenet.tar.gz
+echo "Finished copying train+test data"
+
+
+echo "Dataset located in"
+echo $SLURM_TMPDIR/imagenet2012
+export TFDS_DATA_DIR=$SLURM_TMPDIR
+#echo "Dataset structure:"
+#find $SLURM_TMPDIR/imagenet2012 -type d -print -exec sh -c "ls -p '{}' | head -5" \;
+
 
 # Make sure we are located in the right directory and on right branch
 cd ~/repositories/Maxwell_demon || exit
 git checkout exp-config
 
 # Load required modules
-module load python/3.8
-module load cuda/11.2/cudnn/8.1
+#module load python/3.8
+#module load cuda/11.2/cudnn/8.1
+module load anaconda/3
 
 # Load venv
-source venv/bin/activate
+#source venv/bin/activate
+conda activate py38jax_tf
+ulimit -n 16000 # Aim hit too many files open while preparing ds
 
 # Flags
-export XLA_PYTHON_CLIENT_PREALLOCATE=true
-export TF_FORCE_GPU_ALLOW_GROWTH=true
+export XLA_PYTHON_CLIENT_PREALLOCATE=false
+#export TF_FORCE_GPU_ALLOW_GROWTH=true
+export TCMALLOC_RELEASE_RATE=10.0
+# export TCMALLOC_HEAP_LIMIT_MB=24576 # 24GB max heap
+#export TCMALLOC_HEAP_LIMIT_MB=31744 # 31GB max heap for mem=32GB
+#export TCMALLOC_HEAP_LIMIT_MB=39936  # 39GB max heap for mem=40G
+#export TCMALLOC_HEAP_LIMIT_MB=48128 # 47GB max heap for mem=48GB
+export LD_PRELOAD="/home/mila/s/simon.dufort-labbe/.conda/envs/py38jax_tf/lib/libtcmalloc_minimal.so.4"
+
+echo "Checking if tcmalloc was correctly attributed to LD_PRELOAD"
+echo $LD_PRELOAD
 
 # Default configuration:
 #    training_steps: int = 250001
@@ -111,8 +154,13 @@ export TF_FORCE_GPU_ALLOW_GROWTH=true
 #python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=15626 report_freq=1000 record_freq=200 pruning_freq=1000 size=64 with_bn=True lr_schedule=one_cycle normalize_inputs=False reg_param_decay_cycles=4 info=Resnet18_test_become_structured 'spar_levels="(0.8, 0.85, 0.9, 0.95, 0.99)"' optimizer=adamw wd_param=0.0005 lr=0.005 train_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=l2 activation=relu zero_end_reg_param=True reg_param_schedule=one_cycle save_wanda=False preempt_handling=True sparsity_distribution=uniform pruning_method=saliency reg_param=0.0 init_seed=96
 
 # ResNet-18 -- SGDM
-python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=1 zero_end_reg_param=False info=Res18_jaxpruner_sgdm optimizer=momentum9w wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None reg_param=0.00 activation=relu 'spar_levels="(0.25, 0.5, 0.7, 0.8)"' preempt_handling=True sparsity_distribution=uniform pruning_method=saliency init_seed=91
-wait $!
+#python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=1 zero_end_reg_param=False info=Res18_jaxpruner_sgdm optimizer=momentum9w wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None reg_param=0.00 activation=relu 'spar_levels="(0.25, 0.5, 0.7, 0.8)"' preempt_handling=True sparsity_distribution=uniform pruning_method=saliency init_seed=91
+#wait $!
 
 #python source/jaxpruner_baseline.py dataset='cifar10_srigl' architecture='srigl_resnet18' training_steps=97656 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=fix_steps lr_decay_steps=77 lr_decay_scaling_factor=0.2 normalize_inputs=False reg_param_decay_cycles=1 zero_end_reg_param=False info=Res18_jaxpruner_sgdm optimizer=momentum9w wd_param=0.0005 lr=0.1 train_batch_size=128 augment_dataset=True gradient_clipping=False noisy_label=0.0 regularizer=None reg_param=0.00 activation=relu 'spar_levels="(0.9, 0.925, 0.95, 0.97, 0.99)"' preempt_handling=True sparsity_distribution=uniform pruning_method=saliency init_seed=91
 #wait $!
+
+################################
+# SRigL Resnet-50 setup -- RigL + DemP
+python source/jaxpruner_baseline.py dataset=$SLURM_TMPDIR/imagenet2012 architecture='resnet50' training_steps=500456 report_freq=2000 record_freq=500 pruning_freq=5000 size=64 with_bn=True lr_schedule=warmup_piecewise_decay "lr_decay_steps='(30, 70, 90)'" lr_decay_scaling_factor=0.1 normalize_inputs=True reg_param_decay_cycles=1 reg_param_schedule=one_cycle info=Resnet50_RigLDemP_momentum reg_param=0.0003 optimizer=momentum9w wd_param=0.0001 lr=0.1 train_batch_size=256 eval_batch_size=256 death_batch_size=256 augment_dataset=True gradient_clipping=False noisy_label=0.0 label_smoothing=0.1 regularizer=lasso activation=relu zero_end_reg_param=False save_wanda=False dynamic_pruning=False preempt_handling=True checkpoint_freq=1 masked_reg=scale_only init_seed=31 reg_param_span=150000 add_noise=True noise_eta=0.00005 'spar_levels="(0.8,)"' sparsity_distribution=erk pruning_method=RigL drop_fraction=0.1
+wait $!
