@@ -1770,9 +1770,40 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
     builder = tfds.builder("imagenet2012")
     builder.download_and_prepare(download_dir=dataset_dir)
     if 'vit' in dataset:
-        augment_train_imagenet_dataset = augment_train_imagenet_dataset_vit
+        def load_routine(_ds, _training, _bs):
+            ds1 = _ds
+            if _training:
+                ds1 = ds1.shuffle(250000, seed=0, reshuffle_each_iteration=True)
+            ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset, is_training=_training),
+                          num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.batch(_bs)
+            if _training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
+                ds1 = ds1.map(augment_train_imagenet_dataset_vit, num_parallel_calls=tf.data.AUTOTUNE)
+            else:
+                ds1 = ds1.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            if normalize:
+                ds1 = ds1.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
+                ds1 = ds1.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.prefetch(tf.data.AUTOTUNE)
+            ds1 = ds1.repeat()
+            return ds1
     else:
-        augment_train_imagenet_dataset = augment_train_imagenet_dataset_res50
+        def load_routine(_ds, _training, _bs):
+            ds1 = _ds
+            ds1 = ds1.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset, is_training=_training),
+                          num_parallel_calls=tf.data.AUTOTUNE)
+            if _training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
+                ds1 = ds1.map(augment_train_imagenet_dataset_res50, num_parallel_calls=tf.data.AUTOTUNE)
+                ds1 = ds1.shuffle(4096, seed=0, reshuffle_each_iteration=True)
+            else:
+                ds1 = ds1.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
+            if normalize:
+                ds1 = ds1.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
+            ds1 = ds1.batch(_bs)
+            ds1 = ds1.prefetch(tf.data.AUTOTUNE)
+            ds1 = ds1.repeat()
+            return ds1
 
     # Create AutotuneOptions
     options = tf.data.Options()
@@ -1823,46 +1854,10 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         if subset is not None:
             ds = ds.filter(filter_fn)  # Only take the randomly selected subset
     ds_size = int(ds.cardinality())
-    # ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
-    # ds = ds.cache()
-    # ds = ds.shuffle(50000, seed=0, reshuffle_each_iteration=True)
     if other_bs:
-        ds1 = ds
-        if is_training:
-            ds1 = ds1.shuffle(250000, seed=0, reshuffle_each_iteration=True)
-        ds1 = ds1.map(Partial(resize_tf_dataset, dataset=dataset, is_training=is_training),
-                      num_parallel_calls=tf.data.AUTOTUNE)
-        if 'vit' in dataset:
-            ds1 = ds1.batch(batch_size)
-        if is_training and data_augmentation:  # Only ds1 takes into account 'is_training' flag
-            ds1 = ds1.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
-            # ds1 = ds1.shuffle(1024, seed=0, reshuffle_each_iteration=True)
-        else:
-            ds1 = ds1.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
-        if normalize:
-            ds1 = ds1.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
-            ds1 = ds1.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
-        if 'vit' not in dataset:
-            ds1 = ds1.batch(batch_size)
-        ds1 = ds1.prefetch(tf.data.AUTOTUNE)
-        ds1 = ds1.repeat()
-        all_ds = [ds1]
+        all_ds = [load_routine(ds, is_training, batch_size)]
         for bs in other_bs:
-            ds2 = ds
-            ds2 = ds2.map(Partial(resize_tf_dataset, dataset=dataset, is_training=False),
-                          num_parallel_calls=tf.data.AUTOTUNE)
-            if 'vit' in dataset:
-                ds2 = ds2.batch(bs)
-            ds2 = ds2.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
-            if normalize:
-                ds2 = ds2.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
-                ds2 = ds2.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
-            # ds2 = ds2.shuffle(50000, seed=0, reshuffle_each_iteration=True)
-            if 'vit' not in dataset:
-                ds2 = ds2.batch(bs)
-            ds2 = ds2.prefetch(tf.data.AUTOTUNE)
-            ds2 = ds2.repeat()
-            all_ds.append(ds2)
+            all_ds.append(load_routine(ds, False, bs))
 
         if (subset is not None) and transform:
             tf_iterators = tuple([tf_compatibility_iterator(iter(tfds.as_numpy(_ds)), subset) for _ds in all_ds])
@@ -1873,24 +1868,7 @@ def load_imagenet_tf(dataset_dir: str, split: str, *, is_training: bool, batch_s
         else:
             return tf_iterators
     else:
-        if is_training:
-            ds = ds.shuffle(250000, seed=0, reshuffle_each_iteration=True)
-        ds = ds.map(Partial(resize_tf_dataset, dataset=dataset, is_training=is_training),
-                    num_parallel_calls=tf.data.AUTOTUNE)
-        if 'vit' in dataset:
-            ds = ds.batch(batch_size)
-        if is_training and data_augmentation:
-            ds = ds.map(augment_train_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
-            # ds = ds.shuffle(4096, seed=0, reshuffle_each_iteration=True)
-        else:
-            ds = ds.map(process_test_imagenet_dataset, num_parallel_calls=tf.data.AUTOTUNE)
-        if normalize:
-            ds = ds.map(imgnet_interval_zero_one, num_parallel_calls=tf.data.AUTOTUNE)
-            ds = ds.map(Partial(custom_normalize_img, dataset=dataset), num_parallel_calls=tf.data.AUTOTUNE)
-        if 'vit' not in dataset:
-            ds = ds.batch(batch_size)
-        ds = ds.prefetch(tf.data.AUTOTUNE)
-        ds = ds.repeat()
+        ds = load_routine(ds, is_training, batch_size)
 
         if (subset is not None) and transform:
             tf_iterator = tf_compatibility_iterator(iter(tfds.as_numpy(ds)), subset)  # Reorder the labels, ex: 1,5,7 -> 0,1,2
