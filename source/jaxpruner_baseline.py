@@ -653,7 +653,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         #                                                          state)[0]
         # # final_params_count = utl.count_params(pruned_params)
         # final_params_count = utl.count_non_zero_params(pruned_params)
-        final_params_count = (1-sparsity) * initial_params_count
+        final_params_count = int((1-sparsity) * initial_params_count)
         del final_dead_neurons  # Freeing memory
 
         activations_max, activations_mean, activations_count, _ = activations_data
