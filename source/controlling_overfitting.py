@@ -606,8 +606,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                         new_params, new_state = net.init(_key, next(train))
                         params = utl.reinitialize_dead_neurons(acti_map, neuron_states, params,
                                                                               new_params)
-                        state = new_state
-                        opt_state = opt.init(params)
+                        # state = new_state  # TODO: Revise after testing: could be useful to swing reinit neurons with adam
+                        # opt_state = opt.init(params)
                     else:
                         # Pruning the network
                         params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
