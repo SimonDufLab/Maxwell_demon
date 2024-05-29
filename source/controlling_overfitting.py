@@ -105,6 +105,7 @@ class ExpConfig:
     prune_at_end: Any = None  # If prune after training, tuple like (reg_param, lr, additional_steps)
     pretrain: int = 0  # Train only the normalization parameters for <pretrain> steps
     reset_during_pretrain: bool = False  # Reset dead neurons during pretraining instead of pruning them
+    clip_norm: Any = None  # Set as (scale_min_val, scale_max_val, offset_min_val, offset_max_val) for pretrain
     pruning_reg: Optional[str] = "cdg_l2"
     pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
@@ -197,6 +198,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         exp_config.lr_decay_steps = literal_eval(exp_config.lr_decay_steps)
     # if exp_config.add_noise:
     #     exp_config.regularizer = None  # Disable regularizer when noise is used to promote neurons death
+    if type(exp_config.clip_norm) == str:
+        exp_config.clip_norm = literal_eval(exp_config.clip_norm)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
@@ -1014,6 +1017,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                     **pretrain_mask)
             if exp_config.shifted_relu:
                 state = utl.update_gate_constant(state, shift_relu_sched(step))
+            if step <= exp_config.pretrain and exp_config.clip_norm:
+                params = utils.grok_utils.clip_norm_params(params, *exp_config.clip_norm)
 
         if exp_config.record_distribution_data:
             scan_death_check_fn_with_activations_data = utl.scanned_death_check_fn(
@@ -1233,7 +1238,6 @@ def run_exp(exp_config: ExpConfig) -> None:
         print(f"Running time for reg_param {reg_param}: " + str(timedelta(seconds=time.time() - subrun_start_time)))
         print("----------------------------------------------")
         print()
-
 
     # Print total runtime
     print()
