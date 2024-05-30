@@ -106,6 +106,7 @@ class ExpConfig:
     pretrain: int = 0  # Train only the normalization parameters for <pretrain> steps
     reset_during_pretrain: bool = False  # Reset dead neurons during pretraining instead of pruning them
     clip_norm: Any = None  # Set as (scale_min_val, scale_max_val, offset_min_val, offset_max_val) for pretrain
+    record_pretrain_distribution: bool = False  # Monitor bn params distribution or not
     pruning_reg: Optional[str] = "cdg_l2"
     pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
     add_noise: bool = False  # Add Gaussian noise to the gradient signal
@@ -544,6 +545,23 @@ def run_exp(exp_config: ExpConfig) -> None:
                               name="Live neurons; whole training dataset",
                               step=step,
                               context={"reg param": utl.size_to_string(reg_param)})
+                if exp_config.record_pretrain_distribution:
+                    batch_activations, _ = utl.death_check_given_model(net, with_activations=True, with_dropout=with_dropout, avg=True)(params, state, next(test_death))
+                    for layer_number in range(len(batch_activations)):
+                        layer_activations = jnp.mean(batch_activations[layer_number], axis=0)
+                        activations_dist = Distribution(layer_activations, bin_count=100)
+                        exp_run.track(activations_dist, name='Activation distribution in layer {}'.format(layer_number),
+                                      step=step,
+                                      context={"reg param": utl.size_to_string(reg_param)})
+                    for layer_name, layer_params in params.items():
+                        if ('norm' in layer_name) or ('bn' in layer_name):
+                            for subkey, subval in layer_params.items():
+                                norm_dist = jnp.squeeze(subval)
+                                norm_param_dist = Distribution(norm_dist, bin_count=100)
+                                exp_run.track(norm_param_dist, name='{} param distribution'.format(subkey),
+                                              step=step,
+                                              context={"reg param": utl.size_to_string(reg_param),
+                                                       "layer": layer_name})
                 if exp_config.epsilon_close:
                     for eps in exp_config.epsilon_close:
                         eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
