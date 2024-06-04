@@ -35,18 +35,24 @@ def mask_ff_last_layer(params, target="wb"):
 def mask_all_except_norm(params):
     _params = copy.deepcopy(params)
     for _key, _val in params.items():
-        if 'norm' not in _key:
+        if ('norm' not in _key) and ('bn' not in _key):
             for subkey, subval in params[_key].items():
                 _params[_key][subkey] = jnp.zeros_like(subval)
+        else:
+            for subkey, subval in params[_key].items():
+                _params[_key][subkey] = jnp.ones_like(subval)
     return _params
 
 
 def mask_all_except_norm_and_output(params):
     _params = copy.deepcopy(params)
     for _key, _val in params.items():
-        if ('norm' not in _key) and ('logits' not in _key):
+        if ('norm' not in _key) and ('logits' not in _key) and ('bn' not in _key):
             for subkey, subval in params[_key].items():
                 _params[_key][subkey] = jnp.zeros_like(subval)
+        else:
+            for subkey, subval in params[_key].items():
+                _params[_key][subkey] = jnp.ones_like(subval)
     return _params
 
 
@@ -65,7 +71,7 @@ def clip_norm_params(params, scale_min_val=-2.0, scale_max_val=2.0, offset_min_v
     # Apply clipping to all normalization layers
     # def recursive_clip(params):
     #     if isinstance(params, dict):
-    return {k: clip_fn(v) if 'norm' in k else v for k, v in params.items()}
+    return {k: clip_fn(v) if (('norm' in k) or ('bn' in k)) else v for k, v in params.items()}
         # else:
         #     return clip_fn(params)
 
