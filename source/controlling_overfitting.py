@@ -378,7 +378,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params, state, opt_state, opt,
                                      total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
                                      scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn,
-                                     dead_neurons_union, init_fn, init_key):
+                                     dead_neurons_union, pretrain_mask, init_fn, init_key):
             """ Inside a function to make sure variables in function scope are cleared from memory"""
             if step == exp_config.training_steps and bool(add_steps_end):
                 print("Entered pruning phase")
@@ -671,6 +671,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                         scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
                         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
                         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
+                        if exp_config.pretrain and (step <= exp_config.pretrain):
+                            pretrain_mask = {'_mask': utils.grok_utils.mask_all_except_norm_and_output(params)}
 
                 if "imagenet" not in exp_config.dataset:
                     train_acc_whole_ds = full_train_acc_fn(params, state, train_eval)
@@ -726,7 +728,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             return (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer,
                     loss, test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
-                    final_accuracy_fn, update_fn, dead_neurons_union, init_fn, init_key)
+                    final_accuracy_fn, update_fn, dead_neurons_union, pretrain_mask, init_fn, init_key)
 
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
@@ -920,7 +922,6 @@ def run_exp(exp_config: ExpConfig) -> None:
             add_steps_start = 0
             pretrain_mask = {}
 
-
         if load_from_preexisting_model_state:
             starting_step = run_state["training_step"]
             decaying_reg_param = run_state["decaying_reg_param"]
@@ -938,6 +939,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 training_time = 0
                 dead_neurons_union = None
             load_from_preexisting_model_state = False
+            if starting_step>exp_config.pretrain:
+                pretrain_mask = {}
         else:
             starting_step = 0
             best_acc = 0
@@ -991,7 +994,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             # Record metrics and prune model if needed:
             (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer, loss,
              test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
-             update_fn, dead_neurons_union, init_fn, init_key) = record_metrics_and_prune(step, reg_param,
+             update_fn, dead_neurons_union, pretrain_mask, init_fn, init_key) = record_metrics_and_prune(step, reg_param,
                                                                                           activation_fn,
                                                                                           decaying_reg_param, net,
                                                                                           new_sizes,
@@ -1005,6 +1008,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                                           full_train_acc_fn,
                                                                                           final_accuracy_fn, update_fn,
                                                                                           dead_neurons_union,
+                                                                                          pretrain_mask,
                                                                                           init_fn,
                                                                                           init_key)  # Ugly, but cache is cleared
             if (step % exp_config.pruning_freq == 0) and exp_config.dynamic_pruning:
