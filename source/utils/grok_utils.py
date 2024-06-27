@@ -44,15 +44,32 @@ def mask_all_except_norm(params):
     return _params
 
 
-def mask_all_except_norm_and_output(params):
+def mask_untargeted_weights(params, targets):
     _params = copy.deepcopy(params)
+    layer_keywords = []
+    exclude_block = ['scale', 'offset']
+    if targets == "all":
+        layer_keywords = ['norm', 'logits', 'bn']
+    else:
+        if 'norm' in targets:
+            layer_keywords.extend(['norm', 'bn'])
+            exclude_block = []
+        if 'head' in targets:
+            layer_keywords.append('logits')
+        if any(_layer_block in targets for _layer_block in ['scale', 'offset']):
+            layer_keywords.extend(['norm', 'bn'])
+            exclude_block = [_excluded for _excluded in exclude_block if _excluded not in targets]
+
     for _key, _val in params.items():
-        if ('norm' not in _key) and ('logits' not in _key) and ('bn' not in _key):
+        if not any(keyword in _key for keyword in layer_keywords):
             for subkey, subval in params[_key].items():
                 _params[_key][subkey] = jnp.zeros_like(subval)
         else:
             for subkey, subval in params[_key].items():
-                _params[_key][subkey] = jnp.ones_like(subval)
+                if subkey in exclude_block:
+                    _params[_key][subkey] = jnp.zeros_like(subval)
+                else:
+                    _params[_key][subkey] = jnp.ones_like(subval)
     return _params
 
 
