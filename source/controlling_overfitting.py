@@ -41,7 +41,7 @@ from utils.config import activation_choice, optimizer_choice, dataset_choice, da
 from utils.config import regularizer_choice, architecture_choice, bn_architecture_choice, lr_scheduler_choice, bn_config_choice
 from utils.config import reg_param_scheduler_choice
 from utils.config import pick_architecture
-from grok_dataset.datasets import vocab_size_mapping
+from datasets.grok_datasets import vocab_size_mapping
 
 
 # Experience name -> for aim logger
@@ -75,6 +75,7 @@ class ExpConfig:
     shifted_relu: float = 0.0  # Shift value (b) applied on output before activation. To promote dead neurons
     srelu_sched: str = "constant"  # Schedule for shifted ReLU, same choices as reg_param_schedule
     dataset: str = "mnist"
+    reduced_ds_size: Optional[int] = None  # Limit the size of ds to fix amounts for training
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
     augment_dataset: bool = False  # Apply a pre-fixed (RandomFlip followed by RandomCrop) on training ds
     label_smoothing: float = 0.0  # Level of smoothing applied during the loss calculation, 0.0 -> no smoothing
@@ -260,6 +261,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         log_path = "./boosted_initialization_exps"
     if "grok" in exp_config.architecture:  # Override pretrain option
         log_path = "./grok_exps"
+    if "color_mnist" in exp_config.dataset:  # Override pretrain and grok
+        log_path = "./spurious_experiments"
     # Logger config
     exp_run = Run(repo=log_path, experiment=exp_name_, run_hash=aim_hash, force_resume=True)
     exp_run["configuration"] = OmegaConf.to_container(exp_config)
@@ -319,7 +322,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                         replace=False)
     else:
         kept_indices = None
-    load_data = dataset_choice[exp_config.dataset]
+    load_data = Partial(dataset_choice[exp_config.dataset], reduced_ds_size=exp_config.reduced_ds_size)
     if 'imagenet' in exp_config.dataset:
         load_data = Partial(load_data, dataset_dir)
     eval_size = exp_config.eval_batch_size

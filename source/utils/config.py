@@ -17,11 +17,12 @@ from models.mlp import mlp_3_dropout
 from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_2, conv_6_2_bn
 from models.convnet import conv_4_2_act_pre_relu, conv_4_2_act_pre_bn, conv_4_2_act_post_bn
 from models.convnet import conv_4_2_dropout, conv_4_2_ln
-from models.vgg16 import vgg16
+from models.vgg16 import vgg16, conv_2_2
 from models.resnet import resnet18, resnet50, srigl_resnet18, srigl_resnet50
 from models.vit import vit_b_4, vit_b_16
 from models.grokking_model import grok_models
-from grok_dataset.datasets import ModDivisonDataset, ModSubtractDataset, ModSumDataset, PermutationGroup, load_grok_ds, n_out_mapping
+from datasets.grok_datasets import ModDivisonDataset, ModSubtractDataset, ModSumDataset, PermutationGroup, load_grok_ds, n_out_mapping
+from datasets.spurious_ds import load_colmnist_tf
 
 
 baseline_pruning_method_choice = {
@@ -57,6 +58,8 @@ optimizer_choice = {
 
 dataset_choice = {
     "mnist": load_mnist_tf,
+    "color_mnist_0": Partial(load_colmnist_tf, sp_noise_train=0.0, sp_noise_test=0.9, core_noise=0.25),
+    "color_mnist_25": Partial(load_colmnist_tf, sp_noise_train=0.25, sp_noise_test=0.9, core_noise=0.25),
     # "mnist-torch": load_mnist_torch,
     "fashion mnist": load_fashion_mnist_tf,
     # "fashion mnist-torch": load_fashion_mnist_torch,
@@ -136,6 +139,7 @@ bn_architecture_choice = {
     "conv_4_2": conv_4_2_bn,
     "conv_6_2": conv_6_2_bn,
     "vgg16": vgg16,
+    "conv_2_2": conv_2_2,
     "resnet18": resnet18,
     "resnet19": Partial(resnet18, v2_linear_block=True),
     "srigl_resnet18": srigl_resnet18,
@@ -188,6 +192,8 @@ activations_with_bn = {
 
 dataset_target_cardinality = {  # Hard-encoding the number of classes in given dataset for easy retrieval
     "mnist": 10,
+    "color_mnist_0": 2,
+    "color_mnist_25": 2,
     "fashion mnist": 10,
     "cifar10": 10,
     "cifar10_srigl": 10,
