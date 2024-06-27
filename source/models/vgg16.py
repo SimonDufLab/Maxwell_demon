@@ -85,3 +85,31 @@ def vgg16(sizes, num_classes, bn_config, activation_fn=ReluActivationModule, wit
         return layers
 
     return make_layers(True), make_layers(False)
+
+
+def conv_2_2(sizes, num_classes, bn_config, activation_fn=ReluActivationModule, with_bias=True):
+    """Prunable VGG16 implementation.
+       default sizes=(64, 4096)
+    """
+
+    act = activation_fn
+
+    if len(sizes) == 2:  # Size can be specified with 2 args
+        sizes = [sizes[0], sizes[0], sizes[1]]
+
+    max_pool = Partial(MaxPool, window_shape=2, strides=2, padding="VALID")
+
+    def make_layers(training):
+        layers = []
+        for i in range(4):
+            if i < 2:
+                layers.append([Partial(Conv_BN, training, sizes[i], 3, bn_config=bn_config,
+                                       with_bias=with_bias, activation_fn=act)])
+            elif i == 2:
+                layers.append([max_pool, Partial(Linear_BN, training, sizes[i], bn_config=bn_config,
+                                                             with_bias=with_bias, activation_fn=act)])
+            else:
+                layers.append([Partial(LogitsVGG, num_classes, with_bias=with_bias)])
+        return layers
+
+    return make_layers(True), make_layers(False)

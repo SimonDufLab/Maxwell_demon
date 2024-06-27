@@ -1888,7 +1888,8 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
                     subset: Optional[Sequence[int]] = None, transform: bool = True,
                     cardinality: bool = False, noisy_label: float = 0, permuted_img_ratio: float = 0,
                     gaussian_img_ratio: float = 0, data_augmentation: bool = False, normalize: bool = False,
-                    reduced_ds_size: Optional[int] = None):  # -> Generator[Batch, None, None]:
+                    reduced_ds_size: Optional[int] = None,
+                    transform_ds: Optional[Callable] = None):  # -> Generator[Batch, None, None]:
     """Loads the dataset as a generator of batches.
     subset: If only want a subset, number of classes to build the subset from
     """
@@ -1945,6 +1946,8 @@ def load_tf_dataset(dataset: str, split: str, *, is_training: bool, batch_size: 
     #
     #     ds = ds.filter(filter_fn)  # Only take the randomly selected subset
 
+    if transform_ds:
+        ds = ds.map(transform_ds, num_parallel_calls=tf.data.AUTOTUNE)
     ds = ds.map(interval_zero_one)
     if normalize:
         ds = ds.map(Partial(custom_normalize_img, dataset=dataset))
@@ -3366,6 +3369,9 @@ def get_total_neurons(architecture, sizes, grok_depth=None):
     elif "grok_models" in architecture:  # Cover vit_b_4 and vit_b_16, both having 12 layers
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes,]*grok_depth
+    elif architecture == 'conv_2_2':
+        if len(sizes) == 2:
+            sizes = [sizes[0], sizes[0], sizes[1]]
     else:
         raise NotImplementedError("get_size not implemented for current architecture")
 
