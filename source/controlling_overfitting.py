@@ -105,6 +105,7 @@ class ExpConfig:
     prune_after: int = 0  # Option: only start pruning after <prune_after> step has been reached
     prune_at_end: Any = None  # If prune after training, tuple like (reg_param, lr, additional_steps)
     pretrain: int = 0  # Train only the normalization parameters for <pretrain> steps
+    pretrain_targets: Any = "all"  # Parameters to pretrain, all normalization + head layers by default
     reset_during_pretrain: bool = False  # Reset dead neurons during pretraining instead of pruning them
     clip_norm: Any = None  # Set as (scale_min_val, scale_max_val, offset_min_val, offset_max_val) for pretrain
     record_pretrain_distribution: bool = False  # Monitor bn params distribution or not
@@ -202,6 +203,8 @@ def run_exp(exp_config: ExpConfig) -> None:
     #     exp_config.regularizer = None  # Disable regularizer when noise is used to promote neurons death
     if type(exp_config.clip_norm) == str:
         exp_config.clip_norm = literal_eval(exp_config.clip_norm)
+    if type(exp_config.pretrain_targets) == str and '(' in exp_config.pretrain_targets:
+        exp_config.pretrain_targets = literal_eval(exp_config.pretrain_targets)
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
@@ -675,7 +678,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                         final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
                         full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn, int(partial_train_ds_size // eval_size))
                         if exp_config.pretrain and (step <= exp_config.pretrain):
-                            pretrain_mask = {'_mask': utils.grok_utils.mask_all_except_norm_and_output(params)}
+                            pretrain_mask = {'_mask': utils.grok_utils.mask_untargeted_weights(params, exp_config.pretrain_targets)}
 
                 if "imagenet" not in exp_config.dataset:
                     train_acc_whole_ds = full_train_acc_fn(params, state, train_eval)
@@ -920,7 +923,7 @@ def run_exp(exp_config: ExpConfig) -> None:
             add_steps_end = 0
         if exp_config.pretrain:
             add_steps_start = exp_config.pretrain
-            pretrain_mask = {'_mask': utils.grok_utils.mask_all_except_norm_and_output(params)}
+            pretrain_mask = {'_mask': utils.grok_utils.mask_untargeted_weights(params, exp_config.pretrain_targets)}
         else:
             add_steps_start = 0
             pretrain_mask = {}
@@ -942,7 +945,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 training_time = 0
                 dead_neurons_union = None
             load_from_preexisting_model_state = False
-            if starting_step>exp_config.pretrain:
+            if starting_step > exp_config.pretrain:
                 pretrain_mask = {}
         else:
             starting_step = 0
