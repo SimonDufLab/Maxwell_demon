@@ -187,6 +187,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     #     exp_config.prune_at_end = None
     assert (not (("adamw" in exp_config.optimizer) and bool(
         exp_config.regularizer))) or bool(exp_config.wd_param), "Set wd_param if adamw is used with a regularization loss"
+    assert type(exp_config.pretrain_targets) is str, "The targeted layers for pretraining need to be specified as a single string, separated by commas (,)"
     if type(exp_config.size) == str:
         exp_config.size = literal_eval(exp_config.size)
     if type(exp_config.reg_params) == str:
@@ -203,8 +204,7 @@ def run_exp(exp_config: ExpConfig) -> None:
     #     exp_config.regularizer = None  # Disable regularizer when noise is used to promote neurons death
     if type(exp_config.clip_norm) == str:
         exp_config.clip_norm = literal_eval(exp_config.clip_norm)
-    if type(exp_config.pretrain_targets) == str and '(' in exp_config.pretrain_targets:
-        exp_config.pretrain_targets = literal_eval(exp_config.pretrain_targets)
+    exp_config.pretrain_targets = tuple(exp_config.pretrain_targets.split(','))
 
     if exp_config.dynamic_pruning:
         exp_name_ = exp_name+"_with_dynamic_pruning"
