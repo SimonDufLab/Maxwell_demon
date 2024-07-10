@@ -2035,8 +2035,8 @@ def load_mnist_tf(split: str, is_training, batch_size, other_bs=None, subset=Non
 
 def load_cifar10_tf(split: str, is_training, batch_size, other_bs=None, subset=None, transform=True, cardinality=False,
                     noisy_label=0, permuted_img_ratio=0, gaussian_img_ratio=0, augment_dataset=False,
-                    normalize: bool = False, reduced_ds_size: Optional[int] = None):
-    return load_tf_dataset("cifar10", split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
+                    normalize: bool = False, reduced_ds_size: Optional[int] = None, dataset: str = "cifar10"):
+    return load_tf_dataset(dataset, split=split, is_training=is_training, batch_size=batch_size, other_bs=other_bs,
                            subset=subset, transform=transform, cardinality=cardinality, noisy_label=noisy_label,
                            permuted_img_ratio=permuted_img_ratio, gaussian_img_ratio=gaussian_img_ratio,
                            data_augmentation=augment_dataset, normalize=normalize, reduced_ds_size=reduced_ds_size)
