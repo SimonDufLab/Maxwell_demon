@@ -384,7 +384,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         def record_metrics_and_prune(step, reg_param, activation_fn, decaying_reg_param, net, new_sizes, params, state, opt_state, opt,
                                      total_neurons, total_per_layer, loss, test_loss_fn, accuracy_fn, death_check_fn,
                                      scan_death_check_fn, full_train_acc_fn, final_accuracy_fn, update_fn,
-                                     dead_neurons_union, pretrain_mask, init_fn, init_key):
+                                     dead_neurons_union, pretrain_mask, init_fn, init_key, reset_counter, reset_tracker):
             """ Inside a function to make sure variables in function scope are cleared from memory"""
             if step == exp_config.training_steps and bool(add_steps_end):
                 print("Entered pruning phase")
@@ -568,6 +568,18 @@ def run_exp(exp_config: ExpConfig) -> None:
                                               step=step,
                                               context={"reg param": utl.size_to_string(reg_param),
                                                        "layer": layer_name})
+                    if reset_counter is not None:
+                        reset_count_dist = Distribution(jnp.concatenate(jax.tree_util.tree_leaves(reset_counter)), bin_count=100)
+                        exp_run.track(reset_count_dist, name='All layers reset counter', step=step, context={"reg param": utl.size_to_string(reg_param)})
+                        for acti_layer_name, layer_counter in reset_counter.items():
+                            reset_count_dist = Distribution(layer_counter, bin_count=100)
+                            exp_run.track(reset_count_dist, name='Layerwise reset counter', step=step,
+                                          context={"reg param": utl.size_to_string(reg_param), "layer": acti_layer_name})
+                    if reset_tracker is not None:
+                        reset_tracker_dist = Distribution(jnp.concatenate(jax.tree_util.tree_leaves(reset_tracker)), bin_count=100)
+                        exp_run.track(reset_tracker_dist, name='Reset step per neuron', step=step,
+                                      context={"reg param": utl.size_to_string(reg_param)})
+
                 if exp_config.epsilon_close:
                     for eps in exp_config.epsilon_close:
                         eps_dead_neurons = scan_death_check_fn(params, state, test_death, eps)
@@ -627,7 +639,16 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 if exp_config.dynamic_pruning and step >= exp_config.prune_after:
                     neuron_states.update_from_ordered_list(dead_neurons)
-                    if exp_config.reset_during_pretrain and step <= exp_config.pretrain:
+                    if exp_config.reset_during_pretrain and step < exp_config.pretrain:
+                        if step == 0:
+                            reset_counter = jax.tree_map(Partial(jnp.ones_like, dtype=int), neuron_states.state())
+                            reset_tracker = jax.tree_map(Partial(jnp.zeros_like, dtype=int), neuron_states.state())
+                        else:
+                            reset_counter = jax.tree_map(jnp.add, reset_counter,
+                                                         jax.tree_map(Partial(jnp.asarray, dtype=int),
+                                                                      neuron_states.state()))
+                            reset_tracker = jax.tree_map(Partial(utils.utils.map_decision_with_bool_array, potential_leaf=step),
+                                                         neuron_states.invert_state(), reset_tracker)
                         # reinitialize dead neurons
                         init_key, _key = jax.random.split(init_key)
                         new_params, new_state = net.init(_key, next(train))
@@ -734,7 +755,8 @@ def run_exp(exp_config: ExpConfig) -> None:
 
             return (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer,
                     loss, test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn,
-                    final_accuracy_fn, update_fn, dead_neurons_union, pretrain_mask, init_fn, init_key)
+                    final_accuracy_fn, update_fn, dead_neurons_union, pretrain_mask, init_fn, init_key,
+                    reset_counter, reset_tracker)
 
         # Make the network and optimiser
         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
@@ -860,6 +882,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
         # frozen_layer_lists = utl.extract_layer_lists(params)
         neuron_states = utl.NeuronStates(activation_layer_order)
+        reset_counter = None
+        reset_tracker = None
         acti_map = utl.get_activation_mapping(raw_net, next(train))
         if exp_config.exclude_layer:
             for d_key, d_val in acti_map.items():
@@ -1000,23 +1024,26 @@ def run_exp(exp_config: ExpConfig) -> None:
             # Record metrics and prune model if needed:
             (decaying_reg_param, net, new_sizes, params, state, opt_state, opt, total_neurons, total_per_layer, loss,
              test_loss_fn, accuracy_fn, death_check_fn, scan_death_check_fn, full_train_acc_fn, final_accuracy_fn,
-             update_fn, dead_neurons_union, pretrain_mask, init_fn, init_key) = record_metrics_and_prune(step, reg_param,
-                                                                                          activation_fn,
-                                                                                          decaying_reg_param, net,
-                                                                                          new_sizes,
-                                                                                          params,
-                                                                                          state, opt_state, opt,
-                                                                                          total_neurons,
-                                                                                          total_per_layer, loss,
-                                                                                          test_loss_fn,
-                                                                                          accuracy_fn, death_check_fn,
-                                                                                          scan_death_check_fn,
-                                                                                          full_train_acc_fn,
-                                                                                          final_accuracy_fn, update_fn,
-                                                                                          dead_neurons_union,
-                                                                                          pretrain_mask,
-                                                                                          init_fn,
-                                                                                          init_key)  # Ugly, but cache is cleared
+             update_fn, dead_neurons_union, pretrain_mask, init_fn, init_key, reset_counter,
+             reset_tracker) = record_metrics_and_prune(step, reg_param,
+                                                       activation_fn,
+                                                       decaying_reg_param, net,
+                                                       new_sizes,
+                                                       params,
+                                                       state, opt_state, opt,
+                                                       total_neurons,
+                                                       total_per_layer, loss,
+                                                       test_loss_fn,
+                                                       accuracy_fn, death_check_fn,
+                                                       scan_death_check_fn,
+                                                       full_train_acc_fn,
+                                                       final_accuracy_fn, update_fn,
+                                                       dead_neurons_union,
+                                                       pretrain_mask,
+                                                       init_fn,
+                                                       init_key,
+                                                       reset_counter,
+                                                       reset_tracker)  # Ugly, but cache is cleared
             if (step % exp_config.pruning_freq == 0) and exp_config.dynamic_pruning:
                 # jax.clear_backends()
                 gc.collect()
