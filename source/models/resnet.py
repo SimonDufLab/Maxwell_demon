@@ -5,6 +5,7 @@ import jax
 import jax.numpy as jnp
 from jax.tree_util import Partial
 from jax.nn import relu
+import copy
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from models.bn_base_unit import Base_BN
@@ -35,6 +36,7 @@ class CustomBatchNorm(hk.BatchNorm):
             cross_replica_axis_index_groups: Optional[Sequence[Sequence[int]]] = None,
             data_format: str = "channels_last",
             deactivate_small_units: bool = False,  # New argument that deactivate units with magnitude smaller than mean
+            sigm_scale: bool = False,  # Transform scale parameters to sigmoid(scale), bounding the values between 0-1
             name: Optional[str] = None,
     ):
         super().__init__(create_scale=create_scale, create_offset=create_offset, decay_rate=decay_rate, eps=eps,
@@ -47,6 +49,15 @@ class CustomBatchNorm(hk.BatchNorm):
         if self.create_scale and self.constant_scale is not None:
             raise ValueError(
                 "Cannot set `constant_scale` if `create_scale=True`.")
+        self.sigm_scale = sigm_scale
+        if self.sigm_scale:
+            init_fn = copy.copy(self.scale_init)
+
+            def inv_sigm(shape, dtype):
+                x = init_fn(shape, dtype)
+                x = jnp.abs(x-0.05)
+                return jnp.log(x/(1-x))
+            self.scale_init = inv_sigm
 
     def __call__(  # Sole modification is that scale can be fixed
             self,
@@ -116,6 +127,8 @@ class CustomBatchNorm(hk.BatchNorm):
 
         if self.create_scale:
             scale = hk.get_parameter("scale", w_shape, w_dtype, self.scale_init)
+            if self.sigm_scale:
+                scale = jax.nn.sigmoid(scale)
         elif self.constant_scale:
             scale = np.ones([], dtype=w_dtype) * self.constant_scale
         elif scale is None:

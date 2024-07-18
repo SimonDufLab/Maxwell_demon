@@ -93,3 +93,32 @@ def clip_norm_params(params, scale_min_val=-2.0, scale_max_val=2.0, offset_min_v
         #     return clip_fn(params)
 
     # return recursive_clip(params)
+
+
+def modify_scale_params(params):
+    """ Multiply by 4 the scale param from normalisation layer, intended for applying a sigmoid function on top"""
+    def multiply_scale(param):
+        if isinstance(param, dict):
+            # If the parameter is a dictionary, check for the 'scale' key and modify it
+            if 'scale' in param:
+                param['scale'] = param['scale'] * 4
+            # Recursively apply the function to nested dictionaries
+            return {k: multiply_scale(v) for k, v in param.items()}
+        return param
+
+    params_copy = copy.deepcopy(params)
+    return jax.tree_util.tree_map(multiply_scale, params_copy, is_leaf=lambda x: isinstance(x, dict))
+
+
+def split_norm_layers(params):
+    """Split normalisation layers from the params dictionary"""
+    norm_layers = {}
+    rest = {}
+
+    for _key, _val in params.items():
+        if 'norm' in _key or 'bn' in _key:
+            norm_layers[_key] = _val
+        else:
+            rest[_key] = _val
+
+    return rest, norm_layers
