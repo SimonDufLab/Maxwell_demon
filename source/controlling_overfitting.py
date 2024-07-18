@@ -107,6 +107,7 @@ class ExpConfig:
     pretrain: int = 0  # Train only the normalization parameters for <pretrain> steps
     pretrain_targets: Any = "all"  # Parameters to pretrain, all normalization + head layers by default
     reset_during_pretrain: bool = False  # Reset dead neurons during pretraining instead of pruning them
+    sigm_pretrain: bool = False  # Apply sigmoid transformation to scale params, bounding effective values
     clip_norm: Any = None  # Set as (scale_min_val, scale_max_val, offset_min_val, offset_max_val) for pretrain
     record_pretrain_distribution: bool = False  # Monitor bn params distribution or not
     pruning_reg: Optional[str] = "cdg_l2"
@@ -306,6 +307,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             with_bn=True).keys(), "Current architectures available with batchnorm: " + str(
             pick_architecture(with_bn=True).keys())
         net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
+        if exp_config.sigm_pretrain and exp_config.pretrain > 0:
+            net_config['bn_config']['sigm_scale'] = True
 
     if 'grok' in exp_config.architecture:
         net_config['vocab_size'] = vocab_size_mapping[exp_config.dataset]
@@ -990,6 +993,49 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # Reset state and opt_state
                 _, state = net.init(init_key, next(train))
                 opt_state = opt.init(params)
+                if exp_config.sigm_pretrain:
+                    _, sigm_params = utils.grok_utils.split_norm_layers(params)
+                    sigm_params = jax.tree_map(jax.nn.sigmoid, sigm_params)
+                    params.update(sigm_params)
+                    net_config['bn_config']['sigm_scale'] = False
+                    architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+                        exp_config.architecture]
+                    architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+                    net = build_models(*architecture)[0]
+                    init_fn = utl.get_init_fn(net, ones_init)
+                    total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes,
+                                                                           exp_config.grok_depth)
+
+                    loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                   reg_param=decaying_reg_param, classes=classes,
+                                                   with_dropout=with_dropout,
+                                                   exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                                   label_smoothing=exp_config.label_smoothing)
+                    test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                           reg_param=decaying_reg_param,
+                                                           classes=classes,
+                                                           is_training=False, with_dropout=with_dropout,
+                                                           exclude_bias_bn_from_reg=exp_config.masked_reg)
+                    accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+                    update_fn = get_updater(loss, opt, exp_config.add_noise,
+                                            exp_config.noise_imp, exp_config.asymmetric_noise,
+                                            going_wild=exp_config.going_wild,
+                                            live_only=exp_config.noise_live_only,
+                                            noise_offset_only=exp_config.noise_offset_only,
+                                            positive_offset=exp_config.positive_offset,
+                                            with_dropout=with_dropout,
+                                            modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                            acti_map=acti_map, perturb=exp_config.perturb_param,
+                                            init_fn=init_fn)
+                    death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+                    # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                    #                                                  epsilon=exp_config.epsilon_close,
+                    #                                                  avg=exp_config.avg_for_eps)
+                    # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+                    scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+                    final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+                    full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn,
+                                                                    int(partial_train_ds_size // eval_size))
             if (step > 0) and (step % steps_per_epoch == 0):  # Keep track of the best accuracy along training
                 architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[  # TODO: those line should not be necessary ...
                     exp_config.architecture]
