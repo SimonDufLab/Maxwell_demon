@@ -63,7 +63,7 @@ class CustomBatchNorm(hk.BatchNorm):
                 x = jnp.abs(x-0.05)
                 return jnp.log(x/(1-x))
             self.scale_init = inv_sigm
-        elif self.tanh:
+        elif self.tanh_scale:
             init_fn = copy.copy(self.scale_init)
 
             def inv_tanh(shape, dtype):
