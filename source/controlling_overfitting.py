@@ -108,6 +108,7 @@ class ExpConfig:
     pretrain_targets: Any = "all"  # Parameters to pretrain, all normalization + head layers by default
     reset_during_pretrain: bool = False  # Reset dead neurons during pretraining instead of pruning them
     sigm_pretrain: bool = False  # Apply sigmoid transformation to scale params, bounding effective values
+    tanh_pretrain: bool = False  # Apply tanh transformation to scale params, bounding effective values
     clip_norm: Any = None  # Set as (scale_min_val, scale_max_val, offset_min_val, offset_max_val) for pretrain
     record_pretrain_distribution: bool = False  # Monitor bn params distribution or not
     pruning_reg: Optional[str] = "cdg_l2"
@@ -309,6 +310,8 @@ def run_exp(exp_config: ExpConfig) -> None:
         net_config['bn_config'] = bn_config_choice[exp_config.bn_config]
         if exp_config.sigm_pretrain and exp_config.pretrain > 0:
             net_config['bn_config']['sigm_scale'] = True
+        if exp_config.tanh_pretrain and exp_config.pretrain > 0:
+            net_config['bn_config']['tanh_scale'] = True
 
     if 'grok' in exp_config.architecture:
         net_config['vocab_size'] = vocab_size_mapping[exp_config.dataset]
@@ -993,9 +996,12 @@ def run_exp(exp_config: ExpConfig) -> None:
                 # Reset state and opt_state
                 _, state = net.init(init_key, next(train))
                 opt_state = opt.init(params)
-                if exp_config.sigm_pretrain:
+                if exp_config.sigm_pretrain or exp_config.tanh_pretrain:
                     _, sigm_params = utils.grok_utils.split_norm_layers(params)
-                    sigm_params = jax.tree_map(jax.nn.sigmoid, sigm_params)
+                    if exp_config.sigm_pretrain:
+                        sigm_params = jax.tree_map(jax.nn.sigmoid, sigm_params)
+                    elif exp_config.tanh_pretrain:
+                        sigm_params = jax.tree_map(jax.nn.tanh, sigm_params)
                     params.update(sigm_params)
                     net_config['bn_config']['sigm_scale'] = False
                     architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
