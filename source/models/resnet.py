@@ -37,6 +37,7 @@ class CustomBatchNorm(hk.BatchNorm):
             data_format: str = "channels_last",
             deactivate_small_units: bool = False,  # New argument that deactivate units with magnitude smaller than mean
             sigm_scale: bool = False,  # Transform scale parameters to sigmoid(scale), bounding the values between 0-1
+            tanh_scale: bool = False,  # Transform scale parameters to tanh(scale), bounding the values between -1-1
             name: Optional[str] = None,
     ):
         super().__init__(create_scale=create_scale, create_offset=create_offset, decay_rate=decay_rate, eps=eps,
@@ -50,6 +51,10 @@ class CustomBatchNorm(hk.BatchNorm):
             raise ValueError(
                 "Cannot set `constant_scale` if `create_scale=True`.")
         self.sigm_scale = sigm_scale
+        self.tanh_scale = tanh_scale
+        if self.tanh_scale and self.sigm_scale:
+            raise ValueError(
+                "Cannot set `tanh_scale` and `sigm_scale` simultaneously.")
         if self.sigm_scale:
             init_fn = copy.copy(self.scale_init)
 
@@ -58,6 +63,14 @@ class CustomBatchNorm(hk.BatchNorm):
                 x = jnp.abs(x-0.05)
                 return jnp.log(x/(1-x))
             self.scale_init = inv_sigm
+        elif self.tanh:
+            init_fn = copy.copy(self.scale_init)
+
+            def inv_tanh(shape, dtype):
+                x = init_fn(shape, dtype)
+                x = jnp.abs(x - 0.05)
+                return 0.5*jnp.log((1+x) / (1 - x))
+            self.scale_init = inv_tanh
 
     def __call__(  # Sole modification is that scale can be fixed
             self,
@@ -129,6 +142,8 @@ class CustomBatchNorm(hk.BatchNorm):
             scale = hk.get_parameter("scale", w_shape, w_dtype, self.scale_init)
             if self.sigm_scale:
                 scale = jax.nn.sigmoid(scale)
+            elif self.tanh_scale:
+                scale = jax.nn.tanh(scale)
         elif self.constant_scale:
             scale = np.ones([], dtype=w_dtype) * self.constant_scale
         elif scale is None:
