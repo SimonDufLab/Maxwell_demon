@@ -39,6 +39,10 @@ optimizer_choice = {
     "adam": optax.adam,
     "adamw": optax.adamw,
     "adamw_b2_98": Partial(optax.adamw, b2=0.98),
+    "adamw_eps_1e-10": Partial(optax.adamw, eps=1e-10),  # Rework into parser after rebuttal, quick workaround for now
+    "adamw_eps_1e-9": Partial(optax.adamw, eps=1e-9),
+    "adamw_eps_1e-6": Partial(optax.adamw, eps=1e-6),
+    "adamw_eps_1e-4": Partial(optax.adamw, eps=1e-4),
     "adamw_cdg": utl.adamw_cdg,
     "adam_to_momentum": utl.adam_to_momentum,  # Adam on schedule -> become momentum after ~10k steps
     "new_adam_to_momentum": utl.adam_to_momentum_v2,  # Required to know total number of steps
