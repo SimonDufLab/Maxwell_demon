@@ -409,7 +409,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 lr_schedule = lr_scheduler_choice["one_cycle"](add_steps_end, pruning_lr, None, None)  # TODO: fixed schd...
                 opt_chain.append(optimizer(lr_schedule))
                 opt = optax.chain(*opt_chain)
-                opt_state = opt.init(params)
+                opt_state = opt.init(params)  # TODO: resetting the step counter impact lr schedule, be wary
                 state = init_state  # Reset state as well
                 # Reset losses etc.
                 # utl.clear_caches()
@@ -837,7 +837,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             if isinstance(exp_config.lr_decay_steps, omegaconf.listconfig.ListConfig):  # TODO: This is dirty...
                 decay_boundaries = [steps_per_epoch * lr_decay_step for lr_decay_step in exp_config.lr_decay_steps]
             else:
-                decay_boundaries = [steps_per_epoch * exp_config.lr_decay_steps * (i+1) for i in range((exp_config.training_steps//steps_per_epoch)//exp_config.lr_decay_steps)]
+                total_steps = exp_config.training_steps+exp_config.pretrain
+                decay_boundaries = [steps_per_epoch * exp_config.lr_decay_steps * (i+1) for i in range((total_steps//steps_per_epoch)//exp_config.lr_decay_steps)]
             lr_schedule = lr_scheduler_choice[exp_config.lr_schedule](exp_config.training_steps, exp_config.lr,
                                                                       exp_config.final_lr,
                                                                       decay_boundaries,
@@ -995,7 +996,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 pretrain_mask = {}
                 # Reset state and opt_state
                 _, state = net.init(init_key, next(train))
-                opt_state = opt.init(params)
+                opt_state = ((opt.init(params)[0][0], opt_state[0][1]),)
                 if exp_config.sigm_pretrain or exp_config.tanh_pretrain:
                     _, sigm_params = utils.grok_utils.split_norm_layers(params)
                     if exp_config.sigm_pretrain:
