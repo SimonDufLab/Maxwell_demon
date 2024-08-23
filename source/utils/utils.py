@@ -3525,3 +3525,19 @@ def reformat_dict_config(config: DictConfig):
     for key, value in config.items():
         if value == 'None':  # Check if the value is 'None' (string)
             config[key] = None  # Set the value to None (NoneType)
+
+def print_structure(state, indent=0):
+    print(f"Root object: {type(state)}")
+    def _print_structure(state, indent=indent):
+        indent_str = ' ' * indent
+        if isinstance(state, (tuple, list)):
+            for i, item in enumerate(state):
+                print(f"{indent_str}[{i}--{type(item)}]:")
+                _print_structure(item, indent + 2)
+        elif isinstance(state, dict):
+            for key, value in state.items():
+                print(f"{indent_str}{key}:")
+                _print_structure(value, indent + 2)
+        else:
+            print(f"{indent_str}{jnp.shape(state)}")
+    return _print_structure(state, indent)
