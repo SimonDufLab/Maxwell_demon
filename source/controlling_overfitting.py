@@ -996,7 +996,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                 pretrain_mask = {}
                 # Reset state and opt_state
                 _, state = net.init(init_key, next(train))
-                opt_state = ((opt.init(params)[0][0], opt_state[0][1]),)
+                opt_state = ((opt.init(params)[0][:-1]+(opt_state[0][-1],)),)  # Reinitializing optimizer state, but keeping lr_scheduler counter
                 if exp_config.sigm_pretrain or exp_config.tanh_pretrain:
                     _, sigm_params = utils.grok_utils.split_norm_layers(params)
                     if exp_config.sigm_pretrain:
