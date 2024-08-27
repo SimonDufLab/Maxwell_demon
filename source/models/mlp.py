@@ -96,6 +96,19 @@ def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
     return [layer_1, layer_2, layer_3],
 
 
+def mlp_2(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, with_bn=False, bn_config={}):
+    """ Build a MLP with a single layer before the classification head"""
+    act = activation_fn
+
+    if type(sizes) == int:  # For compatibility with fn that expect a list of layer sizes
+        sizes = [sizes,]
+
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act)]  # hk.Flatten, in LinearLayer
+    layer_2 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=None)]
+
+    return [layer_1, layer_2],
+
+
 def mlp_3_dropout(sizes, number_classes, activation_fn=ReluActivationModule, dropout_rate=0, with_bias=True):
     """ Dropout version of mlp_3 model"""
     act = activation_fn

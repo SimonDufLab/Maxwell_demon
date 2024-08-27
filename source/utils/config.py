@@ -11,7 +11,7 @@ import utils.scores as scores
 from utils.utils import load_mnist_tf, load_cifar10_tf, load_fashion_mnist_tf, load_imagenet_tf, load_cifar100_tf
 from utils.utils import constant_schedule, cosine_decay, piecewise_constant_schedule, one_cycle_schedule, fix_step_decay
 from utils.utils import warmup_cosine_decay, warmup_piecewise_decay_schedule
-from models.mlp import mlp_3, mlp_3_bn, mlp_3_reg
+from models.mlp import mlp_3, mlp_3_bn, mlp_3_reg, mlp_2
 from models.mlp import mlp_3_act_pre_relu, mlp_3_act_pre_bn, mlp_3_act_post_bn
 from models.mlp import mlp_3_dropout
 from models.convnet import conv_3_2, conv_3_2_bn, conv_4_2, conv_4_2_bn, conv_6_2, conv_6_2_bn
@@ -112,6 +112,7 @@ reg_param_scheduler_choice = {
 # Return the desired architecture along with a bool indicating if there is a
 # is_training flag for this specific model
 architecture_choice = {
+    "mlp_2": mlp_2,
     "mlp_3": mlp_3,
     "mlp_3_reg": mlp_3_reg,
     "conv_3_2": conv_3_2,
@@ -138,6 +139,7 @@ architecture_choice_dropout = {
 }
 
 bn_architecture_choice = {
+    "mlp_2": Partial(mlp_2, with_bn=True),
     "mlp_3": Partial(mlp_3, with_bn=True),
     "conv_3_2": conv_3_2_bn,
     "conv_4_2": conv_4_2_bn,

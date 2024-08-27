@@ -3306,7 +3306,10 @@ def signal_handler(signum: int, frame: Optional[FrameType]):  # Taken from: http
 # Varia
 ##############################
 def get_total_neurons(architecture, sizes, grok_depth=None):
-    if 'mlp_3' in architecture:
+    if 'mlp_2' in architecture:
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes,]
+    elif 'mlp_3' in architecture:
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes, sizes * 3]
     elif architecture == 'conv_3_2':
