@@ -648,26 +648,26 @@ def run_exp(exp_config: ExpConfig) -> None:
                     neuron_states.update_from_ordered_list(dead_neurons)
                     if exp_config.reset_during_pretrain and step < exp_config.pretrain:
                         if exp_config.srelu_during_reset:
-                            print('Entering the desired cond block')
                             _state = copy.deepcopy(state)
                             _state = utl.update_gate_constant(_state, exp_config.srelu_during_reset)
                             _dead_neurons = scan_death_check_fn(params, _state, test_death)
-                            _neurons_state = copy.deepcopy(neuron_states).update_from_ordered_list(_dead_neurons)
+                            _neuron_states = utl.NeuronStates(activation_layer_order)
+                            _neuron_states.update_from_ordered_list(_dead_neurons)
                         else:
-                            _neurons_state = neuron_states
+                            _neuron_states = neuron_states
                         if step == 0:
-                            reset_counter = jax.tree_map(Partial(jnp.ones_like, dtype=int), _neurons_state.state())
-                            reset_tracker = jax.tree_map(Partial(jnp.zeros_like, dtype=int), _neurons_state.state())
+                            reset_counter = jax.tree_map(Partial(jnp.ones_like, dtype=int), _neuron_states.state())
+                            reset_tracker = jax.tree_map(Partial(jnp.zeros_like, dtype=int), _neuron_states.state())
                         else:
                             reset_counter = jax.tree_map(jnp.add, reset_counter,
                                                          jax.tree_map(Partial(jnp.asarray, dtype=int),
-                                                                      _neurons_state.state()))
+                                                                      _neuron_states.state()))
                             reset_tracker = jax.tree_map(Partial(utils.utils.map_decision_with_bool_array, potential_leaf=step),
-                                                         _neurons_state.invert_state(), reset_tracker)
+                                                         _neuron_states.invert_state(), reset_tracker)
                         # reinitialize dead neurons
                         init_key, _key = jax.random.split(init_key)
                         new_params, new_state = net.init(_key, next(train))
-                        params = utl.reinitialize_dead_neurons(acti_map, _neurons_state, params,
+                        params = utl.reinitialize_dead_neurons(acti_map, _neuron_states, params,
                                                                               new_params)
                         # state = new_state  # TODO: Revise after testing: could be useful to swing reinit neurons with adam
                         # opt_state = opt.init(params)
