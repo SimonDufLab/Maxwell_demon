@@ -243,7 +243,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                      dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
                                      decaying_reg_param=exp_config.reg_params[0],
                                      best_accuracy=0.0, best_params_count=None, best_total_neurons=None,
-                                     training_time=0.0, cumulative_dead_neurons=None)
+                                     training_time=0.0, reset_counter=None, reset_tracker=None,
+                                     cumulative_dead_neurons=None)
             # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
             #     pickle.dump(run_state, f)
 
@@ -972,6 +973,8 @@ def run_exp(exp_config: ExpConfig) -> None:
             starting_step = run_state["training_step"]
             decaying_reg_param = run_state["decaying_reg_param"]
             dropout_key = run_state["dropout_key"]
+            reset_counter = run_state["reset_counter"]
+            reset_tracker = run_state["reset_tracker"]
             try:  # TODO Remove after completing all currently running from previous version
                 best_acc = run_state["best_accuracy"]
                 best_params_count = run_state["best_params_count"]
@@ -1079,7 +1082,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                    curr_reg_param=reg_param, dropout_key=dropout_key,
                                    decaying_reg_param=decaying_reg_param, best_acc=best_acc,
                                    best_params_count=best_params_count, best_total_neurons=best_total_neurons,
-                                   training_time=training_time, dead_neurons_union=dead_neurons_union)
+                                   training_time=training_time, reset_counter=reset_counter,
+                                   reset_tracker=reset_tracker, dead_neurons_union=dead_neurons_union)
                 training_timer = time.time()
                 print(
                     f"Checkpointing performed in: {timedelta(seconds=time.time() - chckpt_init_time)}")
