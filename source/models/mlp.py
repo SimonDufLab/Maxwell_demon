@@ -2,7 +2,10 @@
 import haiku as hk
 import jax
 import jax.numpy as jnp
+import numpy as np
+from jax.scipy.special import logsumexp
 from jax.tree_util import Partial
+from jax import lax
 from jax.nn import relu, tanh
 from utils.utils import ReluActivationModule, IdentityActivationModule
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
@@ -13,6 +16,75 @@ from models.dropout_units import Base_Dropout
 
 FloatStrOrBool = Union[str, float, bool]
 
+class SoftmaxTLinear(hk.Module):
+    """Custom Linear module with temperature-adjusted softmax applied element-wise per output neuron."""
+
+    def __init__(
+        self,
+        output_size: int,
+        with_bias: bool = True,
+        w_init: Optional[hk.initializers.Initializer] = None,
+        b_init: Optional[hk.initializers.Initializer] = None,
+        temperature: float = 1.0,  # Temperature parameter
+        name: Optional[str] = None,
+    ):
+        """Constructs the CustomLinear module.
+
+        Args:
+          output_size: Output dimensionality.
+          with_bias: Whether to add a bias to the output.
+          w_init: Optional initializer for weights.
+          b_init: Optional initializer for bias.
+          T: Temperature for the softmax scaling.
+          name: Name of the module.
+        """
+        super().__init__(name=name)
+        self.input_size = None
+        self.output_size = output_size
+        self.with_bias = with_bias
+        self.w_init = w_init
+        self.b_init = b_init or jnp.zeros
+        self.T = temperature  # Temperature for the softmax operation
+
+    def __call__(
+        self,
+        inputs: jax.Array,
+        *,
+        precision: Optional[lax.Precision] = None,
+    ) -> jax.Array:
+        """Computes a custom linear transform of the input using a temperature-adjusted softmax."""
+        if not inputs.shape:
+            raise ValueError("Input must not be scalar.")
+
+        input_size = self.input_size = inputs.shape[-1]
+        output_size = self.output_size
+        dtype = inputs.dtype
+        n = input_size  # Dimension of the input vector
+
+        w_init = self.w_init
+        if w_init is None:
+            stddev = 1. / np.sqrt(input_size)
+            w_init = hk.initializers.TruncatedNormal(stddev=stddev)
+        w = hk.get_parameter("w", [input_size, output_size], dtype, init=w_init)
+
+        # Calculate z_i = w_i * x_i for each element i for all outputs
+        # Produces a (batch_size, input_size, output_size) tensor when input is batched
+        z = jnp.einsum('bi,io->bio', inputs, w)
+
+        # Apply temperature-adjusted softmax within each neuron
+        exp_z = jnp.exp(z / self.T)
+        sum_exp_z = jnp.sum(exp_z, axis=1, keepdims=True)
+        softmax_z = exp_z / sum_exp_z
+
+        # Multiply z by its softmax, sum over input dimension
+        output = n * jnp.sum(z * softmax_z, axis=1)
+
+        if self.with_bias:
+            b = hk.get_parameter("b", [output_size], dtype, init=self.b_init)
+            b = jnp.broadcast_to(b, output.shape)
+            output += b
+
+        return output
 
 class LinearLayer(hk.Module):
     def __init__(
@@ -24,6 +96,7 @@ class LinearLayer(hk.Module):
             is_training: bool = True,
             fc_config: Optional[Mapping[str, FloatStrOrBool]] = {},
             bn_config: Optional[Mapping[str, FloatStrOrBool]] = {},
+            temperature: Optional[float] = None,
             name: Optional[str] = None,
             parent: Optional[hk.Module] = None):
         super().__init__(name=name)
@@ -34,7 +107,10 @@ class LinearLayer(hk.Module):
         else:
             self.preceding_activation_name = None
         self.with_bn = with_bn
-        self.fc_layer = hk.Linear(output_size, with_bias=with_bias, **fc_config)
+        if temperature:
+            self.fc_layer = SoftmaxTLinear(output_size, with_bias=with_bias, temperature=temperature, **fc_config)
+        else:
+            self.fc_layer = hk.Linear(output_size, with_bias=with_bias, **fc_config)
         if with_bn:
             self.bn_layer = Base_BN(is_training=is_training, bn_config=bn_config)
         if activation_fn:
@@ -95,16 +171,16 @@ def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
 
     return [layer_1, layer_2, layer_3],
 
-
-def mlp_2(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, with_bn=False, bn_config={}):
+def mlp_2(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, with_bn=False, bn_config={},
+          temperature=None):
     """ Build a MLP with a single layer before the classification head"""
     act = activation_fn
 
     if type(sizes) == int:  # For compatibility with fn that expect a list of layer sizes
         sizes = [sizes,]
 
-    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act)]  # hk.Flatten, in LinearLayer
-    layer_2 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=None)]
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature)]  # hk.Flatten, in LinearLayer
+    layer_2 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=None, temperature=temperature)]
 
     return [layer_1, layer_2],
 

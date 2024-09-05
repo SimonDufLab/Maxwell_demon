@@ -111,6 +111,7 @@ class ExpConfig:
     sigm_pretrain: bool = False  # Apply sigmoid transformation to scale params, bounding effective values
     tanh_pretrain: bool = False  # Apply tanh transformation to scale params, bounding effective values
     clip_norm: Any = None  # Set as (scale_min_val, scale_max_val, offset_min_val, offset_max_val) for pretrain
+    temperature: Optional[float] = None  # Temperature parameter for the temperature-adjusted softmax fc layer
     record_pretrain_distribution: bool = False  # Monitor bn params distribution or not
     pruning_reg: Optional[str] = "cdg_l2"
     pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
@@ -318,6 +319,9 @@ def run_exp(exp_config: ExpConfig) -> None:
     if 'grok' in exp_config.architecture:
         net_config['vocab_size'] = vocab_size_mapping[exp_config.dataset]
         net_config['depth'] = exp_config.grok_depth
+
+    if exp_config.temperature:
+        net_config['temperature'] = exp_config.temperature
 
     # warmup:
     if 'warmup' in exp_config.lr_schedule:
