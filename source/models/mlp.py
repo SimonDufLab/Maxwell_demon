@@ -72,9 +72,8 @@ class SoftmaxTLinear(hk.Module):
         z = jnp.einsum('bi,io->bio', inputs, w)
 
         # Apply temperature-adjusted softmax within each neuron
-        exp_z = jnp.exp(z / self.T)
-        sum_exp_z = jnp.sum(exp_z, axis=1, keepdims=True)
-        softmax_z = exp_z / sum_exp_z
+        exp_z = jnp.exp(jnp.abs(z) / self.T)
+        softmax_z = exp_z / jnp.sum(exp_z, axis=1, keepdims=True)
 
         # Multiply z by its softmax, sum over input dimension
         output = n * jnp.sum(z * softmax_z, axis=1)
