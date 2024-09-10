@@ -3549,3 +3549,12 @@ def print_structure(state, indent=0):
         else:
             print(f"{indent_str}{jnp.shape(state)}")
     return _print_structure(state, indent)
+
+
+def grow_array_with_zeros(_array, factor):
+    new_shape = tuple([dim * factor for dim in _array.shape])
+    new_array = jnp.zeros(new_shape, dtype=_array.dtype)
+    slices = tuple([slice(0, dim) for dim in _array.shape])
+    new_array = new_array.at[slices].set(_array)
+
+    return new_array
