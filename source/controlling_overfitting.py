@@ -112,6 +112,8 @@ class ExpConfig:
     tanh_pretrain: bool = False  # Apply tanh transformation to scale params, bounding effective values
     clip_norm: Any = None  # Set as (scale_min_val, scale_max_val, offset_min_val, offset_max_val) for pretrain
     temperature: Optional[float] = None  # Temperature parameter for the temperature-adjusted softmax fc layer
+    resize_old: Optional[int] = None  # Resize a previous run for reset -- architectural search
+    old_run: Optional[str] = None  #  Previous run ID to use for above.
     record_pretrain_distribution: bool = False  # Monitor bn params distribution or not
     pruning_reg: Optional[str] = "cdg_l2"
     pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
@@ -238,20 +240,39 @@ def run_exp(exp_config: ExpConfig) -> None:
         if run_state:
             load_from_preexisting_model_state = True
         else:  # Initialize the run_state
-            run_state = utl.RunState(epoch=0, training_step=0, model_dir=saving_dir, curr_arch_sizes=exp_config.size,
-                                     aim_hash=None, slurm_jobid=SLURM_JOBID, exp_name=exp_name_,
-                                     curr_starting_size=exp_config.size, curr_reg_param=exp_config.reg_params[0],
-                                     dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
-                                     decaying_reg_param=exp_config.reg_params[0],
-                                     best_accuracy=0.0, best_params_count=None, best_total_neurons=None,
-                                     training_time=0.0, reset_counter=None, reset_tracker=None,
-                                     cumulative_dead_neurons=None)
-            # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
-            #     pickle.dump(run_state, f)
+            if exp_config.old_run and exp_config.resize_old:
+                load_from_preexisting_model_state = True
+                load_old_dir = SCRATCH / exp_name_ / exp_config.old_run
+                run_state = utl.load_run_state(load_old_dir)
+                run_state['epoch'] = 0
+                run_state['training_step'] = 0
+                run_state["aim_hash"] = None
+                run_state['exp_name'] = exp_name_
+                run_state['curr_starting_size'] = [exp_config.resize_old * curr_layer_size for curr_layer_size in
+                                                   run_state['curr_arch_sizes']]
+                run_state['curr_arch_sizes'] = run_state['curr_starting_size']
+                SLURM_JOBID = os.environ["SLURM_JOBID"]
+                exp_config.jobid = SLURM_JOBID
+                run_state['slurm_jobid'] = SLURM_JOBID
+                run_state['curr_reg_param'] = exp_config.reg_params[0]
+                run_state['decaying_reg_param'] = exp_config.reg_params[0]
+                run_state['training_time'] = 0.0
+            else:
+                run_state = utl.RunState(epoch=0, training_step=0, model_dir=saving_dir, curr_arch_sizes=exp_config.size,
+                                         aim_hash=None, slurm_jobid=SLURM_JOBID, exp_name=exp_name_,
+                                         curr_starting_size=exp_config.size, curr_reg_param=exp_config.reg_params[0],
+                                         dropout_key=jax.random.PRNGKey(exp_config.with_rng_seed),
+                                         decaying_reg_param=exp_config.reg_params[0],
+                                         best_accuracy=0.0, best_params_count=None, best_total_neurons=None,
+                                         training_time=0.0, reset_counter=None, reset_tracker=None,
+                                         cumulative_dead_neurons=None)
+                # with open(os.path.join(saving_dir, "checkpoint_run_state.pkl"), "wb") as f:  # Save only if one additional epoch completed
+                #     pickle.dump(run_state, f)
 
-            # Dump config file in it as well
-            with open(os.path.join(saving_dir, 'config.json'), 'w') as fp:
-                json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
+                # Dump config file in it as well
+                with open(os.path.join(saving_dir, 'config.json'), 'w') as fp:
+                    json.dump(OmegaConf.to_container(exp_config), fp, indent=4)
+
         aim_hash = run_state["aim_hash"]
     else:
         aim_hash = None
@@ -887,7 +908,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         if load_from_preexisting_model_state:
             _architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
             exp_config.architecture]
-            _architecture = _architecture(size, classes, activation_fn=activation_fn, **net_config)
+            _architecture = _architecture(run_state['curr_starting_size'], classes, activation_fn=activation_fn, **net_config)
             _net, raw_net = build_models(*_architecture, with_dropout=with_dropout)
             params, state = _net.init(init_key, next(train))
             del _architecture
@@ -900,7 +921,13 @@ def run_exp(exp_config: ExpConfig) -> None:
         opt_state = opt.init(params)
         initial_params_count = utl.count_params(params)
         if load_from_preexisting_model_state:
-            params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
+            if exp_config.old_run and exp_config.resize_old:
+                params, _, _ = utl.restore_all_pytree_states(run_state["model_dir"])
+                params = jax.tree_map(Partial(utl.grow_array_with_zeros, factor=exp_config.resize_old), params)
+                run_state['model_dir'] = saving_dir
+                load_from_preexisting_model_state = False
+            else:
+                params, state, opt_state = utl.restore_all_pytree_states(run_state["model_dir"])
         # frozen_layer_lists = utl.extract_layer_lists(params)
         neuron_states = utl.NeuronStates(activation_layer_order)
         reset_counter = None
