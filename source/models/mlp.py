@@ -162,12 +162,12 @@ def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature)]  # hk.Flatten, in LinearLayer
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, name='init')]  # hk.Flatten, in LinearLayer
     layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature)]
     if tanh_head:
-        layer_3 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=_tanh, temperature=temperature)]
+        layer_3 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=_tanh, temperature=temperature, name='logits')]
     else:
-        layer_3 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=None, temperature=temperature)]
+        layer_3 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=None, temperature=temperature, name='logits')]
 
     return [layer_1, layer_2, layer_3],
 
@@ -179,8 +179,8 @@ def mlp_2(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
     if type(sizes) == int:  # For compatibility with fn that expect a list of layer sizes
         sizes = [sizes,]
 
-    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature)]  # hk.Flatten, in LinearLayer
-    layer_2 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=None, temperature=temperature)]
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, name='init')]  # hk.Flatten, in LinearLayer
+    layer_2 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=None, temperature=temperature, name='logits')]
 
     return [layer_1, layer_2],
 

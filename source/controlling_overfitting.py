@@ -923,7 +923,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         if load_from_preexisting_model_state:
             if exp_config.old_run and exp_config.resize_old:
                 params, _, _ = utl.restore_all_pytree_states(run_state["model_dir"])
-                params = jax.tree_map(Partial(utl.grow_array_with_zeros, factor=exp_config.resize_old), params)
+                params = utl.grow_neurons(params, exp_config.resize_old)
                 run_state['model_dir'] = saving_dir
                 load_from_preexisting_model_state = False
             else:
