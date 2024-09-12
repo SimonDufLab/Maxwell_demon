@@ -23,6 +23,7 @@ import signal
 # from torch.utils.data import Dataset, Subset
 # from torchvision import datasets, transforms
 from typing import Union, Tuple, List, Callable, Sequence
+
 from jax.tree_util import Partial
 from jax.flatten_util import ravel_pytree
 from collections import OrderedDict
@@ -3551,10 +3552,25 @@ def print_structure(state, indent=0):
     return _print_structure(state, indent)
 
 
-def grow_array_with_zeros(_array, factor):
-    new_shape = tuple([dim * factor for dim in _array.shape])
+def grow_weights_with_zeros(_array, factor, init=False, head=False):
+    if init:
+        new_shape = _array.shape[:-1] + (factor*_array.shape[-1],)
+    elif head:
+        new_shape = (factor * _array.shape[0],) + _array.shape[1:]
+    else:
+        new_shape = tuple([dim * factor for dim in _array.shape])
     new_array = jnp.zeros(new_shape, dtype=_array.dtype)
     slices = tuple([slice(0, dim) for dim in _array.shape])
     new_array = new_array.at[slices].set(_array)
 
     return new_array
+
+def grow_neurons(params, factor, last_layer_kw='logits', first_layer_kw='init'):
+    # multi_treemap over function above and a bool pytree identifying what neurons to apply it to
+    head_dict = {key: grow_weights_with_zeros(value, factor, head=True) for key, value in params.items() if last_layer_kw in key}
+    init_dict = {key: grow_weights_with_zeros(value, factor, init=True) for key, value in params.items() if first_layer_kw in key}
+    params = jax.tree_map(Partial(grow_weights_with_zeros, factor=factor), params)
+    params.update(head_dict)
+    params.update(init_dict)
+
+    return params
