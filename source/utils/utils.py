@@ -3318,6 +3318,9 @@ def get_total_neurons(architecture, sizes, grok_depth=None):
     elif 'mlp_3' in architecture:
         if type(sizes) == int:  # Size can be specified with 1 arg, an int
             sizes = [sizes, sizes * 3]
+    elif 'mlp_5' in architecture:
+        if type(sizes) == int:  # Size can be specified with 1 arg, an int
+            sizes = [sizes, sizes*2, sizes*4, sizes*2]
     elif architecture == 'conv_3_2':
         if len(sizes) == 2:  # Size can be specified with 2 args
             sizes = [sizes[0], 2 * sizes[0], 4 * sizes[0], sizes[1]]
