@@ -3570,9 +3570,11 @@ def grow_weights_with_zeros(_array, factor, init=False, head=False):
 
 def grow_neurons(params, factor, last_layer_kw='logits', first_layer_kw='init'):
     # multi_treemap over function above and a bool pytree identifying what neurons to apply it to
+    norm_layer_dict = {key: jax.tree_map(Partial(grow_weights_with_zeros, factor=factor, init=True), value) for key, value in params.items() if (('bn' in key) or ('norm' in key))}
     head_dict = {key: jax.tree_map(Partial(grow_weights_with_zeros, factor=factor, head=True), value) for key, value in params.items() if last_layer_kw in key}
     init_dict = {key: jax.tree_map(Partial(grow_weights_with_zeros, factor=factor, init=True), value) for key, value in params.items() if first_layer_kw in key}
     params = jax.tree_map(Partial(grow_weights_with_zeros, factor=factor), params)
+    params.update(norm_layer_dict)
     params.update(head_dict)
     params.update(init_dict)
 
