@@ -3559,7 +3559,10 @@ def grow_weights_with_zeros(_array, factor, init=False, head=False):
     if init:
         new_shape = _array.shape[:-1] + (factor*_array.shape[-1],)
     elif head:
-        new_shape = (factor * _array.shape[0],) + _array.shape[1:]
+        if len(_array.shape) > 1:
+            new_shape = (factor * _array.shape[0],) + _array.shape[1:]
+        else:
+            new_shape = _array.shape
     else:
         new_shape = tuple([dim * factor for dim in _array.shape])
     new_array = jnp.zeros(new_shape, dtype=_array.dtype)
