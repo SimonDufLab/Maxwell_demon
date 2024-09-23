@@ -248,6 +248,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                 run_state['training_step'] = 0
                 run_state["aim_hash"] = None
                 run_state['exp_name'] = exp_name_
+                if type(run_state['curr_starting_size']) is int:
+                    run_state['curr_starting_size'] = list(utl.get_total_neurons(exp_config.architecture, run_state['curr_starting_size'])[1])
                 run_state['curr_starting_size'] = [exp_config.resize_old * curr_layer_size for curr_layer_size in
                                                    run_state['curr_arch_sizes']]
                 run_state['curr_arch_sizes'] = run_state['curr_starting_size']
