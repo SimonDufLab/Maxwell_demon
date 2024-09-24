@@ -114,6 +114,7 @@ class ExpConfig:
     temperature: Optional[float] = None  # Temperature parameter for the temperature-adjusted softmax fc layer
     resize_old: Optional[int] = None  # Resize a previous run for reset -- architectural search
     old_run: Optional[str] = None  #  Previous run ID to use for above.
+    dynamic_resizing: Optional[int] = None # Grow dynamically the NN during training
     record_pretrain_distribution: bool = False  # Monitor bn params distribution or not
     pruning_reg: Optional[str] = "cdg_l2"
     pruning_opt: str = "momentum9"  # Optimizer for pruning part after initial training
@@ -674,7 +675,7 @@ def run_exp(exp_config: ExpConfig) -> None:
 
                 if exp_config.dynamic_pruning and step >= exp_config.prune_after:
                     neuron_states.update_from_ordered_list(dead_neurons)
-                    if exp_config.reset_during_pretrain and step < exp_config.pretrain:
+                    if exp_config.dynamic_resizing and exp_config.reset_during_pretrain and 0 < step < exp_config.pretrain:
                         if exp_config.srelu_during_reset:
                             _state = copy.deepcopy(state)
                             _state = utl.update_gate_constant(_state, exp_config.srelu_during_reset)
@@ -683,18 +684,85 @@ def run_exp(exp_config: ExpConfig) -> None:
                             _neuron_states.update_from_ordered_list(_dead_neurons)
                         else:
                             _neuron_states = neuron_states
-                        if step == 0:
-                            reset_counter = jax.tree_map(Partial(jnp.ones_like, dtype=int), _neuron_states.state())
-                            reset_tracker = jax.tree_map(Partial(jnp.zeros_like, dtype=int), _neuron_states.state())
+                        params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
+                                                                                              _neuron_states, opt_state,
+                                                                                              state)
+                        if type(new_sizes) is int:
+                            new_sizes = list(utl.get_total_neurons(exp_config.architecture, new_sizes)[1])
+                        new_sizes = [exp_config.dynamic_resizing * curr_layer_size for curr_layer_size in new_sizes]
+                        params = utl.grow_neurons(params, exp_config.dynamic_resizing)
+                        architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
+                            exp_config.architecture]
+                        architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
+                        net = build_models(*architecture)[0]
+                        init_fn = utl.get_init_fn(net, ones_init)
+                        # Reinit state and opt_state after growth.
+                        init_key, _key = jax.random.split(init_key)
+                        _, state = net.init(_key, next(train))
+                        opt_state = opt.init(params)
+                        total_neurons, total_per_layer = utl.get_total_neurons(exp_config.architecture, new_sizes,
+                                                                               exp_config.grok_depth)
+
+                        loss = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                       reg_param=decaying_reg_param, classes=classes,
+                                                       with_dropout=with_dropout,
+                                                       exclude_bias_bn_from_reg=exp_config.masked_reg,
+                                                       label_smoothing=exp_config.label_smoothing)
+                        test_loss_fn = utl.ce_loss_given_model(net, regularizer=exp_config.regularizer,
+                                                               reg_param=decaying_reg_param,
+                                                               classes=classes,
+                                                               is_training=False, with_dropout=with_dropout,
+                                                               exclude_bias_bn_from_reg=exp_config.masked_reg)
+                        accuracy_fn = utl.accuracy_given_model(net, with_dropout=with_dropout)
+                        update_fn = get_updater(loss, opt, exp_config.add_noise,
+                                                exp_config.noise_imp, exp_config.asymmetric_noise,
+                                                going_wild=exp_config.going_wild,
+                                                live_only=exp_config.noise_live_only,
+                                                noise_offset_only=exp_config.noise_offset_only,
+                                                positive_offset=exp_config.positive_offset,
+                                                with_dropout=with_dropout,
+                                                modulate_via_gate_grad=exp_config.mod_via_gate_grad,
+                                                acti_map=acti_map, perturb=exp_config.perturb_param,
+                                                init_fn=init_fn)
+                        death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout)
+                        # eps_death_check_fn = utl.death_check_given_model(net, with_dropout=with_dropout,
+                        #                                                  epsilon=exp_config.epsilon_close,
+                        #                                                  avg=exp_config.avg_for_eps)
+                        # eps_scan_death_check_fn = utl.scanned_death_check_fn(eps_death_check_fn, scan_len)
+                        scan_death_check_fn = utl.scanned_death_check_fn(death_check_fn, scan_len)
+                        final_accuracy_fn = utl.create_full_accuracy_fn(accuracy_fn, int(test_size // eval_size))
+                        full_train_acc_fn = utl.create_full_accuracy_fn(accuracy_fn,
+                                                                        int(partial_train_ds_size // eval_size))
+                        if exp_config.pretrain and (step <= exp_config.pretrain):
+                            pretrain_mask = {
+                                '_mask': utils.grok_utils.mask_untargeted_weights(params, exp_config.pretrain_targets)}
+                    if exp_config.reset_during_pretrain and step < exp_config.pretrain:
+                        if exp_config.srelu_during_reset or exp_config.dynamic_resizing:
+                            if exp_config.srelu_during_reset:
+                                _state = copy.deepcopy(state)
+                                _state = utl.update_gate_constant(_state, exp_config.srelu_during_reset)
+                            else:
+                                _state = state
+                            _dead_neurons = scan_death_check_fn(params, _state, test_death)
+                            _neuron_states = utl.NeuronStates(activation_layer_order)
+                            _neuron_states.update_from_ordered_list(_dead_neurons)
                         else:
-                            reset_counter = jax.tree_map(jnp.add, reset_counter,
-                                                         jax.tree_map(Partial(jnp.asarray, dtype=int),
-                                                                      _neuron_states.state()))
-                            reset_tracker = jax.tree_map(Partial(utils.utils.map_decision_with_bool_array, potential_leaf=step),
-                                                         _neuron_states.invert_state(), reset_tracker)
+                            _neuron_states = neuron_states
+                        if not exp_config.dynamic_resizing:
+                            if step == 0:
+                                reset_counter = jax.tree_map(Partial(jnp.ones_like, dtype=int), _neuron_states.state())
+                                reset_tracker = jax.tree_map(Partial(jnp.zeros_like, dtype=int), _neuron_states.state())
+                            else:
+                                reset_counter = jax.tree_map(jnp.add, reset_counter,
+                                                             jax.tree_map(Partial(jnp.asarray, dtype=int),
+                                                                          _neuron_states.state()))
+                                reset_tracker = jax.tree_map(Partial(utils.utils.map_decision_with_bool_array, potential_leaf=step),
+                                                             _neuron_states.invert_state(), reset_tracker)
                         # reinitialize dead neurons
                         init_key, _key = jax.random.split(init_key)
                         new_params, new_state = net.init(_key, next(train))
+                        # print(jax.tree_map(jnp.shape, params))
+                        # print(jax.tree_map(jnp.shape, new_params))
                         params = utl.reinitialize_dead_neurons(acti_map, _neuron_states, params,
                                                                               new_params)
                         # state = new_state  # TODO: Revise after testing: could be useful to swing reinit neurons with adam
