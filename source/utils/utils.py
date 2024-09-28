@@ -3571,14 +3571,24 @@ def grow_weights_with_zeros(_array, factor, init=False, head=False):
 
     return new_array
 
+def grow_conv_with_zeros(_array, factor):
+    new_shape = _array.shape[:-2] + tuple([factor*_dim for _dim in _array.shape[-2:]])
+    new_array = jnp.zeros(new_shape, dtype=_array.dtype)
+    slices = tuple([slice(0, dim) for dim in _array.shape])
+    new_array = new_array.at[slices].set(_array)
+
+    return new_array
+
 def grow_neurons(params, factor, last_layer_kw='logits', first_layer_kw='init'):
     # multi_treemap over function above and a bool pytree identifying what neurons to apply it to
     norm_layer_dict = {key: jax.tree_map(Partial(grow_weights_with_zeros, factor=factor, init=True), value) for key, value in params.items() if (('bn' in key) or ('norm' in key))}
     head_dict = {key: jax.tree_map(Partial(grow_weights_with_zeros, factor=factor, head=True), value) for key, value in params.items() if last_layer_kw in key}
     init_dict = {key: jax.tree_map(Partial(grow_weights_with_zeros, factor=factor, init=True), value) for key, value in params.items() if first_layer_kw in key}
+    conv_layers_dict = {key: jax.tree_map(Partial(grow_conv_with_zeros, factor=factor), value) for key, value in params.items() if ('conv' in key)}
     params = jax.tree_map(Partial(grow_weights_with_zeros, factor=factor), params)
     params.update(norm_layer_dict)
     params.update(head_dict)
-    params.update(init_dict)
+    params.update(conv_layers_dict)
+    params.update(init_dict)  # init update needs to be after conv update
 
     return params
