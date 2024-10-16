@@ -7,7 +7,6 @@ from jax.scipy.special import logsumexp
 from jax.tree_util import Partial
 from jax import lax
 from jax.nn import relu, tanh
-from sympy import fourier_transform
 
 from utils.utils import ReluActivationModule, IdentityActivationModule
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
@@ -138,7 +137,7 @@ class LinearLayer(hk.Module):
             activation_name = None
 
         fc_name = block_name + self.fc_layer.name
-        if fourier_transform and  type(activation_name) is str:
+        if self.fourier_transform and  type(activation_name) is str:
             self.activation_mapping[fc_name] = {"preceding": self.preceding_activation_name,
                                                 "following": activation_name + '_CONCATENATED_FLAG'}
         else:
