@@ -48,8 +48,9 @@ def mask_untargeted_weights(params, targets):
     _params = copy.deepcopy(params)
     layer_keywords = []
     exclude_block = ['scale', 'offset']
-    if targets == "all":
-        layer_keywords = ['norm', 'logits', 'bn']
+    if 'all' in targets:
+        layer_keywords.extend(['norm', 'logits', 'bn'])
+        exclude_block = []
     else:
         if 'norm' in targets:
             layer_keywords.extend(['norm', 'bn'])

@@ -308,7 +308,12 @@ def reinitialize_dead_neurons(acti_map, neuron_states, old_params, new_params):
       new_params: new parameters' dict to pick from weights being reinitialized"""
     for layer in old_params.keys():
         if acti_map[layer]['following'] is not None:
-            neuron_state = neuron_states[acti_map[layer]['following']]
+            if '_CONCATENATED_FLAG' in acti_map[layer]['following']:  # Dealing with fourier transform that x2 outputs
+                neuron_state = neuron_states[acti_map[layer]['following'].replace('_CONCATENATED_FLAG', "")]
+                half = neuron_state.size//2
+                neuron_state = jnp.logical_or(neuron_state[:half], neuron_state[half:])
+            else:
+                neuron_state = neuron_states[acti_map[layer]['following']]
             for weight_type in list(old_params[layer].keys()):  # Usually, 'w' and 'b'
                 old_params[layer][weight_type] = old_params[layer][weight_type] * jnp.logical_not(neuron_state)
         kernel_param = 'w'
@@ -684,7 +689,12 @@ def prune_params_state_optstate(params, activation_mapping, neurons_state_dict: 
 
         # If there are following neurons, prune outgoing connections
         if following is not None:
-            following_neurons_state = jnp.logical_not(neurons_state_dict[following])
+            if '_CONCATENATED_FLAG' in following:
+                following_neurons_state = jnp.logical_not(neurons_state_dict[following.replace('_CONCATENATED_FLAG', "")])
+                half = following_neurons_state.size//2
+                following_neurons_state = jnp.logical_or(following_neurons_state[:half], following_neurons_state[half:])
+            else:
+                following_neurons_state = jnp.logical_not(neurons_state_dict[following])
             if layer_name in filtered_params.keys():
                 for dict_key in filtered_params[layer_name].keys():
                     filtered_params[layer_name][dict_key] = filtered_params[layer_name][dict_key][

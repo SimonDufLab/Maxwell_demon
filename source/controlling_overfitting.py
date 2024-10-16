@@ -74,6 +74,7 @@ class ExpConfig:
     activation: str = "relu"  # Activation function used throughout the model
     shifted_relu: float = 0.0  # Shift value (b) applied on output before activation. To promote dead neurons
     srelu_sched: str = "constant"  # Schedule for shifted ReLU, same choices as reg_param_schedule
+    fourier_transform: bool = False  # Draw random weights from a Fourier distribution, for RKS
     dataset: str = "mnist"
     reduced_ds_size: Optional[int] = None  # Limit the size of ds to fix amounts for training
     normalize_inputs: bool = False  # Substract mean across channels from inputs and divide by variance
@@ -346,6 +347,9 @@ def run_exp(exp_config: ExpConfig) -> None:
 
     if exp_config.temperature:
         net_config['temperature'] = exp_config.temperature
+
+    if exp_config.fourier_transform:
+        net_config['fourier_transform'] = exp_config.fourier_transform
 
     # warmup:
     if 'warmup' in exp_config.lr_schedule:
@@ -689,6 +693,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                                               state)
                         if type(new_sizes) is int:
                             new_sizes = list(utl.get_total_neurons(exp_config.architecture, new_sizes)[1])
+                        if exp_config.fourier_transform:
+                            new_sizes = [_layer_size//2 for _layer_size in new_sizes]
                         new_sizes = [exp_config.dynamic_resizing * curr_layer_size for curr_layer_size in new_sizes]
                         params = utl.grow_neurons(params, exp_config.dynamic_resizing)
                         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
@@ -772,7 +778,8 @@ def run_exp(exp_config: ExpConfig) -> None:
                         params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
                                                                                               neuron_states, opt_state,
                                                                                               state)
-
+                        if exp_config.fourier_transform:
+                            new_sizes = [_layer_size//2 for _layer_size in new_sizes]
                         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
                             exp_config.architecture]
                         architecture = architecture(new_sizes, classes, activation_fn=activation_fn, **net_config)
@@ -1254,10 +1261,12 @@ def run_exp(exp_config: ExpConfig) -> None:
         _params, _opt_state, _state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
                                                                               neuron_states, opt_state,
                                                                               state)  # Final pruning before eval
+        if exp_config.fourier_transform:
+            new_sizes = [_layer_size // 2 for _layer_size in new_sizes]
         final_params_count = utl.count_params(_params)
 
         del final_dead_neurons  # Freeing memory
-        if exp_config.activation == "relu" or exp_config.dynamic_pruning:  # Only performs end-of-training actual pruning if activation is relu
+        if exp_config.activation == "relu" and exp_config.dynamic_pruning:  # Only performs end-of-training actual pruning if activation is relu
             params, opt_state, state = _params, _opt_state, _state
             architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
                 exp_config.architecture]
