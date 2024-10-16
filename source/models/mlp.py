@@ -7,6 +7,8 @@ from jax.scipy.special import logsumexp
 from jax.tree_util import Partial
 from jax import lax
 from jax.nn import relu, tanh
+from sympy import fourier_transform
+
 from utils.utils import ReluActivationModule, IdentityActivationModule
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
@@ -96,11 +98,13 @@ class LinearLayer(hk.Module):
             fc_config: Optional[Mapping[str, FloatStrOrBool]] = {},
             bn_config: Optional[Mapping[str, FloatStrOrBool]] = {},
             temperature: Optional[float] = None,
+            fourier_transform: Optional[bool] = False,
             name: Optional[str] = None,
             parent: Optional[hk.Module] = None):
         super().__init__(name=name)
         self.activation_mapping = {}
         self.bundle_name = current_name()
+        self.fourier_transform = fourier_transform
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -121,6 +125,8 @@ class LinearLayer(hk.Module):
         block_name = self.bundle_name + "/~/"
         x = jax.vmap(jnp.ravel, in_axes=0)(x)  # flatten
         x = self.fc_layer(x)
+        if self.fourier_transform:
+            x = jnp.concatenate([jnp.cos(x), jnp.sin(x)], axis=-1)
         if self.with_bn:
             x = self.bn_layer(x)
         if self.activation_layer:
@@ -132,8 +138,12 @@ class LinearLayer(hk.Module):
             activation_name = None
 
         fc_name = block_name + self.fc_layer.name
-        self.activation_mapping[fc_name] = {"preceding": self.preceding_activation_name,
-                                            "following": activation_name}
+        if fourier_transform and  type(activation_name) is str:
+            self.activation_mapping[fc_name] = {"preceding": self.preceding_activation_name,
+                                                "following": activation_name + '_CONCATENATED_FLAG'}
+        else:
+            self.activation_mapping[fc_name] = {"preceding": self.preceding_activation_name,
+                                                "following": activation_name}
 
         if self.with_bn:
             bn_name = block_name + self.bn_layer.name
@@ -152,7 +162,7 @@ class LinearLayer(hk.Module):
 
 
 def mlp_5(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, with_bn=False, bn_config={},
-          temperature=None, tanh_head=False):
+          temperature=None, fourier_transform=False, tanh_head=False):
     """ Build a MLP with 4 hidden layers inspired by popular LeNet, but with varying number of hidden units"""
     act = activation_fn
 
@@ -162,14 +172,14 @@ def mlp_5(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*2, sizes*4, sizes*2]
 
-    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, name='init')]  # hk.Flatten, in LinearLayer
-    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature)]
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, fourier_transform=fourier_transform, name='init')]  # hk.Flatten, in LinearLayer
+    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature,  fourier_transform=fourier_transform)]
     layer_3 = [
         Partial(LinearLayer, sizes[2], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act,
-                temperature=temperature)]
+                temperature=temperature, fourier_transform=fourier_transform)]
     layer_4 = [
         Partial(LinearLayer, sizes[3], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act,
-                temperature=temperature)]
+                temperature=temperature, fourier_transform=fourier_transform)]
     if tanh_head:
         layer_5 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=_tanh, temperature=temperature, name='logits')]
     else:
@@ -179,7 +189,7 @@ def mlp_5(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
 
 
 def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=True, with_bn=False, bn_config={},
-          temperature=None, tanh_head=False):
+          temperature=None, fourier_transform=False, tanh_head=False):
     """ Build a MLP with 2 hidden layers similar to popular LeNet, but with varying number of hidden units"""
     act = activation_fn
 
@@ -189,8 +199,8 @@ def mlp_3(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*3]
 
-    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, name='init')]  # hk.Flatten, in LinearLayer
-    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature)]
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, fourier_transform=fourier_transform, name='init')]  # hk.Flatten, in LinearLayer
+    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, fourier_transform=fourier_transform)]
     if tanh_head:
         layer_3 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=_tanh, temperature=temperature, name='logits')]
     else:
