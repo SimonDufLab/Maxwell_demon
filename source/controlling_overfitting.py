@@ -1266,7 +1266,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         final_params_count = utl.count_params(_params)
 
         del final_dead_neurons  # Freeing memory
-        if exp_config.activation == "relu" and exp_config.dynamic_pruning:  # Only performs end-of-training actual pruning if activation is relu
+        if exp_config.activation == "relu" and exp_config.dynamic_pruning and not exp_config.fourier_transform:  # Only performs end-of-training actual pruning if activation is relu
             params, opt_state, state = _params, _opt_state, _state
             architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
                 exp_config.architecture]

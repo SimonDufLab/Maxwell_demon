@@ -311,7 +311,7 @@ def reinitialize_dead_neurons(acti_map, neuron_states, old_params, new_params):
             if '_CONCATENATED_FLAG' in acti_map[layer]['following']:  # Dealing with fourier transform that x2 outputs
                 neuron_state = neuron_states[acti_map[layer]['following'].replace('_CONCATENATED_FLAG', "")]
                 half = neuron_state.size//2
-                neuron_state = jnp.logical_or(neuron_state[:half], neuron_state[half:])
+                neuron_state = jnp.logical_and(neuron_state[:half], neuron_state[half:])
             else:
                 neuron_state = neuron_states[acti_map[layer]['following']]
             for weight_type in list(old_params[layer].keys()):  # Usually, 'w' and 'b'
