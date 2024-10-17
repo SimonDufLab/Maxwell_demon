@@ -17,6 +17,20 @@ from models.dropout_units import Base_Dropout
 
 FloatStrOrBool = Union[str, float, bool]
 
+
+class MultivariateNormalInitializer(hk.initializers.Initializer):
+    def __call__(self, shape, dtype=jnp.float32):
+        if len(shape) != 2:
+            raise ValueError("Shape should be 2D (batch_size, D) for multivariate normal.")
+
+        batch_size, D = shape
+        mean = jnp.zeros(D)
+        cov = jnp.eye(D)  # Identity covariance matrix for D dimensions
+
+        return jax.random.multivariate_normal(
+            hk.next_rng_key(), mean=mean, cov=cov, shape=(batch_size,), dtype=dtype
+        )
+
 class SoftmaxTLinear(hk.Module):
     """Custom Linear module with temperature-adjusted softmax applied element-wise per output neuron."""
 
@@ -104,6 +118,7 @@ class LinearLayer(hk.Module):
         self.activation_mapping = {}
         self.bundle_name = current_name()
         self.fourier_transform = fourier_transform
+        self.with_bias = with_bias
         if parent:
             self.preceding_activation_name = parent.get_last_activation_name()
         else:
@@ -123,9 +138,13 @@ class LinearLayer(hk.Module):
     def __call__(self, x):
         block_name = self.bundle_name + "/~/"
         x = jax.vmap(jnp.ravel, in_axes=0)(x)  # flatten
+        d = jnp.shape(x)[-1]
         x = self.fc_layer(x)
         if self.fourier_transform:
-            x = jnp.concatenate([jnp.cos(x), jnp.sin(x)], axis=-1)
+            if self.with_bias:
+                x = jnp.sqrt(2/d)  * jnp.cos(x)
+            else:
+                x = jnp.concatenate([jnp.sqrt(1/d) * jnp.cos(x), jnp.sqrt(1/d) * jnp.sin(x)], axis=-1)
         if self.with_bn:
             x = self.bn_layer(x)
         if self.activation_layer:
@@ -137,7 +156,7 @@ class LinearLayer(hk.Module):
             activation_name = None
 
         fc_name = block_name + self.fc_layer.name
-        if self.fourier_transform and  type(activation_name) is str:
+        if self.fourier_transform and type(activation_name) is str and not self.with_bias:
             self.activation_mapping[fc_name] = {"preceding": self.preceding_activation_name,
                                                 "following": activation_name + '_CONCATENATED_FLAG'}
         else:
@@ -171,14 +190,20 @@ def mlp_5(sizes, number_classes, activation_fn=ReluActivationModule, with_bias=T
     if type(sizes) == int:  # Size can be specified with 1 arg, an int
         sizes = [sizes, sizes*2, sizes*4, sizes*2]
 
-    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, fourier_transform=fourier_transform, name='init')]  # hk.Flatten, in LinearLayer
-    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature,  fourier_transform=fourier_transform)]
+    if fourier_transform:
+        fc_config = {"w_init":MultivariateNormalInitializer(), "b_init":hk.initializers.RandomUniform(minval=0.0, maxval=2 * jnp.pi)}
+    else:
+        fc_config={}
+
+
+    layer_1 = [Partial(LinearLayer, sizes[0], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature, fourier_transform=fourier_transform, fc_config=fc_config, name='init')]  # hk.Flatten, in LinearLayer
+    layer_2 = [Partial(LinearLayer, sizes[1], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act, temperature=temperature,  fourier_transform=fourier_transform, fc_config=fc_config)]
     layer_3 = [
         Partial(LinearLayer, sizes[2], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act,
-                temperature=temperature, fourier_transform=fourier_transform)]
+                temperature=temperature, fourier_transform=fourier_transform, fc_config=fc_config)]
     layer_4 = [
         Partial(LinearLayer, sizes[3], with_bias=with_bias, with_bn=with_bn, bn_config=bn_config, activation_fn=act,
-                temperature=temperature, fourier_transform=fourier_transform)]
+                temperature=temperature, fourier_transform=fourier_transform, fc_config=fc_config)]
     if tanh_head:
         layer_5 = [Partial(LinearLayer, number_classes, with_bias=with_bias, activation_fn=_tanh, temperature=temperature, name='logits')]
     else:
