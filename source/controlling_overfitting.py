@@ -693,7 +693,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                                                                                               state)
                         if type(new_sizes) is int:
                             new_sizes = list(utl.get_total_neurons(exp_config.architecture, new_sizes)[1])
-                        if exp_config.fourier_transform:
+                        if exp_config.fourier_transform and not exp_config.with_bias:
                             new_sizes = [_layer_size//2 for _layer_size in new_sizes]
                         new_sizes = [exp_config.dynamic_resizing * curr_layer_size for curr_layer_size in new_sizes]
                         params = utl.grow_neurons(params, exp_config.dynamic_resizing)
@@ -778,7 +778,7 @@ def run_exp(exp_config: ExpConfig) -> None:
                         params, opt_state, state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
                                                                                               neuron_states, opt_state,
                                                                                               state)
-                        if exp_config.fourier_transform:
+                        if exp_config.fourier_transform and not exp_config.with_bias:
                             new_sizes = [_layer_size//2 for _layer_size in new_sizes]
                         architecture = pick_architecture(with_dropout=with_dropout, with_bn=exp_config.with_bn)[
                             exp_config.architecture]
@@ -1261,7 +1261,7 @@ def run_exp(exp_config: ExpConfig) -> None:
         _params, _opt_state, _state, new_sizes = utl.prune_params_state_optstate(params, acti_map,
                                                                               neuron_states, opt_state,
                                                                               state)  # Final pruning before eval
-        if exp_config.fourier_transform:
+        if exp_config.fourier_transform and not exp_config.with_bias:
             new_sizes = [_layer_size // 2 for _layer_size in new_sizes]
         final_params_count = utl.count_params(_params)
 
