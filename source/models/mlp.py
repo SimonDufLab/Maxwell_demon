@@ -138,8 +138,8 @@ class LinearLayer(hk.Module):
     def __call__(self, x):
         block_name = self.bundle_name + "/~/"
         x = jax.vmap(jnp.ravel, in_axes=0)(x)  # flatten
-        d = jnp.shape(x)[-1]
         x = self.fc_layer(x)
+        d = jnp.shape(x)[-1]
         if self.fourier_transform:
             if self.with_bias:
                 x = jnp.sqrt(2/d)  * jnp.cos(x)
